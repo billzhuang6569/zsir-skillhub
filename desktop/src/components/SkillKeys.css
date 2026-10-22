@@ -1,0 +1,348 @@
+/* 「需要的钥匙」（#255）：一行一把钥匙，三态徽章 + 一个主按钮。只用 canonical token。 */
+.key-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.key-section-head h3 {
+  color: var(--color-ink);
+  font: var(--font-weight-section-title) var(--font-size-section-title)/var(--line-height-section-title) var(--font-sans);
+}
+
+.key-section-head p {
+  max-width: 720px;
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: var(--font-size-description);
+  line-height: var(--line-height-description);
+}
+
+.key-req-list {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.key-req-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: 56px;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-line);
+}
+
+.key-req-row:first-child { border-top: 0; }
+
+.key-req-main { flex: 1 1 220px; min-width: 0; }
+
+.key-req-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.key-req-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-ink);
+  font: var(--font-weight-code) var(--font-size-code)/var(--line-height-code) var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-req-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font: var(--font-weight-caption) var(--font-size-caption)/1 var(--font-sans);
+  white-space: nowrap;
+}
+
+.key-req-badge.success { background: var(--color-success-tint); color: var(--color-success); }
+.key-req-badge.warning { background: var(--color-warning-tint); color: var(--color-warning); }
+.key-req-badge.muted { background: var(--color-surface-sunken); color: var(--color-muted); }
+
+.key-req-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.key-req-purpose {
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: var(--font-size-description);
+  line-height: var(--line-height-description);
+  overflow-wrap: anywhere;
+}
+
+.key-req-obtain,
+.key-req-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-brand);
+  font: var(--font-weight-label) var(--font-size-caption)/var(--line-height-caption) var(--font-sans);
+  cursor: pointer;
+}
+
+.key-req-obtain:hover,
+.key-req-link:hover:not(:disabled) { text-decoration: underline; }
+.key-req-link:disabled { opacity: .6; cursor: default; }
+
+.key-req-action {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.key-req-action .btn { border-radius: var(--radius-md); white-space: nowrap; }
+
+.key-req-using {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-muted);
+  font: var(--font-weight-caption) var(--font-size-caption)/var(--line-height-caption) var(--font-sans);
+  white-space: nowrap;
+}
+
+.key-req-using.switchable { cursor: pointer; transition: border-color .14s, background-color .14s; }
+.key-req-using.switchable:hover { border-color: var(--color-line); background: var(--color-surface-sunken); color: var(--color-ink); }
+
+.key-req-row :is(button, input):focus-visible,
+.key-author-tools summary:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.key-req-panel {
+  display: grid;
+  flex: 1 0 100%;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.key-req-panel .secret-input-label input { width: 100%; }
+
+/* 「变量名不一致」（#288）：钥匙库里已有同一家服务的钥匙时的提示卡。 */
+.key-alias-suggest {
+  display: grid;
+  flex: 1 0 100%;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.key-alias-suggest p {
+  color: var(--color-ink);
+  font-size: var(--font-size-description);
+  line-height: var(--line-height-description);
+  overflow-wrap: anywhere;
+}
+
+.key-alias-suggest .key-alias-tag { display: inline-flex; margin: 0 2px; vertical-align: 1px; }
+
+.key-req-hint {
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.key-req-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.key-req-panel-actions .btn { border-radius: var(--radius-md); }
+
+.key-req-choices { display: grid; gap: var(--space-1); }
+
+.key-req-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: var(--font-size-description);
+  cursor: pointer;
+}
+
+.key-req-choice.checked { border-color: var(--color-brand); background: var(--color-brand-tint); }
+.key-req-choice input { accent-color: var(--color-brand); }
+
+/* 作者工具：默认折叠，只对 canManage 渲染。 */
+.key-author-tools {
+  margin-top: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.key-author-tools summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-lg);
+  color: var(--color-ink);
+  font: var(--font-weight-label) var(--font-size-label)/var(--line-height-label) var(--font-sans);
+  cursor: pointer;
+  list-style: none;
+}
+
+.key-author-tools summary::-webkit-details-marker { display: none; }
+.key-author-tools summary svg { color: var(--color-muted); transition: transform .14s; }
+.key-author-tools[open] summary svg.key-author-chev { transform: rotate(180deg); }
+
+.key-author-body {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.key-author-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.key-author-actions .btn { border-radius: var(--radius-md); }
+
+.key-author-note {
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.key-author-declared { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+
+.key-author-declared li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.key-author-declared code { min-width: 0; overflow: hidden; color: var(--color-ink); font: var(--font-weight-code) var(--font-size-code)/var(--line-height-code) var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+.key-author-declared .btn { border-radius: var(--radius-md); color: var(--color-danger); }
+
+.key-empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-lg);
+  color: var(--color-muted);
+  font-size: var(--font-size-description);
+}
+
+.key-policy-error { margin-bottom: var(--space-3); }
+
+/* 首次安装引导 */
+.key-guide-card { width: min(560px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 48px)); overflow-y: auto; }
+.key-guide-summary { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2) 0 var(--space-4); color: var(--color-muted); font-size: var(--font-size-description); }
+.key-guide-summary.ready { color: var(--color-success); font-weight: var(--font-weight-label); }
+.key-req-list.guide .key-req-row { padding: var(--space-3); }
+
+/* 「什么是钥匙？」 (#289) */
+.key-explainer {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+}
+
+.key-explainer-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+.key-explainer-head h3 { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-ink); font: var(--font-weight-label) var(--font-size-label)/var(--line-height-label) var(--font-sans); }
+.key-explainer-head h3 svg { color: var(--color-brand); }
+.key-explainer-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.key-explainer-column b { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-ink); font: var(--font-weight-label) var(--font-size-caption)/var(--line-height-caption) var(--font-sans); }
+.key-explainer-column b svg { color: var(--color-muted); }
+.key-explainer-column p { margin-top: 3px; color: var(--color-muted); font-size: var(--font-size-caption); line-height: var(--line-height-description); }
+
+.key-section-share { flex: none; border-radius: var(--radius-md); }
+
+.key-author-tools summary .key-author-title { display: grid; gap: 1px; }
+.key-author-tools summary .key-author-title small { color: var(--color-muted); font: var(--font-size-caption)/var(--line-height-caption) var(--font-sans); }
+.key-author-tools summary .key-author-chev { margin-left: auto; }
+
+/* 「重新检测」 results with confidence pills (#284) */
+.key-detect-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.key-detect-row { display: flex; align-items: center; gap: var(--space-2); min-height: 36px; padding: 0 var(--space-1) 0 var(--space-3); border-radius: var(--radius-md); background: var(--color-surface-sunken); }
+.key-detect-row code { min-width: 0; overflow: hidden; color: var(--color-ink); font: var(--font-weight-code) var(--font-size-code)/var(--line-height-code) var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+.key-detect-declared { color: var(--color-muted); font-size: var(--font-size-caption); }
+.key-detect-row .ui-tip-anchor { margin-left: auto; }
+.key-detect-evidence { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--color-muted); cursor: help; }
+.key-detect-evidence:hover { color: var(--color-ink); }
+.key-detect-evidence:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.key-confidence { flex: none; padding: 1px 6px; border-radius: var(--radius-sm); font: var(--font-weight-label) var(--font-size-caption)/var(--line-height-caption) var(--font-sans); white-space: nowrap; }
+.key-confidence-declared { background: var(--color-success-tint); color: var(--color-success); }
+.key-confidence-high { background: var(--color-brand-tint); color: var(--color-brand); }
+.key-confidence-medium { background: var(--color-warning-tint); color: var(--color-warning); }
+.key-confidence-low { background: var(--color-surface); color: var(--color-muted); box-shadow: inset 0 0 0 1px var(--color-line); }
+
+@media (max-width: 640px) {
+  .key-explainer-columns { grid-template-columns: 1fr; gap: var(--space-3); }
+}
+
+@media (max-width: 520px) {
+  .key-req-row { padding: var(--space-3); }
+  .key-req-action { width: 100%; justify-content: flex-start; margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key-req-using.switchable,
+  .key-author-tools summary svg { transition: none; }
+}

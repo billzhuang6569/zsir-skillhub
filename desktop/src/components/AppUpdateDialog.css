@@ -1,0 +1,10 @@
+.app-update-dialog { width: min(470px, calc(100vw - 36px)); }
+.app-update-notes { max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+.app-update-progress { display: grid; gap: 7px; margin: 2px 0 16px; }
+.app-update-progress > div { height: 6px; overflow: hidden; border-radius: var(--radius-pill); background: var(--color-surface-sunken); }
+.app-update-progress > div > span { display: block; width: 32%; height: 100%; border-radius: inherit; background: var(--color-brand); transition: width .18s ease; }
+.app-update-progress > div > span:not([style]) { animation: update-progress 1.2s ease-in-out infinite alternate; }
+.app-update-progress small { color: var(--color-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+@keyframes update-progress { from { transform: translateX(-40%); } to { transform: translateX(240%); } }
+@media (prefers-reduced-motion: reduce) { .app-update-progress > div > span:not([style]) { animation: none; } }
+.app-update-dialog .banner-success { border-color: color-mix(in srgb, var(--color-success) 30%, transparent); background: var(--color-success-tint); color: var(--color-success); }

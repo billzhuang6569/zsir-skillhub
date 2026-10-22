@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.yitan.skillhub.dev",
+  "productName": "SkillHub Dev",
+  "plugins": { "deep-link": { "desktop": { "schemes": ["skillhub-dev"] } } }
+}

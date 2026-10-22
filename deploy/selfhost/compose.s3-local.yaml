@@ -1,0 +1,40 @@
+# Optional private, single-node S3 service. Keep credentials in the 0600 .env.
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?Set local S3 credentials in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?Set local S3 credentials in .env}
+    entrypoint: ["/bin/sh", "/etc/skillhub/objects-start.sh"]
+    volumes:
+      - objects-data:/data
+      - ./objects-start.sh:/etc/skillhub/objects-start.sh:ro
+    tmpfs:
+      - /run/skillhub
+
+  objects-init:
+    image: chrislusf/seaweedfs:4.48
+    restart: "no"
+    depends_on:
+      seaweedfs:
+        condition: service_started
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-skillhub}
+    entrypoint: ["/bin/sh", "/etc/skillhub/objects-init.sh"]
+    volumes:
+      - ./objects-init.sh:/etc/skillhub/objects-init.sh:ro
+
+  server:
+    depends_on:
+      objects-init:
+        condition: service_completed_successfully
+    environment:
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_REGION: us-east-1
+      S3_BUCKET: ${S3_BUCKET:-skillhub}
+      S3_FORCE_PATH_STYLE: "true"
+
+volumes:
+  objects-data:

@@ -1,0 +1,18 @@
+.modal-card.migration-dialog { width: min(800px, 100%); max-height: calc(100vh - var(--space-7)); display: flex; flex-direction: column; gap: var(--space-3); overflow: hidden; }
+.migration-dialog .modal-head, .migration-dialog .modal-actions { flex: none; margin: 0; }
+.migration-scroll { overflow-y: auto; min-height: 0; }
+.migration-dialog .settings-label { margin-top: var(--space-3); }
+.migration-item + .migration-item { border-top: 1px solid var(--color-line); }
+.migration-choices { margin: 0 var(--space-4) var(--space-3); padding: var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: var(--space-2); }
+.migration-dialog label { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-description); line-height: var(--line-height-description); overflow-wrap: anywhere; }
+.migration-dialog input[type='checkbox'], .migration-dialog input[type='radio'] { accent-color: var(--color-brand); flex: none; }
+.migration-keys { padding: var(--space-4); }
+.migration-key { margin-top: var(--space-3); }
+.migration-key-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.migration-key-actions .form-input { flex: 1; min-width: 0; }
+.migration-dialog .modal-actions { flex-wrap: wrap; padding-top: var(--space-3); border-top: 1px solid var(--color-line); }
+.migration-notice { position: fixed; bottom: var(--space-5); right: var(--space-5); z-index: 110; max-width: min(500px, calc(100vw - var(--space-7))); padding: var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-card); }
+.migration-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.migration-progress { width: 100%; accent-color: var(--color-brand); }
+.migration-report-item { padding: var(--space-3); border-bottom: 1px solid var(--color-line); overflow-wrap: anywhere; font-size: var(--font-size-description); line-height: var(--line-height-description); }
+.migration-dialog-layer { z-index: 160; }

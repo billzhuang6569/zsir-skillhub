@@ -1,0 +1,264 @@
+[
+  {
+    "name": "python sdk import without env read",
+    "files": {
+      "SKILL.md": "---\nname: demo\n---\nRun `python ${CLAUDE_SKILL_DIR}/scripts/run.py $ARGUMENTS`\n",
+      "scripts/gen.py": "import fal_client\n\nresult = fal_client.run('x')\n"
+    },
+    "expected": [
+      {
+        "key": "FAL_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 fal_client（读取 FAL_KEY）"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "dependency manifests",
+    "files": {
+      "requirements.txt": "openai==1.0\nboto3[crt]>=1\n# replicate\n",
+      "package.json": "{\"dependencies\": {\"@anthropic-ai/sdk\": \"^1\"}, \"devDependencies\": {\"@fal-ai/client\": \"1\"}}",
+      "pyproject.toml": "[project]\ndependencies = [\"mistralai>=1\"]\n[tool.poetry.dependencies]\ncohere = \"^5\"\n"
+    },
+    "expected": [
+      {
+        "key": "ANTHROPIC_API_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 @anthropic-ai/sdk（读取 ANTHROPIC_API_KEY）"
+        ]
+      },
+      {
+        "key": "AWS_ACCESS_KEY_ID",
+        "confidence": "high",
+        "evidence": [
+          "依赖 boto3（读取 AWS_ACCESS_KEY_ID）"
+        ]
+      },
+      {
+        "key": "AWS_SECRET_ACCESS_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 boto3（读取 AWS_SECRET_ACCESS_KEY）"
+        ]
+      },
+      {
+        "key": "CO_API_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 cohere（读取 CO_API_KEY）"
+        ]
+      },
+      {
+        "key": "FAL_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 @fal-ai/client（读取 FAL_KEY）"
+        ]
+      },
+      {
+        "key": "MISTRAL_API_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 mistralai（读取 MISTRAL_API_KEY）"
+        ]
+      },
+      {
+        "key": "OPENAI_API_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 openai（读取 OPENAI_API_KEY）"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "code reads across languages",
+    "files": {
+      "scripts/run.py": "import os\nkey = os.getenv('PY_TOKEN')\nalt = os.environ.get(\"ALT_TOKEN\", 'x')\nraw = os.environ['RAW_TOKEN']\n",
+      "run.sh": "#!/bin/sh\necho $SHELL_TOKEN ${DEFAULTED:-x}\n",
+      "src/app.ts": "const { TS_TOKEN, OTHER: alias = 'x' } = process.env\nconst v = import.meta.env.VITE_KEY\nconst b = Bun.env.BUN_KEY\nconst c = process.env['BRACKET_KEY']\n",
+      "lib.rs": "let k = std::env::var(\"RUST_KEY\");\n",
+      "win.ps1": "$env:PS_KEY\n",
+      "win.cmd": "echo %CMD_KEY%\n"
+    },
+    "expected": [
+      {
+        "key": "ALT_TOKEN",
+        "confidence": "medium",
+        "evidence": [
+          "scripts/run.py:3"
+        ]
+      },
+      {
+        "key": "BRACKET_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "src/app.ts:4"
+        ]
+      },
+      {
+        "key": "BUN_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "src/app.ts:3"
+        ]
+      },
+      {
+        "key": "CMD_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "win.cmd:1"
+        ]
+      },
+      {
+        "key": "PS_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "win.ps1:1"
+        ]
+      },
+      {
+        "key": "PY_TOKEN",
+        "confidence": "medium",
+        "evidence": [
+          "scripts/run.py:2"
+        ]
+      },
+      {
+        "key": "RAW_TOKEN",
+        "confidence": "medium",
+        "evidence": [
+          "scripts/run.py:4"
+        ]
+      },
+      {
+        "key": "RUST_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "lib.rs:1"
+        ]
+      },
+      {
+        "key": "SHELL_TOKEN",
+        "confidence": "medium",
+        "evidence": [
+          "run.sh:2"
+        ]
+      },
+      {
+        "key": "TS_TOKEN",
+        "confidence": "medium",
+        "evidence": [
+          "src/app.ts:1"
+        ]
+      },
+      {
+        "key": "VITE_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "src/app.ts:2"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "env template, pruned directories and local value files",
+    "files": {
+      ".env.example": "# comment\nREPLICATE_API_TOKEN=secret-value\nexport lower_case=1\n",
+      ".env": "LOCAL_SECRET=abc\n",
+      "node_modules/openai/index.js": "process.env.OPENAI_API_KEY\n",
+      "dist/x.js": "process.env.DIST_KEY\n",
+      "nested/__pycache__/x.py": "import os\nos.getenv('CACHE_KEY')\n"
+    },
+    "expected": [
+      {
+        "key": "REPLICATE_API_TOKEN",
+        "confidence": "high",
+        "evidence": [
+          ".env.example:2"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "markdown hints, shebang files and strongest confidence",
+    "files": {
+      "README.md": "Set `FAL_KEY` first.\nexport OTHER_KEY=1\nUse `NOTAKEY` and `lower_key`\n```\nprocess.env.MD_CODE_KEY\n```\n",
+      "bin/tool": "#!/usr/bin/env python3\nimport os\nos.getenv('SHEBANG_KEY')\n",
+      "scripts/a.py": "os.getenv('FAL_KEY')\n",
+      "notes.txt": "process.env.TXT_KEY\n"
+    },
+    "expected": [
+      {
+        "key": "FAL_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "README.md:1",
+          "scripts/a.py:1"
+        ]
+      },
+      {
+        "key": "MD_CODE_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "README.md:5"
+        ]
+      },
+      {
+        "key": "OTHER_KEY",
+        "confidence": "low",
+        "evidence": [
+          "README.md:2"
+        ]
+      },
+      {
+        "key": "SHEBANG_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "bin/tool:3"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "configuration names are not keys",
+    "files": {
+      "scripts/gen.py": "import os\nimport fal_client\nout = os.getenv('OUTPUT_DIR', '.')\nmodel = os.environ.get('FAL_MODEL')\nsize = os.environ['IMAGE_SIZE']\n",
+      ".env.example": "BASE_URL=https://example.test\nAPI_HOST=example.test\nOPENAI_API_KEY=\n",
+      "run.sh": "#!/bin/sh\necho $DB_PASSWORD $REGION ${PRIVATE_KEY} $TIMEOUT_MS $KEYWORD\n"
+    },
+    "expected": [
+      {
+        "key": "DB_PASSWORD",
+        "confidence": "medium",
+        "evidence": [
+          "run.sh:2"
+        ]
+      },
+      {
+        "key": "FAL_KEY",
+        "confidence": "high",
+        "evidence": [
+          "依赖 fal_client（读取 FAL_KEY）"
+        ]
+      },
+      {
+        "key": "OPENAI_API_KEY",
+        "confidence": "high",
+        "evidence": [
+          ".env.example:3"
+        ]
+      },
+      {
+        "key": "PRIVATE_KEY",
+        "confidence": "medium",
+        "evidence": [
+          "run.sh:2"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,119 @@
+/* Buttons and form controls for the Skill detail sheet and the Skill dialogs it opens
+ * (delete, unmanage, batch, profile edit, versions, sharing) per the Tan Skillhub
+ * Design System (#261): radius-md buttons, brand primary with on-brand text, solid
+ * danger, hairline secondary, 2px brand focus ring offset 2px. Scoped to
+ * `.detail-sheet` and `.skill-dialog` so app-wide `.btn` styles stay untouched.
+ * Canonical global tokens only. */
+.skill-dialog {
+  border-color: var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+.skill-dialog .modal-head h2 { color: var(--color-ink); font-size: var(--font-size-card-title); font-weight: var(--font-weight-card-title); line-height: var(--line-height-card-title); }
+.skill-dialog .eyebrow { color: var(--color-muted); font-size: var(--font-size-caption); font-weight: var(--font-weight-caption); line-height: var(--line-height-caption); letter-spacing: .02em; text-transform: none; }
+.skill-dialog .modal-copy { color: var(--color-muted); font-size: var(--font-size-description); line-height: var(--line-height-description); }
+.skill-dialog .selection-box { border-color: var(--color-line); border-radius: var(--radius-md); background: var(--color-surface-sunken); }
+.skill-dialog .selection-box b { color: var(--color-muted); }
+.skill-dialog .selection-box span { color: var(--color-ink); }
+.skill-dialog .agent-picker label { border-color: var(--color-line); border-radius: var(--radius-md); }
+.skill-dialog .agent-picker small { color: var(--color-muted); }
+
+.detail-sheet .btn,
+.skill-dialog .btn {
+  height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  font: var(--font-weight-label) var(--font-size-label)/var(--line-height-label) var(--font-sans);
+  letter-spacing: 0;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease;
+}
+.detail-sheet .btn:active,
+.skill-dialog .btn:active { transform: none; }
+.detail-sheet .btn-sm,
+.skill-dialog .btn-sm { height: 32px; padding: 0 var(--space-3); border-radius: var(--radius-sm); font-size: 13px; line-height: 18px; }
+.detail-sheet .btn-lg,
+.skill-dialog .btn-lg { height: 44px; padding: 0 var(--space-5); }
+.detail-sheet .btn-primary,
+.skill-dialog .btn-primary { border-color: transparent; background: var(--color-brand); color: var(--color-on-brand); }
+.detail-sheet .btn-primary:hover,
+.skill-dialog .btn-primary:hover { background: var(--color-brand-strong); box-shadow: none; }
+.detail-sheet .btn-ghost,
+.skill-dialog .btn-ghost { border-color: var(--color-line); background: var(--color-surface); color: var(--color-ink); }
+.detail-sheet .btn-ghost:hover,
+.skill-dialog .btn-ghost:hover { border-color: var(--color-line); background: var(--color-hover); box-shadow: none; }
+.detail-sheet .btn-soft,
+.skill-dialog .btn-soft { border-color: transparent; background: var(--color-brand-tint); color: var(--color-brand); }
+.detail-sheet .btn-soft:hover,
+.skill-dialog .btn-soft:hover { background: color-mix(in srgb, var(--color-brand) 16%, var(--color-surface)); }
+.detail-sheet .btn-warn,
+.skill-dialog .btn-warn { border-color: transparent; background: var(--color-warning-tint); color: var(--color-warning); }
+.detail-sheet .btn-danger,
+.skill-dialog .btn-danger { border-color: transparent; background: var(--color-danger); color: var(--color-on-brand); box-shadow: none; }
+.detail-sheet .btn-danger:hover,
+.skill-dialog .btn-danger:hover { background: color-mix(in srgb, var(--color-danger) 86%, var(--color-ink)); }
+.detail-sheet .btn-danger-soft,
+.skill-dialog .btn-danger-soft { border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface)); color: var(--color-danger); }
+.detail-sheet .btn:focus-visible,
+.skill-dialog .btn:focus-visible,
+.detail-sheet .ico-btn:focus-visible,
+.skill-dialog .ico-btn:focus-visible,
+.detail-sheet .link-button:focus-visible,
+.skill-dialog .link-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .detail-sheet .btn,
+  .skill-dialog .btn { transition: none; }
+}
+
+/* Inputs, selects and textareas: hairline border, radius-sm, brand focus. */
+.detail-sheet .form-stack label,
+.skill-dialog .form-stack label,
+.skill-dialog > label { display: flex; flex-direction: column; gap: 6px; color: var(--color-muted); font-size: 13px; font-weight: 600; line-height: 18px; }
+.detail-sheet .form-stack input:not([type="checkbox"]):not([type="radio"]),
+.detail-sheet .form-stack textarea,
+.detail-sheet .form-stack select,
+.detail-sheet .composer textarea,
+.detail-sheet .comment-edit textarea,
+.skill-dialog .form-stack input:not([type="checkbox"]):not([type="radio"]),
+.skill-dialog .form-stack textarea,
+.skill-dialog .form-stack select,
+.skill-dialog select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  padding: 9px var(--space-3);
+  font: var(--font-weight-body) 14px/20px var(--font-sans);
+  outline: 0;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.detail-sheet .form-stack input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.detail-sheet .form-stack textarea:focus-visible,
+.detail-sheet .form-stack select:focus-visible,
+.detail-sheet .composer textarea:focus-visible,
+.detail-sheet .comment-edit textarea:focus-visible,
+.skill-dialog .form-stack input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.skill-dialog .form-stack textarea:focus-visible,
+.skill-dialog select:focus-visible {
+  border-color: var(--color-brand);
+  box-shadow: none;
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+.detail-sheet input[type="checkbox"],
+.detail-sheet input[type="radio"],
+.skill-dialog input[type="checkbox"],
+.skill-dialog input[type="radio"] { accent-color: var(--color-brand); }
+.detail-sheet input[type="checkbox"]:focus-visible,
+.skill-dialog input[type="checkbox"]:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .detail-sheet .form-stack input,
+  .detail-sheet .form-stack textarea,
+  .detail-sheet .form-stack select,
+  .skill-dialog select { transition: none; }
+}

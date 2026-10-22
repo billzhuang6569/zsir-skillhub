@@ -1,0 +1,21 @@
+.avatar-crop .avatar-crop-frame { position: relative; margin: 6px auto 14px; border-radius: var(--radius-lg); overflow: hidden; background: var(--color-surface-sunken); box-shadow: inset 0 0 0 1px var(--color-line); }
+.avatar-crop .avatar-crop-canvas { display: block; cursor: grab; touch-action: none; }
+.avatar-crop .avatar-crop-canvas:active { cursor: grabbing; }
+.avatar-crop .avatar-crop-canvas:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }
+.avatar-crop .avatar-crop-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-muted); font-size: 12px; }
+.avatar-crop .avatar-crop-zoom { display: flex; align-items: center; gap: 10px; color: var(--color-muted); font-size: 12px; }
+.avatar-crop .avatar-crop-zoom input { flex: 1; }
+.avatar-crop .avatar-crop-hint { margin-top: 8px; }
+
+/* Detail header avatar: a button only when the account may change it. */
+.sh-avatar-button { position: relative; padding: 0; border: 0; background: none; border-radius: var(--radius-md); cursor: pointer; flex: none; }
+.sh-avatar-button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.sh-avatar-button .sh-avatar-badge { position: absolute; right: -4px; bottom: -4px; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: var(--color-surface); color: var(--color-muted); box-shadow: 0 0 0 1px var(--color-line), var(--shadow-sm); opacity: 0; transition: opacity .15s; }
+.sh-avatar-button:hover .sh-avatar-badge, .sh-avatar-button:focus-visible .sh-avatar-badge, .sh-avatar-button[aria-busy="true"] .sh-avatar-badge { opacity: 1; }
+.sh-avatar-button .sh-avatar-progress { position: absolute; inset: 0; display: grid; place-items: center; border-radius: inherit; background: color-mix(in srgb, var(--color-surface) 60%, transparent); }
+.sh-avatar-button .sh-avatar-progress::after { content: ""; width: 22px; height: 22px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--color-brand) 32%, transparent); border-top-color: var(--color-brand); animation: sh-avatar-spin .8s linear infinite; }
+@keyframes sh-avatar-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .sh-avatar-button .sh-avatar-badge { transition: none; }
+  .sh-avatar-button .sh-avatar-progress::after { animation: none; border-color: var(--color-brand); }
+}

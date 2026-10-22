@@ -1,0 +1,12 @@
+{
+  "serverOrigin": "https://bill-api.whatonearth.work/skillhub",
+  "catalogOrigin": "https://bill-api.whatonearth.work/skillhub",
+  "supportOrigin": "https://bill-api.whatonearth.work/skillhub/donate/",
+  "styleOrigin": "https://bill-api.whatonearth.work/skillhub",
+  "siteOrigin": "https://sk.woe.show",
+  "docsOrigin": "https://sk.woe.show/docs/",
+  "updater": {
+    "endpoint": "https://bill-api.whatonearth.work/skillhub/api/app-updates/{{target}}/{{arch}}/{{current_version}}",
+    "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEwNkIyODU3OTg5MDNCODQKUldTRU81Q1lWeWhyRUFLWHRFcElJK2ptL3FxYkRrejNGK2F3TS9KMnUzWjQrQ3hITHl2VDMzVHEK"
+  }
+}

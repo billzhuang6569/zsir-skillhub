@@ -1,0 +1,39 @@
+{
+  "name": "skillhub-desktop",
+  "version": "0.32.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "npm run tokens:check && node --experimental-strip-types --test tests/*.test.ts scripts/*.test.mjs",
+    "tokens": "node scripts/generate-design-tokens.mjs",
+    "tokens:check": "node scripts/generate-design-tokens.mjs --check",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "node scripts/tauri-channel.mjs dev dev",
+    "tauri:build": "node scripts/tauri-channel.mjs official build"
+  },
+  "dependencies": {
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "^2.0.3",
+    "@tauri-apps/plugin-opener": "^2.0.3",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
+    "lucide-react": "1.48.0",
+    "markdown-it": "14.3.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/markdown-it": "^14.1.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^8.0.10"
+  }
+}

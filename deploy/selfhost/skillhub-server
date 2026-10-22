@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+set +x
+set -euo pipefail
+umask 077
+
+fail() { printf 'SkillHub: %s\n' "$*" >&2; exit 1; }
+[[ $PWD == "$(cd "$(dirname "$0")" && pwd)" ]] || fail '请先 cd deploy/selfhost 再执行此命令。'
+HELPER=$(cat backup-helper.mjs)
+OP=dist/ops/instance-backup.js
+IMAGE=
+PARTIAL=
+RESTART=false
+RESTART_CADDY=false
+RESTART_OBJECTS=false
+OUT=backups
+RECOVERY_OUT=backups/recovery
+BACKUP=
+RECOVERY=
+PASSPHRASE_FILE=
+COMMAND=${1:-}
+[[ $# -gt 0 ]] && shift
+case "$COMMAND" in backup|restore|verify|upgrade) ;; *) fail '用法：./skillhub-server backup|restore|verify|upgrade [选项]' ;; esac
+# BSD mktemp leaves Xs before a suffix unchanged; include randomness on both platforms.
+LOG=$(mktemp "${TMPDIR:-/tmp}/skillhub-server-$COMMAND-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM$RANDOM-XXXXXXXX.log")
+# Compose's ambient overrides must not redirect this command to another project.
+unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES
+unset POSTGRES_PASSWORD JWT_SECRET CREDENTIAL_KEK_BASE64 CREDENTIAL_KEK_VERSION CREDENTIAL_KEK_KEYRING_JSON PUBLIC_BASE_URL DOMAIN ACME_EMAIL
+unset STORAGE_DEFAULT S3_ENDPOINT S3_REGION S3_BUCKET S3_PREFIX S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE
+
+dc() { docker compose "$@" 2>>"$LOG"; }
+crypt() { docker run --rm --pull never -i --network none -e SKILLHUB_BACKUP_DATA_KEY -e SKILLHUB_BACKUP_PASSPHRASE --entrypoint node "$IMAGE" "$OP" "$@" 2>>"$LOG"; }
+helper() { docker run --rm --pull never -i --network none -e SKILLHUB_BACKUP_DATA_KEY -e SKILLHUB_BACKUP_MANIFEST_HASH --entrypoint node "$IMAGE" --input-type=module -e "$HELPER" -- "$@" 2>>"$LOG"; }
+resume_services() {
+  local status=0
+  if [[ $RESTART_OBJECTS == true ]]; then
+    if dc start seaweedfs >/dev/null; then RESTART_OBJECTS=false
+    else printf 'SeaweedFS 重新启动失败，请执行 docker compose start seaweedfs。\n' >&2; status=1; fi
+  fi
+  if [[ $RESTART == true ]]; then
+    if dc start server >/dev/null; then RESTART=false
+    else printf 'Server 重新启动失败，请执行 docker compose start server。\n' >&2; status=1; fi
+  fi
+  if [[ $RESTART_CADDY == true ]]; then
+    if dc start caddy >/dev/null; then RESTART_CADDY=false
+    else printf 'Caddy 重新启动失败，请执行 docker compose start caddy。\n' >&2; status=1; fi
+  fi
+  return "$status"
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  resume_services || status=1
+  if [[ $status != 0 ]]; then
+    printf '操作失败，未自动删除任何备份或恢复数据。\n' >&2
+    [[ -z $PARTIAL ]] || printf '保留未完成备份：%s\n' "$PARTIAL" >&2
+    printf '详细日志：%s\n' "$LOG" >&2
+    tail -n 30 "$LOG" >&2 || :
+  else
+    rm -- "$LOG"
+  fi
+  unset SKILLHUB_BACKUP_DATA_KEY SKILLHUB_BACKUP_PASSPHRASE
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+while [[ $# -gt 0 ]]; do
+  [[ $# -ge 2 && -n $2 ]] || fail '选项缺少值。'
+  case "$1" in
+    --out) OUT=$2 ;;
+    --recovery-out) RECOVERY_OUT=$2 ;;
+    --passphrase-file) PASSPHRASE_FILE=$2 ;;
+    --backup) BACKUP=$2 ;;
+    --recovery) RECOVERY=$2 ;;
+    *) fail '未知选项。' ;;
+  esac
+  shift 2
+done
+
+password() {
+  local permissions owner confirmation
+  if [[ -n $PASSPHRASE_FILE ]]; then
+    [[ -f $PASSPHRASE_FILE && ! -L $PASSPHRASE_FILE ]] || fail '口令文件必须为普通文件，不能是符号链接。'
+    if [[ $(uname -s) == Darwin ]]; then
+      permissions=$(stat -f %Lp "$PASSPHRASE_FILE"); owner=$(stat -f %u "$PASSPHRASE_FILE")
+    else
+      permissions=$(stat -c %a "$PASSPHRASE_FILE"); owner=$(stat -c %u "$PASSPHRASE_FILE")
+    fi
+    [[ $permissions == 600 && $owner == "$(id -u)" ]] || fail '口令文件必须属于当前用户且权限为 0600；请先修正属主和 chmod 600。'
+    SKILLHUB_BACKUP_PASSPHRASE=$(cat "$PASSPHRASE_FILE")
+  else
+    IFS= read -r -s -p '恢复口令（至少 12 字符）：' SKILLHUB_BACKUP_PASSPHRASE </dev/tty
+    printf '\n' >&2
+    if [[ $COMMAND == backup || $COMMAND == upgrade ]]; then
+      IFS= read -r -s -p '再次输入恢复口令：' confirmation </dev/tty
+      printf '\n' >&2
+      [[ $confirmation == "$SKILLHUB_BACKUP_PASSPHRASE" ]] || fail '两次口令不一致。'
+    fi
+  fi
+  [[ ${#SKILLHUB_BACKUP_PASSPHRASE} -ge 12 && $SKILLHUB_BACKUP_PASSPHRASE != *$'\n'* ]] || fail '口令至少 12 字符，且只能有一行。'
+  export SKILLHUB_BACKUP_PASSPHRASE
+}
+
+empty_target() {
+  [[ ! -e .env && ! -L .env ]] || fail '当前目录已有 .env；请在另一份全新代码目录恢复，不要删除现有配置。'
+  local volumes volume
+  volumes=$(docker volume ls --format '{{.Name}}' 2>>"$LOG") || fail '无法检查 Docker 数据卷。'
+  for volume in postgres-data media-data cards-data caddy-data caddy-config objects-data; do
+    if printf '%s\n' "$volumes" | grep -Fx "skillhub-selfhost_$volume" >/dev/null; then
+      fail '此 Compose 项目已有数据卷；请使用全新的 Docker 主机恢复，保留既有数据。'
+    fi
+  done
+}
+
+get_image() {
+  IMAGE=$(dc images -q server | head -n 1)
+  [[ -n $IMAGE ]] || fail '找不到 Server 镜像；请先完成安装。'
+}
+
+private_dir() {
+  [[ ! -L $1 ]] || fail '输出目录不能是符号链接。'
+  mkdir -p "$1"
+  chmod 700 "$1"
+}
+
+backup() {
+  [[ -f .env && ! -L .env ]] || fail '缺少普通 .env 文件；请先完成安装。'
+  get_image
+  local preset pg health metadata stamp name hash bytes records='' container running caddy_running
+  preset=$(helper env <.env) || fail '.env 的项目名或预设不受支持。'
+  pg=$(dc ps -q postgres)
+  [[ -n $pg ]] || fail 'Postgres 未运行；请先启动并等待健康。'
+  health=$(docker inspect --format '{{.State.Health.Status}}' "$pg" 2>>"$LOG")
+  [[ $health == healthy ]] || fail 'Postgres 尚未健康；请检查数据库后重试。'
+  private_dir "$OUT"; private_dir "$RECOVERY_OUT"
+  BACKUP_ID=$(helper uuid </dev/null)
+  SKILLHUB_BACKUP_DATA_KEY=$(openssl rand -base64 32)
+  export SKILLHUB_BACKUP_DATA_KEY
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  BACKUP="$OUT/skillhub-$stamp-$BACKUP_ID"
+  PARTIAL="$BACKUP.partial"
+  mkdir "$PARTIAL"; mkdir "$PARTIAL/parts"
+  running=$(dc ps --status running -q server)
+  if [[ -n $running ]]; then RESTART=true; dc stop server >/dev/null; fi
+  if [[ $preset == *compose.public.yaml* ]]; then
+    caddy_running=$(dc ps --status running -q caddy)
+    if [[ -n $caddy_running ]]; then RESTART_CADDY=true; dc stop caddy >/dev/null; fi
+  fi
+  metadata=$(dc run --rm --no-deps -T --entrypoint node server "$OP" metadata)
+  if [[ $preset == *:compose.s3-local.yaml ]]; then
+    running=$(dc ps --status running -q seaweedfs)
+    if [[ -n $running ]]; then RESTART_OBJECTS=true; dc stop seaweedfs >/dev/null; fi
+  fi
+  for name in db media cards caddy objects; do
+    [[ $name != caddy || $preset == *compose.public.yaml* ]] || continue
+    [[ $name != objects || $preset == *:compose.s3-local.yaml ]] || continue
+    case "$name" in
+      db) dc exec -T postgres pg_dump -Fc -U skillhub -d skillhub | crypt encrypt-part --name db --backup-id "$BACKUP_ID" >"$PARTIAL/parts/db.enc" ;;
+      media|cards) dc run --rm --no-deps -T --entrypoint tar server -C /var/lib/skillhub -cf - "$name" | crypt encrypt-part --name "$name" --backup-id "$BACKUP_ID" >"$PARTIAL/parts/$name.enc" ;;
+      caddy) dc run --rm --no-deps -T --entrypoint tar caddy -C / -cf - data config | crypt encrypt-part --name caddy --backup-id "$BACKUP_ID" >"$PARTIAL/parts/caddy.enc" ;;
+      objects) docker run --rm --pull never --network none --user 0 -v skillhub-selfhost_objects-data:/data:ro --entrypoint tar "$IMAGE" -C /data -cf - . 2>>"$LOG" | crypt encrypt-part --name objects --backup-id "$BACKUP_ID" >"$PARTIAL/parts/objects.enc" ;;
+    esac
+    hash=$(crypt sha256 <"$PARTIAL/parts/$name.enc")
+    bytes=$(wc -c <"$PARTIAL/parts/$name.enc" | tr -d ' ')
+    records+="$name $hash $bytes"$'\n'
+  done
+  printf '%s\n%s\n%s\n%s' "$metadata" "$preset" "$BACKUP_ID" "$records" | helper manifest >"$PARTIAL/manifest.json"
+  local inspected instance
+  inspected=$(helper manifest-info <"$PARTIAL/manifest.json")
+  instance=$(printf '%s\n' "$inspected" | sed -n '2p')
+  SKILLHUB_BACKUP_MANIFEST_HASH=$(crypt sha256 <"$PARTIAL/manifest.json")
+  export SKILLHUB_BACKUP_MANIFEST_HASH
+  RECOVERY="$RECOVERY_OUT/skillhub-recovery-$stamp-${instance:0:8}.skr"
+  [[ ! -e $RECOVERY && ! -e $RECOVERY.partial ]] || fail '恢复文件已存在；请更换输出目录。'
+  (set -o noclobber; helper recovery-input <.env | crypt seal-recovery --backup-id "$BACKUP_ID" >"$RECOVERY.partial")
+  mv "$RECOVERY.partial" "$RECOVERY"
+  mv "$PARTIAL" "$BACKUP"
+  PARTIAL=
+  resume_services
+  printf '数据备份：%s\n恢复文件：%s\n数据备份与恢复文件分开保管，恢复文件请移到另一台设备；两者都需要才能恢复。\n' "$BACKUP" "$RECOVERY"
+}
+
+verify() {
+  [[ -d $BACKUP && -f $BACKUP/manifest.json && -f $RECOVERY ]] || fail '请提供 --backup DIR 和 --recovery FILE。'
+  local expected actual inspected name hash bytes
+  expected=$(crypt open-recovery --field manifest-sha256 <"$RECOVERY") || fail '恢复口令错误或恢复文件已损坏'
+  actual=$(crypt sha256 <"$BACKUP/manifest.json")
+  [[ $expected == "$actual" ]] || fail 'manifest 哈希不符；请找回与恢复文件配套的原始备份。'
+  inspected=$(helper manifest-info <"$BACKUP/manifest.json") || fail 'manifest 格式无效。'
+  BACKUP_ID=$(printf '%s\n' "$inspected" | sed -n '1p')
+  EXPECT_INSTANCE=$(printf '%s\n' "$inspected" | sed -n '2p')
+  MIGRATION=$(printf '%s\n' "$inspected" | sed -n '3p')
+  PG_MAJOR=$(printf '%s\n' "$inspected" | sed -n '4p')
+  PRESET=$(printf '%s\n' "$inspected" | sed -n '5p')
+  expected=$(crypt open-recovery --field backup-id <"$RECOVERY")
+  [[ $expected == "$BACKUP_ID" ]] || fail '恢复文件的 backupId 不符。'
+  SKILLHUB_BACKUP_DATA_KEY=$(crypt open-recovery --field data-key <"$RECOVERY")
+  export SKILLHUB_BACKUP_DATA_KEY
+  while read -r name hash bytes; do
+    [[ -f $BACKUP/parts/$name.enc && ! -L $BACKUP/parts/$name.enc ]] || fail '缺少备份分片或分片为符号链接。'
+    actual=$(crypt sha256 <"$BACKUP/parts/$name.enc")
+    [[ $actual == "$hash" && $(wc -c <"$BACKUP/parts/$name.enc" | tr -d ' ') == "$bytes" ]] || fail '分片密文哈希或大小不符；请取回完整备份。'
+    crypt decrypt-part --name "$name" --backup-id "$BACKUP_ID" <"$BACKUP/parts/$name.enc" >/dev/null || fail '备份分片认证失败。'
+  done < <(printf '%s\n' "$inspected" | tail -n +6)
+}
+
+health() {
+  dc exec -T -e SKILLHUB_BACKUP_EXPECT_INSTANCE server node -e '
+    (async () => {
+      for (const path of ["/health", "/ready"]) {
+        const r = await fetch("http://127.0.0.1:3001" + path, {headers: {Host: new URL(process.env.PUBLIC_BASE_URL).host}, signal: AbortSignal.timeout(10000)});
+        if (!r.ok) throw Error();
+        const body = await r.json();
+        if (path === "/health" && process.env.SKILLHUB_BACKUP_EXPECT_INSTANCE && body.instance?.id !== process.env.SKILLHUB_BACKUP_EXPECT_INSTANCE) throw Error();
+      }
+      process.stdout.write("APP 地址：" + process.env.PUBLIC_BASE_URL + "\n");
+    })().catch(() => process.exit(1))'
+}
+
+restore() {
+  verify
+  [[ -f ../../server/prisma/migrations/$MIGRATION/migration.sql ]] || fail '请使用不低于备份时版本的代码恢复。'
+  local current_major restored_preset name
+  current_major=$(sed -n 's/.*image: postgres:\([0-9]*\).*/\1/p' compose.yaml)
+  [[ $PG_MAJOR == "$current_major" ]] || fail 'Postgres 主版本不同；请使用匹配的大版本环境，单独规划数据库升级。'
+  restored_preset=$(crypt open-recovery --field env <"$RECOVERY" | helper env)
+  [[ $restored_preset == "$PRESET" ]] || fail '恢复配置与 manifest 预设不符。'
+  empty_target
+  # Exclusive final destination: no intermediate plaintext env file.
+  (set -o noclobber; crypt open-recovery --field env <"$RECOVERY" >.env)
+  chmod 600 .env
+  dc up -d --wait postgres >/dev/null
+  crypt decrypt-part --name db --backup-id "$BACKUP_ID" <"$BACKUP/parts/db.enc" | dc exec -T postgres pg_restore --exit-on-error --no-owner --role=skillhub -U skillhub -d skillhub >/dev/null
+  for name in media cards; do
+    crypt decrypt-part --name "$name" --backup-id "$BACKUP_ID" <"$BACKUP/parts/$name.enc" | dc run --rm --no-deps -T --entrypoint tar server -C /var/lib/skillhub -xf - >/dev/null
+  done
+  if [[ $PRESET == *compose.public.yaml* ]]; then
+    crypt decrypt-part --name caddy --backup-id "$BACKUP_ID" <"$BACKUP/parts/caddy.enc" | dc run --rm --no-deps -T --entrypoint tar caddy -C / -xf - >/dev/null
+  fi
+  if [[ $PRESET == *:compose.s3-local.yaml ]]; then
+    # Creates the Compose-labelled objects-data volume; seaweedfs has no dependencies.
+    dc create seaweedfs >/dev/null
+    crypt decrypt-part --name objects --backup-id "$BACKUP_ID" <"$BACKUP/parts/objects.enc" | docker run --rm --pull never -i --network none --user 0 -v skillhub-selfhost_objects-data:/data --entrypoint tar "$IMAGE" -C /data -xf - >/dev/null 2>>"$LOG"
+  fi
+  dc up -d --wait --wait-timeout 180 >/dev/null
+  dc exec -T server node "$OP" verify-restore --expect-instance "$EXPECT_INSTANCE"
+  export SKILLHUB_BACKUP_EXPECT_INSTANCE=$EXPECT_INSTANCE
+  health
+  printf '恢复完成\n'
+}
+
+if [[ $COMMAND == restore ]]; then empty_target; fi
+password
+dc version >/dev/null || fail '需要 Docker Compose v2。'
+if [[ $COMMAND == restore ]]; then
+  # compose.yaml declares this project name and has no explicit server image.
+  IMAGE=skillhub-selfhost-server
+  docker build -t "$IMAGE" -f ../../server/Dockerfile ../.. >/dev/null 2>>"$LOG" || fail 'Server 镜像构建失败；请检查 Docker 与构建环境后重试。'
+  restore
+elif [[ $COMMAND == verify ]]; then
+  # Offline verify never builds, pulls, starts services or creates persistent volumes.
+  IMAGE=skillhub-selfhost-server
+  verify
+  printf '备份验证通过\n'
+else
+  backup
+  if [[ $COMMAND == upgrade ]]; then
+    dc pull --ignore-buildable >/dev/null
+    dc build --pull server >/dev/null
+    dc up -d --wait --wait-timeout 180 >/dev/null
+    RESTART=false; RESTART_CADDY=false
+    health
+    printf '升级完成；自动备份：%s\n恢复文件：%s\n' "$BACKUP" "$RECOVERY"
+  fi
+fi

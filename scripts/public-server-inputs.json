@@ -1,0 +1,14 @@
+{
+  "directories": [
+    "server/dist",
+    "server/prisma"
+  ],
+  "files": [
+    "server/package.json",
+    "server/package-lock.json",
+    "server/tsconfig.json",
+    "server/.env.example",
+    "scripts/generate-server-release-metadata.mjs",
+    "scripts/public-server-inputs.json"
+  ]
+}

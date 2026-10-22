@@ -1,0 +1,39 @@
+{
+  "name": "@skillhub/server",
+  "version": "0.32.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node ../scripts/generate-server-release-metadata.mjs",
+    "start": "node --env-file=.env dist/index.js",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "marketplace:role": "node dist/ops/set-marketplace-role.js",
+    "avatars": "node --env-file=.env dist/ops/skill-avatars.js",
+    "admin": "node --env-file=.env dist/ops/admin.js",
+    "storage": "node --env-file-if-exists=.env dist/ops/storage.js",
+    "versions:labels": "node dist/ops/version-labels.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/sensible": "^6.0.1",
+    "@prisma/client": "^5.22.0",
+    "fastify": "^5.12.1",
+    "jose": "^6.2.12",
+    "openai": "^7.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
+  }
+}

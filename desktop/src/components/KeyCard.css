@@ -1,0 +1,466 @@
+/* 钥匙卡片（#294 设计稿 4、5）：头部点开 Skill 列表，右侧放操作。 */
+.key-card {
+  overflow: visible;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  transition: box-shadow var(--motion-base) var(--ease-standard);
+}
+
+.key-card.is-open { box-shadow: var(--shadow-card); }
+
+.key-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+}
+
+.key-card-head {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.key-card-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.key-card-icon-personal { background: var(--color-warning-tint); color: var(--color-warning); }
+.key-card-icon-team { background: var(--color-brand-tint); color: var(--color-brand); }
+
+.key-card-main {
+  display: grid;
+  flex: 1;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.key-card-names {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.key-card-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font: var(--font-weight-code) var(--font-size-code)/var(--line-height-code) var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.key-card-summary {
+  flex: none;
+  color: var(--color-ink);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  white-space: nowrap;
+}
+
+.key-card-chev {
+  flex: none;
+  color: var(--color-muted);
+  transition: transform var(--motion-base) var(--ease-standard);
+}
+
+.key-card.is-open .key-card-chev { transform: rotate(180deg); }
+
+.key-card-actions { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+
+.key-card-panel {
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.key-card-body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-line);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: var(--color-surface-sunken);
+}
+
+.key-card-section { display: grid; gap: var(--space-2); }
+
+.key-card-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--color-ink);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-label);
+  line-height: var(--line-height-label);
+}
+
+.key-card-section-title span {
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+.key-card-empty {
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Skill 卡片：inline-flex 换行排布，已启用 = 品牌浅底实线，未启用 = 虚线。 */
+.key-skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.key-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 228px;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+
+.key-skill-chip.is-on {
+  border: 1px solid var(--color-brand-line);
+  background: var(--color-brand-tint);
+  color: var(--color-ink);
+}
+
+.key-skill-chip[aria-disabled="true"] { cursor: default; }
+.key-skill-chip:disabled { cursor: progress; }
+
+.key-skill-avatar {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  color: var(--color-ink);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+}
+
+.key-skill-copy { display: grid; flex: 1; gap: 2px; min-width: 0; }
+
+.key-skill-name,
+.key-skill-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-skill-name { font-size: var(--font-size-label); font-weight: var(--font-weight-label); }
+.key-skill-sub { color: var(--color-muted); font-size: var(--font-size-caption); }
+.key-skill-sub.is-override { color: var(--color-warning); }
+
+.key-skill-badge {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.key-skill-chip.is-on .key-skill-badge { color: var(--color-brand); }
+
+/* 团队：最近 30 天谁用过。 */
+.key-usage-list {
+  display: grid;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.key-usage-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 140px) minmax(0, 1fr) 72px 96px;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-line);
+  font-size: var(--font-size-caption);
+}
+
+.key-usage-row:first-child { border-top: 0; }
+.key-usage-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-usage-count { color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.key-usage-when { color: var(--color-muted); }
+
+/* 弹出菜单（⋯、放进我的钥匙）。 */
+.key-menu-wrap { position: relative; display: inline-flex; }
+
+.key-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  z-index: 30;
+  display: grid;
+  min-width: 168px;
+  max-height: 320px;
+  overflow: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-popover);
+  box-shadow: var(--shadow-card);
+}
+
+.key-menu-end { right: 0; }
+.key-menu-start { left: 0; }
+
+.key-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--font-size-description);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.key-menu button:hover,
+.key-menu button:focus-visible { background: var(--color-hover); }
+.key-menu button:disabled { color: var(--color-muted); cursor: not-allowed; }
+.key-menu .key-menu-danger { color: var(--color-danger); }
+
+@media (max-width: 860px) {
+  .key-card-row { flex-wrap: wrap; }
+  .key-card-summary { white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key-card,
+  .key-card-chev,
+  .key-skill-chip { transition: none; }
+}
+
+/* 关联变量名弹窗。 */
+.key-alias-editor-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.key-alias-editor-list li { display: inline-flex; align-items: center; gap: 2px; }
+.key-alias-editor-list .ico-btn { width: 24px; height: 24px; }
+
+.key-alias-editor-add { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
+
+.key-alias-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: var(--font-size-code) var(--font-code);
+}
+
+.key-alias-input:focus { border-color: var(--color-brand); outline: 0; box-shadow: 0 0 0 3px var(--color-brand-tint); }
+
+/* 共享弹窗：团队勾选列表。 */
+.share-key-teams {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 0;
+}
+
+.share-key-teams legend {
+  padding: 0 0 var(--space-2);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+.share-key-team {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.share-key-team.is-selected { border-color: var(--color-brand-line); background: var(--color-brand-tint); }
+.share-key-team.is-static { background: var(--color-surface-sunken); cursor: default; }
+.share-key-team.is-disabled { color: var(--color-muted); cursor: not-allowed; }
+.share-key-team input { width: 18px; height: 18px; flex: none; accent-color: var(--color-brand); }
+.share-key-team:has(input:focus-visible) { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+
+.share-key-team-avatar {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+.share-key-team-copy { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.share-key-team-copy b { color: var(--color-ink); font-size: var(--font-size-label); }
+.share-key-team-copy span { color: var(--color-muted); font-size: var(--font-size-caption); }
+.share-key-team-copy .is-mine { color: var(--color-success); }
+
+.share-key-body {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  color: var(--color-muted);
+  font-size: var(--font-size-description);
+  line-height: var(--line-height-description);
+}
+
+.share-key-body code { color: var(--color-ink); }
+
+.share-key-note {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.55;
+}
+
+.share-key-note svg { flex: none; margin-top: 2px; }
+
+.share-key-choices { display: grid; gap: var(--space-2); }
+
+.btn.key-menu-danger { color: var(--color-danger); }
+
+/* #306 同名多把钥匙：标签、「默认」标记、同名卡片成组。 */
+.key-variant-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-default-tag {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.key-card-variant {
+  position: relative;
+  margin-left: var(--space-5);
+}
+
+.key-card-variant::before {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--space-3));
+  left: calc(-1 * var(--space-3));
+  width: var(--space-2);
+  height: calc(var(--space-3) + 28px);
+  border-bottom: 1px solid var(--color-line);
+  border-left: 1px solid var(--color-line);
+  border-bottom-left-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.key-override-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-warning);
+  font: inherit;
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+
+.key-override-toggle[aria-expanded='true'] .key-card-chev { transform: rotate(180deg); }
+
+.key-override-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+
+.key-override-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--font-size-description);
+}
+
+.key-variant-form { display: grid; gap: var(--space-3); }
+
+.key-variant-form label { display: grid; gap: var(--space-1); }
+
+.key-variant-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; border: 0; }
+
+.key-variant-choices legend { margin-bottom: var(--space-1); color: var(--color-ink); font-size: var(--font-size-label); font-weight: var(--font-weight-label); }

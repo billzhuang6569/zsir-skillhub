@@ -1,0 +1,31 @@
+{
+    email {$ACME_EMAIL}
+    # Error logs can include the request URI even when access logging is disabled.
+    log default {
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers delete
+            }
+        }
+    }
+}
+
+{$DOMAIN} {
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000"
+        -Server
+    }
+    reverse_proxy server:3001 {
+        # Preserve the external authority; discard caller-supplied proxy metadata.
+        header_up Host {http.request.hostport}
+        header_up X-Forwarded-Host {http.request.hostport}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-For {remote_host}
+        header_up -Forwarded
+        header_up -X-Request-ID
+    }
+}

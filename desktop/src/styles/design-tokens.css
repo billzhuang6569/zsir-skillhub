@@ -1,0 +1,203 @@
+/* ============================================================
+   一探 SkillHub · 设计系统 Token（生成文件，勿手改）
+   Source: desktop/design-tokens.json (Tan Skillhub Design System tokens.json)
+   Regenerate: npm run tokens   ·   Gate: npm run tokens:check
+   Light lives on :root. Dark applies when the OS prefers dark and the user did
+   not force light, or when the user forces dark via <html data-theme="dark">.
+   ============================================================ */
+:root {
+  color-scheme: light;
+
+  /* Color · design system */
+  --color-bg: #f6f8fc;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f1f4f9;
+  --color-line: #dce3ef;
+  --color-ink: #14213d;
+  --color-muted: #66728a;
+  --color-brand: #1859e6;
+  --color-brand-strong: #0b3aa7;
+  --color-brand-tint: #edf3ff;
+  --color-on-brand: #ffffff;
+  --color-success: #13804f;
+  --color-success-tint: #e6f6ee;
+  --color-warning: #b45309;
+  --color-warning-tint: #fff4e5;
+  --color-danger: #c42b1c;
+  --color-logo-night: #1b1c21;
+  --color-logo-mint: #b9f0dc;
+  --color-logo-lilac: #d6cefa;
+  --color-logo-blush: #f8d0e0;
+  --color-on-pastel: #14213d;
+
+  /* Color · desktop supplements */
+  --color-window-border: rgba(88,99,120,.28);
+  --color-overlay: rgba(9,18,38,.42);
+  --color-scrim: rgba(13,19,32,.34);
+  --color-chrome: rgba(255,255,255,.72);
+  --color-chrome-header: rgba(246,248,252,.82);
+  --color-popover: rgba(255,255,255,.96);
+  --color-hover: rgba(18,26,43,.05);
+  --color-scrollbar: rgba(18,26,43,.16);
+  --color-scrollbar-hover: rgba(18,26,43,.28);
+  --color-line-strong: #c9d3e3;
+  --color-brand-line: rgba(24,89,230,.32);
+  --color-warning-line: rgba(180,83,9,.30);
+  --color-danger-tint: rgba(196,43,28,.08);
+  --color-danger-line: rgba(196,43,28,.30);
+
+  /* Type */
+  --font-sans: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-size-display: 44px;
+  --line-height-display: 52px;
+  --font-weight-display: 820;
+  --letter-spacing-display: -0.02em;
+  --font-size-page-title: 36px;
+  --line-height-page-title: 44px;
+  --font-weight-page-title: 780;
+  --letter-spacing-page-title: -0.02em;
+  --font-size-stat-value: 28px;
+  --line-height-stat-value: 32px;
+  --font-weight-stat-value: 760;
+  --letter-spacing-stat-value: -0.01em;
+  --font-size-section-title: 22px;
+  --line-height-section-title: 30px;
+  --font-weight-section-title: 740;
+  --font-size-card-title: 18px;
+  --line-height-card-title: 26px;
+  --font-weight-card-title: 720;
+  --font-size-skill-name: 17px;
+  --line-height-skill-name: 24px;
+  --font-weight-skill-name: 680;
+  --font-size-body: 15px;
+  --line-height-body: 24px;
+  --font-weight-body: 400;
+  --font-size-description: 14px;
+  --line-height-description: 22px;
+  --font-weight-description: 400;
+  --font-size-label: 14px;
+  --line-height-label: 20px;
+  --font-weight-label: 650;
+  --font-size-caption: 12px;
+  --line-height-caption: 16px;
+  --font-weight-caption: 550;
+  --font-size-code: 12.5px;
+  --line-height-code: 18px;
+  --font-weight-code: 500;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Radius */
+  --radius-sm: 10px;
+  --radius-md: 13px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 2px rgba(20,33,61,.06);
+  --shadow-card: 0 18px 50px rgba(35,56,99,.10);
+  --shadow-sheet: 0 40px 90px -24px rgba(22,25,45,.3), 0 6px 18px rgba(22,25,45,.07);
+
+  /* Motion */
+  --motion-fast: 140ms;
+  --motion-base: 200ms;
+  --ease-standard: cubic-bezier(.32, .72, .24, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    /* Color · design system */
+    --color-bg: #0e131d;
+    --color-surface: #161c28;
+    --color-surface-sunken: #1c2433;
+    --color-line: #283244;
+    --color-ink: #e8edf6;
+    --color-muted: #9aa5b8;
+    --color-brand: #6b97ff;
+    --color-brand-strong: #9ab8ff;
+    --color-brand-tint: #1a2848;
+    --color-on-brand: #0a1531;
+    --color-success: #4cd59a;
+    --color-success-tint: #12301f;
+    --color-warning: #f2b35b;
+    --color-warning-tint: #33250f;
+    --color-danger: #ff8a7a;
+    --color-logo-night: #262833;
+
+    /* Color · desktop supplements */
+    --color-window-border: rgba(148,163,184,.22);
+    --color-overlay: rgba(0,0,0,.6);
+    --color-scrim: rgba(0,0,0,.5);
+    --color-chrome: rgba(22,28,40,.72);
+    --color-chrome-header: rgba(14,19,29,.82);
+    --color-popover: rgba(22,28,40,.96);
+    --color-hover: rgba(232,237,246,.06);
+    --color-scrollbar: rgba(232,237,246,.18);
+    --color-scrollbar-hover: rgba(232,237,246,.3);
+    --color-line-strong: #364257;
+    --color-brand-line: rgba(107,151,255,.36);
+    --color-warning-line: rgba(242,179,91,.32);
+    --color-danger-tint: rgba(255,138,122,.12);
+    --color-danger-line: rgba(255,138,122,.32);
+
+    /* Shadow */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow-card: 0 18px 50px rgba(0,0,0,.45);
+    --shadow-sheet: 0 40px 90px -24px rgba(0,0,0,.6), 0 6px 18px rgba(0,0,0,.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Color · design system */
+  --color-bg: #0e131d;
+  --color-surface: #161c28;
+  --color-surface-sunken: #1c2433;
+  --color-line: #283244;
+  --color-ink: #e8edf6;
+  --color-muted: #9aa5b8;
+  --color-brand: #6b97ff;
+  --color-brand-strong: #9ab8ff;
+  --color-brand-tint: #1a2848;
+  --color-on-brand: #0a1531;
+  --color-success: #4cd59a;
+  --color-success-tint: #12301f;
+  --color-warning: #f2b35b;
+  --color-warning-tint: #33250f;
+  --color-danger: #ff8a7a;
+  --color-logo-night: #262833;
+
+  /* Color · desktop supplements */
+  --color-window-border: rgba(148,163,184,.22);
+  --color-overlay: rgba(0,0,0,.6);
+  --color-scrim: rgba(0,0,0,.5);
+  --color-chrome: rgba(22,28,40,.72);
+  --color-chrome-header: rgba(14,19,29,.82);
+  --color-popover: rgba(22,28,40,.96);
+  --color-hover: rgba(232,237,246,.06);
+  --color-scrollbar: rgba(232,237,246,.18);
+  --color-scrollbar-hover: rgba(232,237,246,.3);
+  --color-line-strong: #364257;
+  --color-brand-line: rgba(107,151,255,.36);
+  --color-warning-line: rgba(242,179,91,.32);
+  --color-danger-tint: rgba(255,138,122,.12);
+  --color-danger-line: rgba(255,138,122,.32);
+
+  /* Shadow */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-card: 0 18px 50px rgba(0,0,0,.45);
+  --shadow-sheet: 0 40px 90px -24px rgba(0,0,0,.6), 0 6px 18px rgba(0,0,0,.3);
+}

@@ -1,0 +1,168 @@
+/* ============================================================
+   一探 SkillHub · 全局基础样式
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font: 14px/1.6 var(--font-sans);
+  color: var(--color-ink);
+  background: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+pre,
+code,
+.selectable-text {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+button { font-family: inherit; }
+
+button:focus-visible,
+[role="option"]:focus-visible,
+[role="dialog"]:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Focus (#263): every interactive element gets the design-system ring (2px brand, offset 2px).
+   :where() keeps it at the lowest specificity so a component that draws its own ring
+   (search fields with :focus-within, list rows with an inset ring) still wins. */
+:where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]),
+  [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="checkbox"], [role="switch"]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: fixed;
+  top: -60px;
+  left: var(--space-3);
+  z-index: 200;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-on-brand);
+  font-weight: var(--font-weight-label);
+  box-shadow: var(--shadow-card);
+}
+.skip-link:focus { top: var(--space-3); }
+#main-content:focus { outline: none; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+
+svg { flex: none; display: block; }
+
+b, strong { font-weight: 600; }
+
+.mono { font-family: var(--font-code); font-size: .92em; letter-spacing: 0; }
+.skill-primary-name { font-family: var(--font-code); letter-spacing: 0; }
+
+/* 钥匙别名（#288）：一个变量名一个等宽小标签，「钥匙」页、团队钥匙与 Skill 详情共用。 */
+.key-alias-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  color: var(--color-muted);
+  font: var(--font-weight-code) var(--font-size-caption)/1 var(--font-code);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row-info .team-key-names {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: 0;
+}
+
+.settings-row-info .team-key-names b { margin-right: var(--space-1); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-hover);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Animations */
+@keyframes pop {
+  0%   { opacity: 0; transform: translateY(8px) scale(.985); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes glowin {
+  0%   { box-shadow: 0 0 0 0 rgba(14,124,111,.5); }
+  100% { box-shadow: 0 0 0 14px rgba(14,124,111,0); }
+}
+
+/* Entrances (sheets, Toast) and exits share the motion tokens from design-tokens.json. */
+.pop-in { animation: pop var(--motion-base) var(--ease-standard); }
+@keyframes pop-out {
+  0%   { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(8px) scale(.985); }
+}
+.pop-out { animation: pop-out var(--motion-base) var(--ease-standard) forwards; }
+.spin-icon {
+  width: 16px; height: 16px;
+  border: 2px solid var(--color-brand-line);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+
+/* Reduced motion, app-wide (#263): nothing keeps moving. Every animation runs one
+   imperceptible frame and stops; every transition is instant. Components add
+   static fallbacks where the final frame matters (team-share ring, skeletons). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: .01ms !important;
+    transition-delay: 0s !important;
+  }
+  .spin-icon { animation: none !important; border-top-color: var(--color-brand-line); }
+}

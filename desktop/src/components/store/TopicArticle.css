@@ -1,0 +1,64 @@
+/* Desktop topic article (#213): one 680px column shared by the text, every card group and the
+   end block, so card edges line up with the prose (user feedback on the native check).
+   Cards are the store SkillCard / SkillRow (hairline, radius-lg, no tint); a single Skill
+   is the row laid out as a full-width card. */
+.tsh-article { --article-column: 680px; display: flex; flex-direction: column; gap: var(--space-6); width: 100%; max-width: var(--article-column); margin: var(--space-6) auto 0; min-width: 0; }
+.tsh-article-prose { width: 100%; max-width: var(--article-column); margin: 0 auto; font-size: 16px; line-height: 30px; color: var(--color-ink); overflow-wrap: anywhere; }
+.tsh-article-prose > :first-child { margin-top: 0; }
+.tsh-article-prose > :last-child { margin-bottom: 0; }
+.tsh-article-prose p, .tsh-article-prose ul, .tsh-article-prose ol, .tsh-article-prose blockquote, .tsh-article-prose pre, .tsh-article-prose table, .tsh-article-prose hr { margin: 0 0 var(--space-5); }
+.tsh-article-prose h2 { margin: var(--space-6) 0 var(--space-3); font-size: 22px; line-height: 30px; font-weight: 740; letter-spacing: -.01em; }
+.tsh-article-prose h3 { margin: var(--space-5) 0 var(--space-2); font-size: 18px; line-height: 28px; font-weight: 700; }
+.tsh-article-prose h4, .tsh-article-prose h5, .tsh-article-prose h6 { margin: var(--space-4) 0 var(--space-2); font-size: 16px; line-height: 26px; font-weight: 700; }
+.tsh-article-prose ul, .tsh-article-prose ol { padding-left: 22px; }
+.tsh-article-prose li + li { margin-top: 6px; }
+.tsh-article-prose blockquote { padding: 4px 0 4px 18px; border-left: 2px solid var(--color-line); color: var(--color-muted); }
+.tsh-article-prose a { color: var(--color-brand); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.tsh-article-prose code { padding: 2px 6px; border-radius: 6px; background: var(--color-surface-sunken); font-family: var(--font-code); font-size: 13px; }
+.tsh-article-prose pre { padding: var(--space-4); overflow: auto; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-surface-sunken); font-size: 13px; line-height: 20px; }
+.tsh-article-prose pre code { padding: 0; background: none; }
+.tsh-article-prose hr { border: 0; border-top: 1px solid var(--color-line); }
+.tsh-article-prose img { display: block; max-width: 100%; height: auto; border: 1px solid var(--color-line); border-radius: var(--radius-lg); }
+.tsh-article-prose table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
+.tsh-article-prose th, .tsh-article-prose td { padding: 8px 12px; border-bottom: 1px solid var(--color-line); text-align: left; vertical-align: top; }
+.tsh-article-prose th { background: var(--color-surface-sunken); font-weight: 650; }
+.tsh-article-prose .markdown-image-placeholder { display: inline-flex; padding: 2px 8px; border: 1px dashed var(--color-line); border-radius: 6px; color: var(--color-muted); font-size: 13px; }
+
+.tsh-article-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); width: 100%; max-width: var(--article-column); margin: 0 auto; min-width: 0; }
+.tsh-article-cards > * { min-width: 0; }
+.tsh-article-cards.is-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Three cards share the 680px column only while each stays at least 200px wide. */
+.tsh-article-cards.is-3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.tsh-article-cards.is-1 > .tsh-row { padding: var(--space-5); border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-sm); content-visibility: visible; transition: box-shadow var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard); }
+.tsh-article-cards.is-1 .tsh-row-desc { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tsh-article-cards.is-1 > .tsh-row:hover { box-shadow: var(--shadow-card); transform: translateY(-2px); }
+.tsh-article-cards .tsh-card { min-height: 0; }
+
+.tsh-article-missing { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-5); border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-surface-sunken); color: var(--color-muted); }
+.tsh-article-missing-avatar { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-surface); }
+.tsh-article-missing strong { display: block; font-size: 15px; line-height: 22px; font-weight: 650; }
+.tsh-article-missing small { display: block; font-size: 13px; line-height: 20px; }
+
+.tsh-article-end { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); width: 100%; max-width: var(--article-column); margin: 0 auto; padding: var(--space-5); border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-surface); }
+.tsh-article-end > div { flex: 1 1 240px; min-width: 0; }
+.tsh-article-end strong { display: block; font-size: 17px; line-height: 24px; }
+.tsh-article-end p { margin: 4px 0 0; color: var(--color-muted); font-size: 13px; line-height: 20px; }
+.tsh-article-end .tsh-btn:disabled { opacity: .6; cursor: default; }
+.tsh-article-results { flex-basis: 100%; display: grid; gap: 6px; margin: 0; padding: var(--space-3) 0 0; border-top: 1px solid var(--color-line); list-style: none; font-size: 13px; line-height: 20px; }
+.tsh-article-results li { display: flex; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.tsh-article-results li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsh-article-results em { flex-shrink: 0; font-style: normal; color: var(--color-muted); }
+.tsh-article-results li[data-result="done"] em { color: var(--color-success); }
+.tsh-article-results li[data-result="failed"] em, .tsh-article-results li[data-result="stopped"] em { color: var(--color-danger); }
+
+.tsh-article-loading { max-width: 680px; margin: var(--space-6) auto 0; color: var(--color-muted); font-size: 14px; }
+.tsh-article-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); max-width: 680px; margin: var(--space-5) auto 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-warning-tint); color: var(--color-ink); font-size: 13px; }
+
+@media (max-width: 760px) {
+  .tsh-article-cards.is-2, .tsh-article-cards.is-3 { grid-template-columns: minmax(0, 1fr); }
+  .tsh-article-cards.is-1 > .tsh-row { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tsh-article-cards.is-1 > .tsh-row { transition: none; }
+  .tsh-article-cards.is-1 > .tsh-row:hover { transform: none; }
+}

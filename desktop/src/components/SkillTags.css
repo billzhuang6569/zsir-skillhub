@@ -1,0 +1,177 @@
+/* Private custom tags (#323): chips in the 「我的 Skills」 row and detail, and the
+ * 「添加标签…」 popover. Canonical tokens only, so dark mode follows the theme. */
+.skill-tag-chips { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.skill-tag-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 96px;
+  height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--color-brand-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+  font: 600 10.5px/14px var(--font-sans);
+  white-space: nowrap;
+}
+.skill-tag-chip.more { flex: none; border-color: var(--color-line); background: var(--color-surface); color: var(--color-muted); }
+.skill-tag-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@container skill-library (max-width: 560px) {
+  .skill-tag-chip { max-width: 72px; }
+}
+
+/* Detail 「标签」 row: AI labels keep the muted outline chips; custom tags are brand chips with ×. */
+.profile-tag-groups { display: flex; flex-direction: column; gap: 6px; }
+.profile-tag-groups .skill-tag-chips { display: contents; }
+.profile-tag-groups .skill-tag-chip { max-width: 100%; height: 24px; padding: 0 9px; font-size: var(--font-size-caption); }
+.profile-tag-groups .skill-tag-chip.removable { padding-right: 3px; }
+.profile-tag-mine { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.skill-tag-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.skill-tag-chip-remove:hover { background: color-mix(in srgb, var(--color-brand) 16%, transparent); }
+.skill-tag-chip-remove:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 0; }
+.profile-tag-add { height: 24px; padding: 0 9px; border-radius: var(--radius-pill); border-style: dashed; }
+
+.skill-tag-popover {
+  position: fixed;
+  z-index: 130;
+  width: 260px;
+  max-width: calc(100vw - 16px);
+  max-height: min(380px, calc(100vh - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-popover);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  animation: skill-tag-popover-in var(--motion-fast) var(--ease-standard);
+}
+@keyframes skill-tag-popover-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .skill-tag-popover { animation: none; }
+}
+.skill-tag-popover-head { display: flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: var(--font-size-caption); font-weight: 650; }
+.skill-tag-popover-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: 13px var(--font-sans);
+  outline: 0;
+}
+.skill-tag-popover-input:focus { border-color: var(--color-brand); box-shadow: 0 0 0 2px var(--color-brand-tint); }
+.skill-tag-popover-input[aria-invalid="true"] { border-color: var(--color-danger); }
+.skill-tag-popover-error { margin: 0; color: var(--color-danger); font-size: var(--font-size-caption); line-height: var(--line-height-caption); }
+.skill-tag-popover-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.skill-tag-popover-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+}
+.skill-tag-popover-option:hover { background: var(--color-hover); }
+.skill-tag-popover-option:focus-within { background: var(--color-brand-tint); }
+.skill-tag-popover-option input { width: 14px; height: 14px; margin: 0; accent-color: var(--color-brand); }
+.skill-tag-popover-option input:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.skill-tag-popover-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.skill-tag-popover-option small { color: var(--color-muted); font: 11px var(--font-code); font-variant-numeric: tabular-nums; }
+.skill-tag-popover-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-brand);
+  font: 600 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.skill-tag-popover-create span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-tag-popover-create:hover,
+.skill-tag-popover-create:focus-visible { background: var(--color-brand-tint); outline: 0; }
+.skill-tag-popover-hint { margin: 0; color: var(--color-muted); font-size: 11px; line-height: 15px; }
+
+/* 「我的 Skills · 标签」 (#324): collapsible groups, 【无标签】 last; rows reuse SkillLibraryList. */
+.skill-tag-groups { display: flex; flex-direction: column; gap: var(--space-3); }
+.skill-tag-group { min-width: 0; scroll-margin-top: var(--space-4); }
+.skill-tag-group-head { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.skill-tag-group-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink);
+  font: 650 13px/18px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  scroll-margin-top: var(--space-4);
+}
+.skill-tag-group-toggle:hover { background: var(--color-hover); }
+.skill-tag-group-toggle > svg { flex: none; color: var(--color-muted); }
+.skill-tag-group-toggle > .skill-tag-group-chevron { transform: rotate(0deg); transition: transform var(--motion-fast) var(--ease-standard); }
+.skill-tag-group.collapsed .skill-tag-group-chevron { transform: rotate(-90deg); }
+.skill-tag-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-tag-group.untagged .skill-tag-group-name { color: var(--color-muted); }
+.skill-tag-group-count {
+  flex: none;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-sunken);
+  color: var(--color-muted);
+  font: 600 11px/18px var(--font-code);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.skill-tag-group-more { flex: none; width: 30px; height: 30px; color: var(--color-muted); }
+.skill-tag-group-body { margin-top: var(--space-1); }
+.skill-tag-group-empty {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-lg);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+.skill-tag-rename-note { margin: 0; color: var(--color-muted); font-size: var(--font-size-caption); line-height: var(--line-height-caption); }
+@media (prefers-reduced-motion: reduce) {
+  .skill-tag-group-toggle > .skill-tag-group-chevron { transition: none; }
+}
+.organizer-sync-error { color: var(--color-danger) !important; }

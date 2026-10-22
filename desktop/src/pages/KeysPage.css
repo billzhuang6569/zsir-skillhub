@@ -1,0 +1,72 @@
+/* 「钥匙」页（#262 → #294）：个人 / 团队页签，钥匙卡片见 components/KeyCard.css。 */
+.keys-page { max-width: 1040px; }
+
+.keys-cards { display: grid; gap: var(--space-3); }
+
+/* 团队页签：团队选择 + 成员数 + 放进我的钥匙。 */
+.keys-team { display: grid; gap: var(--space-3); }
+
+.keys-team-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.keys-team-label { color: var(--color-muted); font-size: var(--font-size-description); }
+
+.keys-team-line {
+  flex: 1;
+  min-width: 160px;
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+}
+
+.keys-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-5);
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.keys-empty-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--color-warning-tint);
+  color: var(--color-warning);
+}
+
+.keys-empty p {
+  max-width: 360px;
+  font-size: var(--font-size-description);
+  line-height: var(--line-height-description);
+}
+
+/* 列表上方的状态 / 设置区（#253 钥匙库接入）。 */
+.keys-notice {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.keys-notice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.keys-notice-info { display: grid; gap: 2px; min-width: 0; color: var(--color-muted); font-size: var(--font-size-description); }
+.keys-notice-info b { color: var(--color-ink); font-weight: var(--font-weight-label); }

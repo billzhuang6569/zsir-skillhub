@@ -1,0 +1,21 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set the public domain with install.sh}
+      ACME_EMAIL: ${ACME_EMAIL:?Set the ACME email with install.sh}
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      server:
+        condition: service_healthy
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

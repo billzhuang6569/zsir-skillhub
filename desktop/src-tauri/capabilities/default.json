@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "default",
+  "description": "Default capability for SkillHub desktop app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }, { "url": "mailto:*" }]
+    },
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir",
+    "process:allow-restart",
+    "updater:default"
+  ]
+}

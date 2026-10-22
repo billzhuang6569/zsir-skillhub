@@ -1,0 +1,7 @@
+[
+  {
+    "id": "cargo:webpki-root-certs@1.0.9",
+    "license": "CDLA-Permissive-2.0",
+    "reason": "维护者审核：宽松数据许可证，与 AGPL-3.0 兼容。2026-10-21 以 cargo tree --target 核对，该 crate 不会编译进 macOS arm64/x64 与 Windows arm64/x64 发行制品（仅出现在 Cargo.lock 的其他平台分支），因此第三方声明无需收录；若今后进入发行目标，须在 THIRD_PARTY_NOTICES.txt 补其许可文本。"
+  }
+]

@@ -1,0 +1,111 @@
+/* Sidebar-specific styles not already in app.css */
+.user-avatar { overflow: hidden; }
+.user-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.sidebar-support-actions { display: flex; gap: var(--space-2); min-width: 0; }
+.sidebar-feedback { flex: 1; min-width: 0; min-height: 36px; display: flex; align-items: center; justify-content: center; gap: 7px; margin: 0; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-muted); cursor: pointer; font: 650 12px var(--font-sans); white-space: nowrap; transition: background-color .14s ease-out, border-color .14s ease-out, color .14s ease-out, transform .14s ease-out; }
+.sidebar-feedback:hover { border-color: var(--color-muted); background: var(--color-surface-sunken); color: var(--color-ink); }
+.sidebar-feedback:active { transform: scale(.97); }
+.sidebar-tokens { position: relative; isolation: isolate; overflow: hidden; flex: 1.15; min-width: 0; min-height: 36px; border: 1px solid var(--color-brand); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-brand); font: 700 12px var(--font-sans); white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.sidebar-tokens::before { content: ''; position: absolute; inset: 0; z-index: -1; opacity: 0; background: linear-gradient(110deg, var(--color-brand-tint), color-mix(in srgb, var(--color-brand) 22%, var(--color-surface)), var(--color-brand-tint), color-mix(in srgb, var(--color-brand) 22%, var(--color-surface)), var(--color-brand-tint)); background-size: 300% 100%; transition: opacity .18s ease; }
+.sidebar-tokens:hover::before, .sidebar-tokens:focus-visible::before { opacity: 1; animation: token-flow 3s linear infinite; }
+.sidebar-tokens:hover { color: var(--color-brand-strong); }
+@keyframes token-flow { to { background-position: 100% 0; } }
+@media (prefers-reduced-motion: reduce) { .sidebar-tokens::before { animation: none !important; } }
+
+/* 通知中心 (#295 board 3): header, filter, list, footer inside .notification-popover. */
+.notification-head { flex: none; display: flex; align-items: center; gap: var(--space-2); padding: 14px 16px 10px; }
+.notification-head h2 { margin: 0; color: var(--color-ink); font: 700 15px / 1.3 var(--font-sans); }
+.notification-head button { border: 0; background: none; color: var(--color-brand); font: 600 12.5px var(--font-sans); cursor: pointer; border-radius: var(--radius-sm); padding: 4px 6px; }
+.notification-head button:hover { background: var(--color-brand-tint); }
+.notification-head button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+.notification-head > :last-child { margin-left: auto; }
+.notification-unread { color: var(--color-brand); font-size: var(--font-size-caption); font-weight: 600; font-variant-numeric: tabular-nums; }
+.notification-head > span:not(.notification-unread) { color: var(--color-muted); font-size: var(--font-size-caption); }
+.notification-filter { flex: none; margin: 0 16px 10px; max-width: calc(100% - 32px); overflow-x: auto; }
+.notification-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* Fixed-height popover (#319): the empty state fills the same list area instead of shrinking the frame. */
+.notification-empty { box-sizing: border-box; min-height: 100%; display: grid; align-content: center; gap: 4px; padding: 28px 16px; border-top: 1px solid var(--color-line); text-align: center; color: var(--color-muted); font-size: var(--font-size-caption); }
+.notification-empty b { color: var(--color-ink); font-size: var(--font-size-label); font-weight: var(--font-weight-label); }
+.notification-item { position: relative; display: flex; align-items: flex-start; gap: 12px; width: 100%; margin: 0; padding: 12px 16px; border: 0; border-top: 1px solid var(--color-line); border-radius: 0; background: transparent; color: var(--color-ink); font-family: var(--font-sans); text-align: left; }
+.notification-item.unread { background: color-mix(in srgb, var(--color-brand-tint) 55%, var(--color-surface)); }
+button.notification-item { cursor: pointer; transition: background-color var(--motion-fast) var(--ease-standard); }
+button.notification-item:hover { background: var(--color-surface-sunken); }
+button.notification-item:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }
+.notification-icon { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: var(--radius-sm); }
+.notification-icon.tone-danger { background: var(--color-danger-tint); color: var(--color-danger); }
+.notification-icon.tone-warning { background: var(--color-warning-tint); color: var(--color-warning); }
+.notification-icon.tone-brand { background: var(--color-brand-tint); color: var(--color-brand); }
+.notification-icon.tone-success { background: var(--color-success-tint); color: var(--color-success); }
+.notification-icon.tone-muted { background: var(--color-surface-sunken); color: var(--color-muted); }
+.notification-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 14px; }
+.notification-title { color: var(--color-ink); font-size: 13px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.notification-item.read .notification-title { font-weight: 500; }
+.notification-desc { color: var(--color-muted); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.notification-item.unread .notification-desc { color: var(--color-ink); }
+.notification-code { padding: 0 4px; border-radius: 5px; background: var(--color-surface-sunken); color: var(--color-ink); font: 500 0.95em var(--font-code); }
+.notification-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.notification-time { flex: none; color: var(--color-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.notification-dot { position: absolute; right: 16px; top: 34px; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--color-brand); }
+.notification-foot { flex: none; padding: 10px 16px; border-top: 1px solid var(--color-line); color: var(--color-muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { button.notification-item { transition: none; } }
+
+/* 快捷访问 (#325): a divider under the main navigation, then the pinned tags and Skills.
+   The list scrolls on its own between the fixed navigation and the account footer. */
+.sidebar-nav { flex: none; }
+.sidebar-footer { flex: none; }
+.sidebar-quick { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 6px var(--space-3) 0; padding-top: 10px; border-top: 1px solid var(--color-line); }
+.sidebar-quick-title { flex: none; margin: 0 0 4px; padding: 0 var(--space-3); color: var(--color-muted); font: 650 11px/16px var(--font-sans); letter-spacing: .04em; }
+.sidebar-quick-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0 0 var(--space-2); overflow-y: auto; overscroll-behavior: contain; list-style: none; }
+.sidebar-quick-item { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--radius-md); }
+.sidebar-quick-item:hover { background: var(--color-hover); }
+.sidebar-quick-item.active { background: var(--color-brand-tint); }
+.sidebar-quick-open {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-muted);
+  font: 600 13px/18px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  touch-action: none;
+}
+.sidebar-quick-item:hover .sidebar-quick-open,
+.sidebar-quick-item.active .sidebar-quick-open { color: var(--color-ink); }
+.sidebar-quick-item.active .sidebar-quick-open { color: var(--color-brand); }
+.sidebar-quick-open:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }
+.sidebar-quick-icon { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 6px; background: var(--color-brand-tint); color: var(--color-brand); }
+.sidebar-quick-avatar { flex: none; width: 20px; height: 20px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--color-line); }
+.sidebar-quick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-quick-copy {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 3px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  opacity: .55;
+  transition: opacity var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+.sidebar-quick-item:hover .sidebar-quick-copy,
+.sidebar-quick-copy:focus-visible { opacity: 1; }
+.sidebar-quick-copy:hover { background: var(--color-hover); color: var(--color-ink); }
+.sidebar-quick-copy:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; }
+.sidebar-quick.dragging .sidebar-quick-open { cursor: grabbing; }
+.sidebar-quick-item.is-dragged { opacity: .5; }
+.sidebar-quick-item.drop-before::before,
+.sidebar-quick-item.drop-after::after { content: ""; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 1px; background: var(--color-brand); }
+.sidebar-quick-item.drop-before::before { top: -1px; }
+.sidebar-quick-item.drop-after::after { bottom: -1px; }
+@media (prefers-reduced-motion: reduce) { .sidebar-quick-copy { transition: none; } }

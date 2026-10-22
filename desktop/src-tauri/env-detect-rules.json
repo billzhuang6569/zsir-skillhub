@@ -1,0 +1,383 @@
+{
+  "$comment": "Env detection rule tables shared by desktop/src-tauri/src/env_detect.rs and server/src/lib/env-detect.ts (#251). server/src/lib/env-detect-rules.json must stay byte-identical (scripts/env-detect-rules.test.mjs). Patterns use the regex subset common to Rust `regex` and JavaScript; {KEY} expands to keyGroup. secretKeyTokens decides which detected names are keys at all (#287): a name is a key when one of its `_` segments is listed; other names (OUTPUT_DIR, BASE_URL) are the Skill's own configuration and are dropped. SDK catalog keys bypass that check. serviceKeyGroups lists variable names that mean the same service's key (#288); the APP only uses it to suggest linking a new name to a key already in the vault, never to merge names automatically.",
+  "keyGroup": "([A-Z][A-Z0-9_]*)",
+  "candidateKey": "^[A-Z][A-Z0-9_]{1,99}$",
+  "excludedKeys": [
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "TERM",
+    "PWD",
+    "TMPDIR",
+    "CLAUDE_SKILL_DIR",
+    "SKILL_DIR",
+    "CLAUDE_PLUGIN_ROOT",
+    "ARGUMENTS",
+    "NODE_ENV",
+    "DEBUG",
+    "CI",
+    "LANG",
+    "TZ"
+  ],
+  "excludedKeyPrefixes": [
+    "LC_"
+  ],
+  "secretKeyTokens": [
+    "KEY",
+    "APIKEY",
+    "TOKEN",
+    "TOKENS",
+    "SECRET",
+    "SECRETS",
+    "PASSWORD",
+    "PASSWD",
+    "PASSPHRASE",
+    "CREDENTIAL",
+    "CREDENTIALS",
+    "AUTH",
+    "PAT"
+  ],
+  "prunedDirs": [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "target",
+    ".venv",
+    "__pycache__"
+  ],
+  "envTemplateNames": [
+    ".env.example",
+    ".env.sample",
+    ".env.template"
+  ],
+  "extensions": {
+    "python": [
+      "py"
+    ],
+    "script": [
+      "js",
+      "ts",
+      "mjs",
+      "cjs",
+      "tsx",
+      "jsx"
+    ],
+    "shell": [
+      "sh",
+      "bash",
+      "zsh",
+      "fish"
+    ],
+    "powershell": [
+      "ps1"
+    ],
+    "batch": [
+      "bat",
+      "cmd"
+    ],
+    "markdown": [
+      "md"
+    ],
+    "other": [
+      "env",
+      "rs",
+      "json",
+      "yaml",
+      "yml",
+      "toml",
+      "ini",
+      "cfg",
+      "rb",
+      "go",
+      "php"
+    ]
+  },
+  "shebang": [
+    {
+      "kind": "python",
+      "contains": [
+        "python"
+      ]
+    },
+    {
+      "kind": "script",
+      "contains": [
+        "node",
+        "deno",
+        "bun"
+      ]
+    },
+    {
+      "kind": "powershell",
+      "contains": [
+        "pwsh",
+        "powershell"
+      ]
+    },
+    {
+      "kind": "shell",
+      "contains": [
+        "sh",
+        "fish"
+      ]
+    }
+  ],
+  "sdkCatalog": [
+    {
+      "ecosystem": "python",
+      "names": [
+        "fal_client"
+      ],
+      "label": "fal_client",
+      "keys": [
+        "FAL_KEY"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "@fal-ai/client",
+        "@fal-ai/serverless-client"
+      ],
+      "label": "@fal-ai/client",
+      "keys": [
+        "FAL_KEY"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "openai"
+      ],
+      "label": "openai",
+      "keys": [
+        "OPENAI_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "openai"
+      ],
+      "label": "openai",
+      "keys": [
+        "OPENAI_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "anthropic"
+      ],
+      "label": "anthropic",
+      "keys": [
+        "ANTHROPIC_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "@anthropic-ai/sdk"
+      ],
+      "label": "@anthropic-ai/sdk",
+      "keys": [
+        "ANTHROPIC_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "google_genai",
+        "google.genai"
+      ],
+      "label": "google-genai",
+      "keys": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "@google/genai"
+      ],
+      "label": "@google/genai",
+      "keys": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "replicate"
+      ],
+      "label": "replicate",
+      "keys": [
+        "REPLICATE_API_TOKEN"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "replicate"
+      ],
+      "label": "replicate",
+      "keys": [
+        "REPLICATE_API_TOKEN"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "huggingface_hub"
+      ],
+      "label": "huggingface_hub",
+      "keys": [
+        "HF_TOKEN"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "boto3"
+      ],
+      "label": "boto3",
+      "keys": [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "cohere"
+      ],
+      "label": "cohere",
+      "keys": [
+        "CO_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "cohere-ai"
+      ],
+      "label": "cohere-ai",
+      "keys": [
+        "CO_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "python",
+      "names": [
+        "mistralai"
+      ],
+      "label": "mistralai",
+      "keys": [
+        "MISTRAL_API_KEY"
+      ]
+    },
+    {
+      "ecosystem": "node",
+      "names": [
+        "@mistralai/mistralai"
+      ],
+      "label": "@mistralai/mistralai",
+      "keys": [
+        "MISTRAL_API_KEY"
+      ]
+    }
+  ],
+  "serviceKeyGroups": [
+    {
+      "service": "fal.ai",
+      "keys": [
+        "FAL_KEY",
+        "FAL_API_KEY",
+        "FAL_AI_KEY"
+      ]
+    },
+    {
+      "service": "OpenAI",
+      "keys": [
+        "OPENAI_API_KEY",
+        "OPENAI_KEY"
+      ]
+    },
+    {
+      "service": "Anthropic",
+      "keys": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_KEY",
+        "CLAUDE_API_KEY"
+      ]
+    },
+    {
+      "service": "Google Gemini",
+      "keys": [
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENAI_API_KEY"
+      ]
+    },
+    {
+      "service": "Replicate",
+      "keys": [
+        "REPLICATE_API_TOKEN",
+        "REPLICATE_API_KEY"
+      ]
+    },
+    {
+      "service": "Hugging Face",
+      "keys": [
+        "HF_TOKEN",
+        "HUGGINGFACE_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN"
+      ]
+    },
+    {
+      "service": "Mistral",
+      "keys": [
+        "MISTRAL_API_KEY"
+      ]
+    },
+    {
+      "service": "Cohere",
+      "keys": [
+        "CO_API_KEY",
+        "COHERE_API_KEY"
+      ]
+    }
+  ],
+  "patterns": {
+    "common": [
+      "process\\.env\\[\\s*['\"`]{KEY}['\"`]\\s*\\]",
+      "process\\.env\\??\\.\\s*{KEY}\\b",
+      "import\\.meta\\.env\\.{KEY}\\b",
+      "\\bBun\\.env\\??\\.{KEY}\\b",
+      "\\benviron\\[\\s*['\"]{KEY}['\"]\\s*\\]",
+      "\\benviron\\.get\\(\\s*['\"]{KEY}['\"]",
+      "[Gg][Ee][Tt][Ee][Nn][Vv]\\(\\s*['\"]{KEY}['\"]",
+      "\\bENV\\[\\s*['\"]{KEY}['\"]\\s*\\]",
+      "\\bENV\\.fetch\\(\\s*['\"]{KEY}['\"]",
+      "\\benv\\.get\\(\\s*['\"]{KEY}['\"]",
+      "\\benv::var(?:_os)?\\(\\s*\"{KEY}\"",
+      "\\b(?:option_)?env!\\(\\s*\"{KEY}\"",
+      "\\$\\{{KEY}(?:[:?+=-][^}]*)?\\}"
+    ],
+    "destructuring": "\\{([^{}]*)\\}\\s*=\\s*(?:process\\.env|import\\.meta\\.env|Bun\\.env)\\b",
+    "shellBare": "\\${KEY}\\b",
+    "powershell": "\\$[Ee][Nn][Vv]:{KEY}\\b",
+    "batch": "%{KEY}%",
+    "markdownInline": "`([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)`",
+    "markdownExport": "\\bexport\\s+{KEY}=",
+    "envTemplateLine": "^\\s*(?:export\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*=",
+    "pythonImport": "^\\s*import\\s+([A-Za-z0-9_., ]+)",
+    "pythonFrom": "^\\s*from\\s+([A-Za-z0-9_.]+)\\s+import\\s+\\(?([A-Za-z0-9_, ]+)",
+    "scriptImport": "(?:\\bfrom\\s+|\\brequire\\(\\s*|\\bimport\\(\\s*|\\bimport\\s+)['\"]([^'\"\\s]+)['\"]",
+    "pyprojectQuoted": "[\"']([A-Za-z0-9][A-Za-z0-9_.\\-]*)",
+    "pyprojectTableKey": "^\\s*([A-Za-z0-9][A-Za-z0-9_.\\-]*)\\s*="
+  }
+}

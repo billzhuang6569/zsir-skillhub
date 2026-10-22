@@ -1,0 +1,550 @@
+[
+  {
+    "name": "no metadata",
+    "input": "---\nname: demo\ndescription: fixture\n---\n\n# Demo\n",
+    "expected": []
+  },
+  {
+    "name": "full entry with other metadata keys",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  author: someone\n  skillhub:\n    homepage: https://example.com\n    env:\n      - key: FAL_KEY\n        required: true\n        description: fal.ai API Key\n        obtain: https://fal.ai/dashboard/keys\n      - key: OPENAI_API_KEY\n  version: \"1.0\"\n---\n\n# Demo\n",
+    "expected": [
+      {
+        "key": "FAL_KEY",
+        "required": true,
+        "description": "fal.ai API Key",
+        "obtain": "https://fal.ai/dashboard/keys"
+      },
+      {
+        "key": "OPENAI_API_KEY",
+        "required": true
+      }
+    ]
+  },
+  {
+    "name": "quoted values, comments and false",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      # optional keys\n      - key: \"REPLICATE_API_TOKEN\"  # comment\n        required: False\n        description: 'Replicate token: optional #1'\n      -\n        key: HF_TOKEN\n        description: \"Hugging Face \\\"read\\\" token\"\n---\n\n# Demo\n",
+    "expected": [
+      {
+        "key": "REPLICATE_API_TOKEN",
+        "required": false,
+        "description": "Replicate token: optional #1"
+      },
+      {
+        "key": "HF_TOKEN",
+        "required": true,
+        "description": "Hugging Face \"read\" token"
+      }
+    ]
+  },
+  {
+    "name": "compact list at env indentation",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n    skillhub:\n        env:\n        - key: A_KEY\n          required: false\n        - key: B_KEY\n---\n\n# Demo\n",
+    "expected": [
+      {
+        "key": "A_KEY",
+        "required": false
+      },
+      {
+        "key": "B_KEY",
+        "required": true
+      }
+    ]
+  },
+  {
+    "name": "CRLF line endings",
+    "input": "---\r\nname: demo\r\ndescription: fixture\r\nmetadata:\r\n  skillhub:\r\n    env:\r\n      - key: FAL_KEY\r\n        obtain: https://fal.ai/dashboard/keys\r\n---\r\n\r\n# Demo\r\n",
+    "expected": [
+      {
+        "key": "FAL_KEY",
+        "required": true,
+        "obtain": "https://fal.ai/dashboard/keys"
+      }
+    ]
+  },
+  {
+    "name": "empty flow list",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env: []\n---\n\n# Demo\n",
+    "expected": []
+  },
+  {
+    "name": "top-level env is not a declaration",
+    "input": "---\nname: demo\ndescription: fixture\nenv:\n  - key: FAL_KEY\n---\n\n# Demo\n",
+    "expected": []
+  },
+  {
+    "name": "metadata without skillhub",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  author: x\n  env:\n    - key: FAL_KEY\n---\n\n# Demo\n",
+    "expected": []
+  },
+  {
+    "name": "unknown item fields are ignored",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        provider: fal\n---\n\n# Demo\n",
+    "expected": [
+      {
+        "key": "FAL_KEY",
+        "required": true
+      }
+    ]
+  },
+  {
+    "name": "lowercase key",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: fal_key\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "missing key",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - required: true\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "obtain must be https",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        obtain: http://fal.ai\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "obtain javascript scheme",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        obtain: javascript:alert(1)\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "description over 200 chars",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        description: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "required must be boolean",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        required: yes\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "duplicate key",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n      - key: FAL_KEY\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "env must be a list",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env: FAL_KEY\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "plain item instead of mapping",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - FAL_KEY\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "multi-line value",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        description: |\n          multi\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "more than 100 entries",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: KEY_0\n      - key: KEY_1\n      - key: KEY_2\n      - key: KEY_3\n      - key: KEY_4\n      - key: KEY_5\n      - key: KEY_6\n      - key: KEY_7\n      - key: KEY_8\n      - key: KEY_9\n      - key: KEY_10\n      - key: KEY_11\n      - key: KEY_12\n      - key: KEY_13\n      - key: KEY_14\n      - key: KEY_15\n      - key: KEY_16\n      - key: KEY_17\n      - key: KEY_18\n      - key: KEY_19\n      - key: KEY_20\n      - key: KEY_21\n      - key: KEY_22\n      - key: KEY_23\n      - key: KEY_24\n      - key: KEY_25\n      - key: KEY_26\n      - key: KEY_27\n      - key: KEY_28\n      - key: KEY_29\n      - key: KEY_30\n      - key: KEY_31\n      - key: KEY_32\n      - key: KEY_33\n      - key: KEY_34\n      - key: KEY_35\n      - key: KEY_36\n      - key: KEY_37\n      - key: KEY_38\n      - key: KEY_39\n      - key: KEY_40\n      - key: KEY_41\n      - key: KEY_42\n      - key: KEY_43\n      - key: KEY_44\n      - key: KEY_45\n      - key: KEY_46\n      - key: KEY_47\n      - key: KEY_48\n      - key: KEY_49\n      - key: KEY_50\n      - key: KEY_51\n      - key: KEY_52\n      - key: KEY_53\n      - key: KEY_54\n      - key: KEY_55\n      - key: KEY_56\n      - key: KEY_57\n      - key: KEY_58\n      - key: KEY_59\n      - key: KEY_60\n      - key: KEY_61\n      - key: KEY_62\n      - key: KEY_63\n      - key: KEY_64\n      - key: KEY_65\n      - key: KEY_66\n      - key: KEY_67\n      - key: KEY_68\n      - key: KEY_69\n      - key: KEY_70\n      - key: KEY_71\n      - key: KEY_72\n      - key: KEY_73\n      - key: KEY_74\n      - key: KEY_75\n      - key: KEY_76\n      - key: KEY_77\n      - key: KEY_78\n      - key: KEY_79\n      - key: KEY_80\n      - key: KEY_81\n      - key: KEY_82\n      - key: KEY_83\n      - key: KEY_84\n      - key: KEY_85\n      - key: KEY_86\n      - key: KEY_87\n      - key: KEY_88\n      - key: KEY_89\n      - key: KEY_90\n      - key: KEY_91\n      - key: KEY_92\n      - key: KEY_93\n      - key: KEY_94\n      - key: KEY_95\n      - key: KEY_96\n      - key: KEY_97\n      - key: KEY_98\n      - key: KEY_99\n      - key: KEY_100\n---\n\n# Demo\n",
+    "error": true
+  },
+  {
+    "name": "exactly 100 entries",
+    "input": "---\nname: demo\ndescription: fixture\nmetadata:\n  skillhub:\n    env:\n      - key: KEY_0\n      - key: KEY_1\n      - key: KEY_2\n      - key: KEY_3\n      - key: KEY_4\n      - key: KEY_5\n      - key: KEY_6\n      - key: KEY_7\n      - key: KEY_8\n      - key: KEY_9\n      - key: KEY_10\n      - key: KEY_11\n      - key: KEY_12\n      - key: KEY_13\n      - key: KEY_14\n      - key: KEY_15\n      - key: KEY_16\n      - key: KEY_17\n      - key: KEY_18\n      - key: KEY_19\n      - key: KEY_20\n      - key: KEY_21\n      - key: KEY_22\n      - key: KEY_23\n      - key: KEY_24\n      - key: KEY_25\n      - key: KEY_26\n      - key: KEY_27\n      - key: KEY_28\n      - key: KEY_29\n      - key: KEY_30\n      - key: KEY_31\n      - key: KEY_32\n      - key: KEY_33\n      - key: KEY_34\n      - key: KEY_35\n      - key: KEY_36\n      - key: KEY_37\n      - key: KEY_38\n      - key: KEY_39\n      - key: KEY_40\n      - key: KEY_41\n      - key: KEY_42\n      - key: KEY_43\n      - key: KEY_44\n      - key: KEY_45\n      - key: KEY_46\n      - key: KEY_47\n      - key: KEY_48\n      - key: KEY_49\n      - key: KEY_50\n      - key: KEY_51\n      - key: KEY_52\n      - key: KEY_53\n      - key: KEY_54\n      - key: KEY_55\n      - key: KEY_56\n      - key: KEY_57\n      - key: KEY_58\n      - key: KEY_59\n      - key: KEY_60\n      - key: KEY_61\n      - key: KEY_62\n      - key: KEY_63\n      - key: KEY_64\n      - key: KEY_65\n      - key: KEY_66\n      - key: KEY_67\n      - key: KEY_68\n      - key: KEY_69\n      - key: KEY_70\n      - key: KEY_71\n      - key: KEY_72\n      - key: KEY_73\n      - key: KEY_74\n      - key: KEY_75\n      - key: KEY_76\n      - key: KEY_77\n      - key: KEY_78\n      - key: KEY_79\n      - key: KEY_80\n      - key: KEY_81\n      - key: KEY_82\n      - key: KEY_83\n      - key: KEY_84\n      - key: KEY_85\n      - key: KEY_86\n      - key: KEY_87\n      - key: KEY_88\n      - key: KEY_89\n      - key: KEY_90\n      - key: KEY_91\n      - key: KEY_92\n      - key: KEY_93\n      - key: KEY_94\n      - key: KEY_95\n      - key: KEY_96\n      - key: KEY_97\n      - key: KEY_98\n      - key: KEY_99\n---\n\n# Demo\n",
+    "expected": [
+      {
+        "key": "KEY_0",
+        "required": true
+      },
+      {
+        "key": "KEY_1",
+        "required": true
+      },
+      {
+        "key": "KEY_2",
+        "required": true
+      },
+      {
+        "key": "KEY_3",
+        "required": true
+      },
+      {
+        "key": "KEY_4",
+        "required": true
+      },
+      {
+        "key": "KEY_5",
+        "required": true
+      },
+      {
+        "key": "KEY_6",
+        "required": true
+      },
+      {
+        "key": "KEY_7",
+        "required": true
+      },
+      {
+        "key": "KEY_8",
+        "required": true
+      },
+      {
+        "key": "KEY_9",
+        "required": true
+      },
+      {
+        "key": "KEY_10",
+        "required": true
+      },
+      {
+        "key": "KEY_11",
+        "required": true
+      },
+      {
+        "key": "KEY_12",
+        "required": true
+      },
+      {
+        "key": "KEY_13",
+        "required": true
+      },
+      {
+        "key": "KEY_14",
+        "required": true
+      },
+      {
+        "key": "KEY_15",
+        "required": true
+      },
+      {
+        "key": "KEY_16",
+        "required": true
+      },
+      {
+        "key": "KEY_17",
+        "required": true
+      },
+      {
+        "key": "KEY_18",
+        "required": true
+      },
+      {
+        "key": "KEY_19",
+        "required": true
+      },
+      {
+        "key": "KEY_20",
+        "required": true
+      },
+      {
+        "key": "KEY_21",
+        "required": true
+      },
+      {
+        "key": "KEY_22",
+        "required": true
+      },
+      {
+        "key": "KEY_23",
+        "required": true
+      },
+      {
+        "key": "KEY_24",
+        "required": true
+      },
+      {
+        "key": "KEY_25",
+        "required": true
+      },
+      {
+        "key": "KEY_26",
+        "required": true
+      },
+      {
+        "key": "KEY_27",
+        "required": true
+      },
+      {
+        "key": "KEY_28",
+        "required": true
+      },
+      {
+        "key": "KEY_29",
+        "required": true
+      },
+      {
+        "key": "KEY_30",
+        "required": true
+      },
+      {
+        "key": "KEY_31",
+        "required": true
+      },
+      {
+        "key": "KEY_32",
+        "required": true
+      },
+      {
+        "key": "KEY_33",
+        "required": true
+      },
+      {
+        "key": "KEY_34",
+        "required": true
+      },
+      {
+        "key": "KEY_35",
+        "required": true
+      },
+      {
+        "key": "KEY_36",
+        "required": true
+      },
+      {
+        "key": "KEY_37",
+        "required": true
+      },
+      {
+        "key": "KEY_38",
+        "required": true
+      },
+      {
+        "key": "KEY_39",
+        "required": true
+      },
+      {
+        "key": "KEY_40",
+        "required": true
+      },
+      {
+        "key": "KEY_41",
+        "required": true
+      },
+      {
+        "key": "KEY_42",
+        "required": true
+      },
+      {
+        "key": "KEY_43",
+        "required": true
+      },
+      {
+        "key": "KEY_44",
+        "required": true
+      },
+      {
+        "key": "KEY_45",
+        "required": true
+      },
+      {
+        "key": "KEY_46",
+        "required": true
+      },
+      {
+        "key": "KEY_47",
+        "required": true
+      },
+      {
+        "key": "KEY_48",
+        "required": true
+      },
+      {
+        "key": "KEY_49",
+        "required": true
+      },
+      {
+        "key": "KEY_50",
+        "required": true
+      },
+      {
+        "key": "KEY_51",
+        "required": true
+      },
+      {
+        "key": "KEY_52",
+        "required": true
+      },
+      {
+        "key": "KEY_53",
+        "required": true
+      },
+      {
+        "key": "KEY_54",
+        "required": true
+      },
+      {
+        "key": "KEY_55",
+        "required": true
+      },
+      {
+        "key": "KEY_56",
+        "required": true
+      },
+      {
+        "key": "KEY_57",
+        "required": true
+      },
+      {
+        "key": "KEY_58",
+        "required": true
+      },
+      {
+        "key": "KEY_59",
+        "required": true
+      },
+      {
+        "key": "KEY_60",
+        "required": true
+      },
+      {
+        "key": "KEY_61",
+        "required": true
+      },
+      {
+        "key": "KEY_62",
+        "required": true
+      },
+      {
+        "key": "KEY_63",
+        "required": true
+      },
+      {
+        "key": "KEY_64",
+        "required": true
+      },
+      {
+        "key": "KEY_65",
+        "required": true
+      },
+      {
+        "key": "KEY_66",
+        "required": true
+      },
+      {
+        "key": "KEY_67",
+        "required": true
+      },
+      {
+        "key": "KEY_68",
+        "required": true
+      },
+      {
+        "key": "KEY_69",
+        "required": true
+      },
+      {
+        "key": "KEY_70",
+        "required": true
+      },
+      {
+        "key": "KEY_71",
+        "required": true
+      },
+      {
+        "key": "KEY_72",
+        "required": true
+      },
+      {
+        "key": "KEY_73",
+        "required": true
+      },
+      {
+        "key": "KEY_74",
+        "required": true
+      },
+      {
+        "key": "KEY_75",
+        "required": true
+      },
+      {
+        "key": "KEY_76",
+        "required": true
+      },
+      {
+        "key": "KEY_77",
+        "required": true
+      },
+      {
+        "key": "KEY_78",
+        "required": true
+      },
+      {
+        "key": "KEY_79",
+        "required": true
+      },
+      {
+        "key": "KEY_80",
+        "required": true
+      },
+      {
+        "key": "KEY_81",
+        "required": true
+      },
+      {
+        "key": "KEY_82",
+        "required": true
+      },
+      {
+        "key": "KEY_83",
+        "required": true
+      },
+      {
+        "key": "KEY_84",
+        "required": true
+      },
+      {
+        "key": "KEY_85",
+        "required": true
+      },
+      {
+        "key": "KEY_86",
+        "required": true
+      },
+      {
+        "key": "KEY_87",
+        "required": true
+      },
+      {
+        "key": "KEY_88",
+        "required": true
+      },
+      {
+        "key": "KEY_89",
+        "required": true
+      },
+      {
+        "key": "KEY_90",
+        "required": true
+      },
+      {
+        "key": "KEY_91",
+        "required": true
+      },
+      {
+        "key": "KEY_92",
+        "required": true
+      },
+      {
+        "key": "KEY_93",
+        "required": true
+      },
+      {
+        "key": "KEY_94",
+        "required": true
+      },
+      {
+        "key": "KEY_95",
+        "required": true
+      },
+      {
+        "key": "KEY_96",
+        "required": true
+      },
+      {
+        "key": "KEY_97",
+        "required": true
+      },
+      {
+        "key": "KEY_98",
+        "required": true
+      },
+      {
+        "key": "KEY_99",
+        "required": true
+      }
+    ]
+  }
+]

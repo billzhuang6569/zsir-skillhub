@@ -1,0 +1,140 @@
+[
+  {
+    "name": "demo\n",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "311f2726-8c83-4111-8111-111111111111\n",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "official\n",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "311f27268c8341118111111111111111",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "urn:uuid:311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "00000000-0000-0000-0000-000000000000",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "311f2726-8c83-9111-8111-111111111111",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "311f2726-8c83-4111-7111-111111111111",
+    "spaceId": "official",
+    "expected": null
+  },
+  {
+    "name": "demo",
+    "serverId": "311F2726-8C83-4111-8111-111111111111",
+    "spaceId": "official",
+    "expected": "demo--311f27268c83"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "official",
+    "expected": "painted-animation--311f27268c83"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-4bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d7192",
+    "expected": "painted-animation--311f27268c83-s4bd9d04100b5"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "local",
+    "expected": "painted-animation--311f27268c83-local"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-abc",
+    "expected": "painted-animation--311f27268c83-selfhost-abc"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-4BD9D04100B55B2022697892ACCF49E5D8B8D2D8E8DCD1C6F566BF08C00D7192",
+    "expected": "painted-animation--311f27268c83-selfhost-4BD9D04100B55B2022697892ACCF49E5D8B8D2D8E8DCD1C6F566BF08C00D7192"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d7192",
+    "expected": "painted-animation--311f27268c83-selfhost-bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d7192"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-4bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d719g",
+    "expected": "painted-animation--311f27268c83-selfhost-4bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d719g"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "expected": "painted-animation--311f27268c83-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "expected": null
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "",
+    "expected": null
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "bad_space",
+    "expected": null
+  },
+  {
+    "name": "painted-animation",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "空间",
+    "expected": null
+  },
+  {
+    "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-4bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d7192",
+    "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa--311f27268c83-s4bd9d04100b5"
+  },
+  {
+    "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa._-bbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "serverId": "311f2726-8c83-4111-8111-111111111111",
+    "spaceId": "selfhost-4bd9d04100b55b2022697892accf49e5d8b8d2d8e8dcd1c6f566bf08c00d7192",
+    "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa--311f27268c83-s4bd9d04100b5"
+  }
+]

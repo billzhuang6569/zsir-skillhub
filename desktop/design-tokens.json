@@ -1,0 +1,106 @@
+{
+  "name": "Tan Skillhub",
+  "version": 1,
+  "meta": {
+    "source": "Tan Skillhub Design System project/tokens.json (version 1791818330-1ed6); same values as landing-page/src/marketplace/tokens.css",
+    "generator": "desktop/scripts/generate-design-tokens.mjs writes desktop/src/styles/design-tokens.css; run `npm run tokens` after editing this file",
+    "deviations": [
+      "muted.light is #66728a instead of the design system #68748a so muted text on bg reaches 4.5:1 (the design system value is 4.4:1 on bg)",
+      "color tokens with \"scope\": \"desktop\" are APP supplements (window border, overlays, translucent chrome, scrollbar) that the design system does not define",
+      "the pre-#258 legacy aliases (--accent, --ink2, --line2, --tsh-* …) were removed in V6 (#263); the few legacy values without a design-system equivalent live on as desktop supplements (line-strong, brand-line, warning-line, danger-tint, danger-line, shadow-sheet)",
+      "motion tokens are APP supplements: the design system names 200ms hover lift and a standard ease; the desktop also times sheets and toasts with them"
+    ]
+  },
+  "color": {
+    "themes": [{ "id": "light", "name": "Light" }, { "id": "dark", "name": "Dark" }],
+    "tokens": [
+      { "name": "bg", "value": { "light": "#f6f8fc", "dark": "#0e131d" }, "usage": "Page background behind every section; the window shell." },
+      { "name": "surface", "value": { "light": "#ffffff", "dark": "#161c28" }, "usage": "Cards, list containers, header, dropdowns." },
+      { "name": "surface-sunken", "value": { "light": "#f1f4f9", "dark": "#1c2433" }, "usage": "Active sort tab, inline search field, skeleton blocks, hover row." },
+      { "name": "line", "value": { "light": "#dce3ef", "dark": "#283244" }, "usage": "Hairline borders and row dividers. Decorative, not a control boundary." },
+      { "name": "ink", "value": { "light": "#14213d", "dark": "#e8edf6" }, "usage": "Primary text on bg, surface and surface-sunken (>=12:1 both themes)." },
+      { "name": "muted", "value": { "light": "#66728a", "dark": "#9aa5b8" }, "usage": "Descriptions, metrics, captions. >=4.5:1 on bg and surface in both themes (desktop deviation, see meta)." },
+      { "name": "brand", "value": { "light": "#1859e6", "dark": "#6b97ff" }, "usage": "Primary buttons, active nav, links, verified mark, focus ring." },
+      { "name": "brand-strong", "value": { "light": "#0b3aa7", "dark": "#9ab8ff" }, "usage": "Hover/pressed state of brand fills and links." },
+      { "name": "brand-tint", "value": { "light": "#edf3ff", "dark": "#1a2848" }, "usage": "Active nav pill, selected filter, brand Tag fill." },
+      { "name": "on-brand", "value": { "light": "#ffffff", "dark": "#0a1531" }, "usage": "Text and icons on a brand fill." },
+      { "name": "success", "value": { "light": "#13804f", "dark": "#4cd59a" }, "usage": "Trending deltas, live dot, installed. Always paired with an arrow or word." },
+      { "name": "success-tint", "value": { "light": "#e6f6ee", "dark": "#12301f" }, "usage": "Fill behind success text." },
+      { "name": "warning", "value": { "light": "#b45309", "dark": "#f2b35b" }, "usage": "API-key needed text and key icon." },
+      { "name": "warning-tint", "value": { "light": "#fff4e5", "dark": "#33250f" }, "usage": "Fill of the API-key Tag." },
+      { "name": "danger", "value": { "light": "#c42b1c", "dark": "#ff8a7a" }, "usage": "Load errors and failed states only; always with a word." },
+      { "name": "logo-night", "value": { "light": "#1b1c21", "dark": "#262833" }, "usage": "The logo's charcoal ground. Night TopicCard fill and night avatar tile." },
+      { "name": "logo-mint", "value": "#b9f0dc", "usage": "Logo iridescence, mint stop. Same in both themes." },
+      { "name": "logo-lilac", "value": "#d6cefa", "usage": "Logo iridescence, lilac stop. Same in both themes." },
+      { "name": "logo-blush", "value": "#f8d0e0", "usage": "Logo iridescence, blush stop. Same in both themes." },
+      { "name": "on-pastel", "value": "#14213d", "usage": "Text on logo-mint, logo-lilac and logo-blush in both themes." },
+      { "name": "window-border", "scope": "desktop", "value": { "light": "rgba(88,99,120,.28)", "dark": "rgba(148,163,184,.22)" }, "usage": "Hairline around the rounded transparent window (.app-shell)." },
+      { "name": "overlay", "scope": "desktop", "value": { "light": "rgba(9,18,38,.42)", "dark": "rgba(0,0,0,.6)" }, "usage": "Modal dialog backdrop (.modal-layer); same as the web --overlay." },
+      { "name": "scrim", "scope": "desktop", "value": { "light": "rgba(13,19,32,.34)", "dark": "rgba(0,0,0,.5)" }, "usage": "Lighter backdrop behind side sheets (.scrim)." },
+      { "name": "chrome", "scope": "desktop", "value": { "light": "rgba(255,255,255,.72)", "dark": "rgba(22,28,40,.72)" }, "usage": "Translucent sidebar over the window background (surface at 72%)." },
+      { "name": "chrome-header", "scope": "desktop", "value": { "light": "rgba(246,248,252,.82)", "dark": "rgba(14,19,29,.82)" }, "usage": "Translucent sticky page head (bg at 82%)." },
+      { "name": "popover", "scope": "desktop", "value": { "light": "rgba(255,255,255,.96)", "dark": "rgba(22,28,40,.96)" }, "usage": "Blurred popover menus (surface at 96%)." },
+      { "name": "hover", "scope": "desktop", "value": { "light": "rgba(18,26,43,.05)", "dark": "rgba(232,237,246,.06)" }, "usage": "Hover wash on icon buttons, nav rows and segment tracks." },
+      { "name": "scrollbar", "scope": "desktop", "value": { "light": "rgba(18,26,43,.16)", "dark": "rgba(232,237,246,.18)" }, "usage": "Scrollbar thumb." },
+      { "name": "scrollbar-hover", "scope": "desktop", "value": { "light": "rgba(18,26,43,.28)", "dark": "rgba(232,237,246,.3)" }, "usage": "Scrollbar thumb on hover." },
+      { "name": "line-strong", "scope": "desktop", "value": { "light": "#c9d3e3", "dark": "#364257" }, "usage": "Stronger hairline: hover borders, dashed drop zones and empty states." },
+      { "name": "brand-line", "scope": "desktop", "value": { "light": "rgba(24,89,230,.32)", "dark": "rgba(107,151,255,.36)" }, "usage": "Brand-coloured hairline around brand-tint fills." },
+      { "name": "warning-line", "scope": "desktop", "value": { "light": "rgba(180,83,9,.30)", "dark": "rgba(242,179,91,.32)" }, "usage": "Hairline around warning-tint fills." },
+      { "name": "danger-tint", "scope": "desktop", "value": { "light": "rgba(196,43,28,.08)", "dark": "rgba(255,138,122,.12)" }, "usage": "Fill behind danger text (load errors, failed states)." },
+      { "name": "danger-line", "scope": "desktop", "value": { "light": "rgba(196,43,28,.30)", "dark": "rgba(255,138,122,.32)" }, "usage": "Hairline around danger-tint fills." }
+    ]
+  },
+  "type": {
+    "fonts": [],
+    "families": {
+      "sans": "Inter, \"SF Pro Display\", \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif",
+      "code": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    },
+    "groups": [
+      { "name": "Display", "family": "sans", "styles": [
+        { "name": "display", "fontSize": "44px", "lineHeight": "52px", "fontWeight": 820, "letterSpacing": "-0.02em", "usage": "Hero headline only." },
+        { "name": "page-title", "fontSize": "36px", "lineHeight": "44px", "fontWeight": 780, "letterSpacing": "-0.02em", "usage": "Page title on list pages." },
+        { "name": "stat-value", "fontSize": "28px", "lineHeight": "32px", "fontWeight": 760, "letterSpacing": "-0.01em", "usage": "StatTile numbers; tabular numerals." }
+      ]},
+      { "name": "Headings", "family": "sans", "styles": [
+        { "name": "section-title", "fontSize": "22px", "lineHeight": "30px", "fontWeight": 740, "usage": "Section headings." },
+        { "name": "card-title", "fontSize": "18px", "lineHeight": "26px", "fontWeight": 720, "usage": "TopicCard and SkillCard titles." },
+        { "name": "skill-name", "fontSize": "17px", "lineHeight": "24px", "fontWeight": 680, "usage": "Skill name in SkillRow." }
+      ]},
+      { "name": "Text", "family": "sans", "styles": [
+        { "name": "body", "fontSize": "15px", "lineHeight": "24px", "fontWeight": 400, "usage": "Paragraphs." },
+        { "name": "description", "fontSize": "14px", "lineHeight": "22px", "fontWeight": 400, "usage": "Skill descriptions in rows and cards." },
+        { "name": "label", "fontSize": "14px", "lineHeight": "20px", "fontWeight": 650, "usage": "Tabs, buttons, nav, dropdown triggers." },
+        { "name": "caption", "fontSize": "12px", "lineHeight": "16px", "fontWeight": 550, "usage": "Tags, metrics, timestamps." },
+        { "name": "code", "family": "code", "fontSize": "12.5px", "lineHeight": "18px", "fontWeight": 500, "usage": "Skill ids and CLI snippets." }
+      ]}
+    ]
+  },
+  "spacing": { "tokens": [
+    { "name": "space-1", "value": "4px", "usage": "Icon-to-text gap inside Tags and metrics." },
+    { "name": "space-2", "value": "8px", "usage": "Gap between Tags, between filter controls." },
+    { "name": "space-3", "value": "12px", "usage": "Gap between avatar and text; stacked text rows." },
+    { "name": "space-4", "value": "16px", "usage": "Compact card padding." },
+    { "name": "space-5", "value": "24px", "usage": "Card padding, page gutter." },
+    { "name": "space-6", "value": "32px", "usage": "Gap between grid sections." },
+    { "name": "space-7", "value": "48px", "usage": "Space between page sections." },
+    { "name": "space-8", "value": "64px", "usage": "Large hero padding." }
+  ]},
+  "radius": { "tokens": [
+    { "name": "radius-sm", "value": "10px", "usage": "Nav links, tabs, dropdown triggers, icon buttons." },
+    { "name": "radius-md", "value": "13px", "usage": "Avatars, inputs, Buttons." },
+    { "name": "radius-lg", "value": "18px", "usage": "SkillCard, list container, StatTile panel, search bar." },
+    { "name": "radius-xl", "value": "24px", "usage": "TopicCard and hero blocks." },
+    { "name": "radius-pill", "value": "999px", "usage": "Tags, chips, live dot." }
+  ]},
+  "shadow": { "tokens": [
+    { "name": "shadow-sm", "value": { "light": "0 1px 2px rgba(20,33,61,.06)", "dark": "0 1px 2px rgba(0,0,0,.4)" }, "usage": "Resting cards and the list container." },
+    { "name": "shadow-card", "value": { "light": "0 18px 50px rgba(35,56,99,.10)", "dark": "0 18px 50px rgba(0,0,0,.45)" }, "usage": "Hovered cards, open dropdowns." },
+    { "name": "shadow-sheet", "scope": "desktop", "value": { "light": "0 40px 90px -24px rgba(22,25,45,.3), 0 6px 18px rgba(22,25,45,.07)", "dark": "0 40px 90px -24px rgba(0,0,0,.6), 0 6px 18px rgba(0,0,0,.3)" }, "usage": "Large side sheet and modal shadow." }
+  ]},
+  "motion": { "tokens": [
+    { "name": "motion-fast", "scope": "desktop", "value": "140ms", "usage": "Colour, border and opacity feedback on hover and press." },
+    { "name": "motion-base", "scope": "desktop", "value": "200ms", "usage": "Hover lift of cards and rows, side sheet open/close, Toast enter/exit." },
+    { "name": "ease-standard", "scope": "desktop", "value": "cubic-bezier(.32, .72, .24, 1)", "usage": "Standard easing for every transition and entrance." }
+  ]}
+}

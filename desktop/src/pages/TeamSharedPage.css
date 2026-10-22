@@ -1,0 +1,396 @@
+.team-shared-page-body {
+  padding-top: 14px;
+  padding-bottom: 52px;
+}
+
+.team-shared-selector {
+  position: relative;
+  flex: none;
+}
+
+.team-shared-selector-trigger {
+  display: grid;
+  grid-template-columns: 30px minmax(84px, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  min-width: 166px;
+  max-width: 244px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: 650 12px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: border-color .14s ease, background-color .14s ease;
+}
+
+.team-shared-selector-trigger:hover,
+.team-shared-selector-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  background: var(--color-surface-sunken);
+}
+
+.team-shared-selector-trigger:focus-visible,
+.team-shared-selector-menu > button:focus-visible,
+.team-shared-context-identity:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.team-shared-selector-trigger > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-shared-selector-trigger > svg,
+.team-shared-selector-trigger > .spin-icon {
+  justify-self: end;
+}
+
+.team-shared-selector-trigger > .spin-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.team-shared-selector-menu {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 244px;
+  max-height: min(360px, calc(100vh - 120px));
+  overflow-y: auto;
+  padding: 7px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.team-shared-selector-menu > button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-shared-selector-menu > button:hover,
+.team-shared-selector-menu > button[aria-checked="true"] {
+  background: var(--color-brand-tint);
+  color: var(--color-brand-strong);
+}
+
+.team-shared-selector-menu > button > span {
+  min-width: 0;
+}
+
+.team-shared-selector-menu b,
+.team-shared-selector-menu small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-shared-selector-menu b {
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.team-shared-selector-menu small {
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.team-shared-team-mark {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 750;
+  box-shadow: 0 0 0 1px var(--color-line);
+}
+
+.team-shared-team-mark.large {
+  width: 50px;
+  height: 50px;
+  border-radius: var(--radius-lg);
+  font-size: 18px;
+}
+
+.team-shared-team-mark img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.team-shared-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.team-shared-context-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-shared-context-identity:hover .team-shared-context-copy > b {
+  color: var(--color-brand);
+}
+
+.team-shared-context-copy {
+  min-width: 0;
+}
+
+.team-shared-context-copy > span {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+
+.team-shared-context-copy > b {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color .14s ease;
+}
+
+.team-shared-context-copy > small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-shared-context-stats {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.team-shared-context-stats span {
+  min-width: 76px;
+  padding: 8px 11px;
+  border-left: 1px solid var(--color-line);
+  color: var(--color-muted);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.team-shared-context-stats span:first-child {
+  border-left: 0;
+}
+
+.team-shared-context-stats b {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--color-ink);
+  font: 650 14px var(--font-code);
+}
+
+.team-shared-toolbar {
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 0 16px;
+}
+
+/* 搜索框占满一行；筛选与排序在下一行，排序靠右。 */
+.team-shared-toolbar .search-bar {
+  flex: 1 1 100%;
+  max-width: none;
+}
+
+.team-shared-catalog-controls,
+.team-shared-choice {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.team-shared-catalog-controls {
+  width: 100%;
+}
+
+.team-shared-stat-available b { color: var(--color-brand); }
+
+/* #295 board 9: 全部 / 可获取 / 有更新 segmented filter and the 按最新 / 按下载 sort menu. */
+.team-shared-sort { position: relative; flex: none; margin-left: auto; }
+.team-shared-sort-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font: 600 12px var(--font-sans);
+  cursor: pointer;
+}
+.team-shared-sort-trigger:hover,
+.team-shared-sort-trigger[aria-expanded="true"] { color: var(--color-ink); border-color: var(--color-line-strong); }
+.team-shared-sort-trigger:focus-visible,
+.team-shared-sort-menu > button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.team-shared-sort-menu {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 132px;
+  padding: 5px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+.team-shared-sort-menu > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink);
+  font: 500 12.5px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.team-shared-sort-menu > button:hover,
+.team-shared-sort-menu > button[aria-checked="true"] { background: var(--color-brand-tint); color: var(--color-brand-strong); }
+
+.team-shared-empty {
+  margin-top: 18px;
+}
+
+.team-shared-empty.compact {
+  margin-top: 0;
+  padding: 42px 24px;
+}
+
+.team-shared-empty .btn {
+  margin-top: 1px;
+}
+
+.app-workspace.skill-browser-open .team-shared-selector { margin-left: auto; }
+.app-workspace.skill-browser-open .team-shared-team-mark { width: 28px; height: 28px; border-radius: 8px; }
+.app-workspace.skill-browser-open .team-shared-context {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+}
+.app-workspace.skill-browser-open .team-shared-team-mark.large { width: 40px; height: 40px; border-radius: var(--radius-md); }
+.app-workspace.skill-browser-open .team-shared-context-copy > small { white-space: normal; line-height: 1.4; }
+.app-workspace.skill-browser-open .team-shared-context-stats {
+  justify-self: stretch;
+}
+.app-workspace.skill-browser-open .team-shared-context-stats span { min-width: 0; flex: 1 1 0; padding-inline: 6px; }
+.app-workspace.skill-browser-open .team-shared-toolbar { padding-bottom: 10px; }
+
+@media (max-width: 980px) {
+  .team-shared-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-shared-context-stats {
+    justify-self: stretch;
+  }
+
+  .team-shared-context-stats span {
+    flex: 1 1 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .team-shared-title-row .page-heading {
+    flex: 1 1 100%;
+  }
+
+  .team-shared-selector { margin-left: auto; }
+  .team-shared-selector-trigger { min-width: 150px; max-width: 200px; }
+  .team-shared-selector-menu { width: 220px; }
+
+  .team-shared-context {
+    padding: 14px;
+  }
+
+  .team-shared-context-stats span {
+    min-width: 0;
+    padding: 8px 6px;
+  }
+
+  .team-shared-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .team-shared-toolbar .search-bar {
+    width: 100%;
+    flex-basis: 36px;
+  }
+
+  .team-shared-catalog-controls {
+    padding: 0 0 2px;
+  }
+}

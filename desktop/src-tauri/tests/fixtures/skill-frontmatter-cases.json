@@ -1,0 +1,235 @@
+[
+  {
+    "name": "single-line fields",
+    "input": "---\nname: SkillHub 正式版验收\ndescription: 验证真实安装、环境变量与 Profile 读取。\ncategory: 开发与工程\nversion: 1.0.0\nlabels: [验收, Mac, SkillHub]\n---\n# Fallback title\n",
+    "expected": {
+      "displayName": "SkillHub 正式版验收",
+      "description": "验证真实安装、环境变量与 Profile 读取。",
+      "category": "开发与工程",
+      "version": "1.0.0",
+      "labels": [
+        "验收",
+        "Mac",
+        "SkillHub"
+      ]
+    }
+  },
+  {
+    "name": "folded description",
+    "input": "---\nname: pdf-tools\ndescription: >\n  Extract text and tables from PDF files.\n  Use when the user mentions PDFs.\n---\nBody\n",
+    "expected": {
+      "displayName": "pdf-tools",
+      "description": "Extract text and tables from PDF files. Use when the user mentions PDFs.",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "folded strip description",
+    "input": "---\nname: brand-guide\ndescription: >-\n  Applies brand colors\n  and typography.\n\n---\n",
+    "expected": {
+      "displayName": "brand-guide",
+      "description": "Applies brand colors and typography.",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "literal description keeps line breaks",
+    "input": "---\nname: release-notes\ndescription: |\n  Line one\n  Line two\n---\n",
+    "expected": {
+      "displayName": "release-notes",
+      "description": "Line one\nLine two",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "double quoted with escapes and colon",
+    "input": "---\nname: \"api-helper\"\ndescription: \"Call the API: returns \\\"JSON\\\" data\"\n---\n",
+    "expected": {
+      "displayName": "api-helper",
+      "description": "Call the API: returns \"JSON\" data",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "single quoted with doubled quote",
+    "input": "---\nname: 'writer'\ndescription: 'It''s a writing helper'\n---\n",
+    "expected": {
+      "displayName": "writer",
+      "description": "It's a writing helper",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "block list labels",
+    "input": "---\nname: research\ndescription: Research helper\nlabels:\n  - 调研\n  - \"报告\"\n  - 调研\n---\n",
+    "expected": {
+      "displayName": "research",
+      "description": "Research helper",
+      "category": null,
+      "version": null,
+      "labels": [
+        "调研",
+        "报告"
+      ]
+    }
+  },
+  {
+    "name": "compact block list at column zero",
+    "input": "---\nname: compact\ndescription: Compact list\ntags:\n- one\n- two\n---\n",
+    "expected": {
+      "displayName": "compact",
+      "description": "Compact list",
+      "category": null,
+      "version": null,
+      "labels": [
+        "one",
+        "two"
+      ]
+    }
+  },
+  {
+    "name": "plain multi-line description",
+    "input": "---\nname: plain\ndescription: First part of the text\n  continues here\n---\n",
+    "expected": {
+      "displayName": "plain",
+      "description": "First part of the text continues here",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "displayName wins over name",
+    "input": "---\nname: machine-name\ndisplayName: 展示名称\ndescription: d\n---\n",
+    "expected": {
+      "displayName": "展示名称",
+      "description": "d",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "title is a display name",
+    "input": "---\ntitle: 标题名\ndescription: d\n---\n",
+    "expected": {
+      "displayName": "标题名",
+      "description": "d",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "no frontmatter falls back to heading and paragraph",
+    "input": "# 本地 Skill\n\n这是未带 Frontmatter 的真实说明。\n",
+    "expected": {
+      "displayName": "本地 Skill",
+      "description": "这是未带 Frontmatter 的真实说明。",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "missing description falls back to body",
+    "input": "---\nname: only-name\n---\n# Heading\n<!-- note -->\nFirst prose line.\n",
+    "expected": {
+      "displayName": "only-name",
+      "description": "First prose line.",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "CRLF and byte order mark",
+    "input": "﻿---\r\nname: windows-skill\r\ndescription: Written on Windows\r\n---\r\n# Title\r\n",
+    "expected": {
+      "displayName": "windows-skill",
+      "description": "Written on Windows",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "comments are ignored",
+    "input": "---\n# leading comment\nname: commented\ncategory: 开发与工程 # inline comment\ndescription: Uses C# and F# daily\n---\n",
+    "expected": {
+      "displayName": "commented",
+      "description": "Uses C# and F# daily",
+      "category": "开发与工程",
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "plain comma separated tags",
+    "input": "---\nname: tagged\ndescription: d\ntags: alpha, 'beta', alpha\n---\n",
+    "expected": {
+      "displayName": "tagged",
+      "description": "d",
+      "category": null,
+      "version": null,
+      "labels": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "name": "first duplicate key wins",
+    "input": "---\nname: first\nname: second\ndescription: d\n---\n",
+    "expected": {
+      "displayName": "first",
+      "description": "d",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "empty description falls back to body",
+    "input": "---\nname: empty-desc\ndescription:\ncategory: 其他\n---\nBody line.\n",
+    "expected": {
+      "displayName": "empty-desc",
+      "description": "Body line.",
+      "category": "其他",
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "unterminated frontmatter is read leniently",
+    "input": "---\nname: never-closed\ndescription: no end marker\n",
+    "expected": {
+      "displayName": "never-closed",
+      "description": "no end marker",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  },
+  {
+    "name": "code fence is not a description",
+    "input": "---\nname: fenced\n---\n```bash\nnpm test\n```\nRuns the suite.\n",
+    "expected": {
+      "displayName": "fenced",
+      "description": "npm test",
+      "category": null,
+      "version": null,
+      "labels": []
+    }
+  }
+]

@@ -1,0 +1,49 @@
+/* Tooltip (#289): hairline bubble on the surface token, no gradients. */
+.ui-tip-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.ui-tip {
+  position: absolute;
+  z-index: 60;
+  min-width: 160px;
+  max-width: 320px;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-popover);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-card);
+  font: var(--font-weight-description) var(--font-size-caption) / var(--line-height-caption) var(--font-sans);
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard), visibility 0s linear var(--motion-fast);
+  pointer-events: none;
+}
+.ui-tip-open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+.ui-tip-open.ui-tip-interactive { pointer-events: auto; }
+.ui-tip-text { display: block; white-space: pre-line; overflow-wrap: anywhere; }
+
+.ui-tip-anchor[data-placement="bottom"] .ui-tip { top: calc(100% + 6px); }
+.ui-tip-anchor[data-placement="top"] .ui-tip { bottom: calc(100% + 6px); transform: translateY(4px); }
+.ui-tip-anchor[data-placement="top"] .ui-tip-open { transform: translateY(0); }
+.ui-tip-anchor[data-align="start"] .ui-tip { left: 0; }
+.ui-tip-anchor[data-align="end"] .ui-tip { right: 0; }
+.ui-tip-anchor[data-align="center"] .ui-tip { left: 50%; translate: -50% 0; }
+
+/* Title + body + action row layout used by list warnings. */
+.ui-tip-title { display: flex; align-items: center; gap: 6px; font-weight: var(--font-weight-label); }
+.ui-tip-body { display: block; margin-top: 6px; color: var(--color-muted); white-space: pre-line; }
+.ui-tip-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-tip { transition: none; transform: none; }
+}

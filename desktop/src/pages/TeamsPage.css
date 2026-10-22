@@ -1,0 +1,45 @@
+/* My Team (#295 board 8): two grouped lists of team rows; a row opens the team detail. */
+.team-list-group + .team-list-group { margin-top: var(--space-6); }
+.team-list-heading { margin: 0 0 var(--space-2); padding: 0 4px; color: var(--color-muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.team-list { display: flex; flex-direction: column; gap: 4px; }
+.team-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard);
+}
+.team-list-row:hover { background: var(--color-surface); border-color: var(--color-line); }
+.team-list-row.active { background: var(--color-surface); border-color: var(--color-brand-line); box-shadow: var(--shadow-sm); }
+.team-list-row:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.team-list-row > svg { flex: none; color: var(--color-muted); }
+.team-list-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.team-list-name { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.team-list-meta { overflow: hidden; color: var(--color-muted); font-size: 12px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.team-list-pending {
+  display: grid;
+  place-items: center;
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: var(--radius-pill);
+  background: var(--color-danger);
+  color: var(--color-on-brand);
+  font: 700 10px / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-list-row { transition: none; }
+}

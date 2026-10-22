@@ -1,0 +1,970 @@
+.marketplace-mode-tabs {
+  flex: none;
+}
+
+.marketplace-total {
+  flex: none;
+  color: var(--color-muted);
+  font: 650 11px var(--font-sans);
+  white-space: nowrap;
+}
+
+.marketplace-mode-tabs button.active {
+  background: var(--color-surface);
+  color: var(--color-brand-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.marketplace-page-body {
+  padding-bottom: 52px;
+}
+
+.marketplace-home {
+  display: grid;
+  gap: 22px;
+  margin: 6px 0 24px;
+}
+
+.marketplace-featured,
+.marketplace-popular {
+  display: grid;
+  gap: 10px;
+}
+
+.marketplace-featured .section-head { align-items: flex-start; }
+.marketplace-featured .section-head p {
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.marketplace-topic-page {
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.marketplace-topic-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: max-content;
+  margin: 0;
+}
+
+/*
+ * Topic detail hero (#230): the article design's pastel tone — lilac base, a mint glow top
+ * right, a blush glow bottom left, fading back to lilac — with dark ink and no cover image,
+ * matching the web topic page. Keeps the ex-#183 rule: plain positive layers only
+ * (tone → glows → fade → content), no backdrop-filter, no mask, no negative z-index, and the
+ * hero is not a hover target.
+ */
+.marketplace-topic-hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  min-height: 340px;
+  overflow: hidden;
+  padding: 28px 32px 40px;
+  border-radius: 18px;
+  background: var(--color-logo-lilac);
+  color: var(--color-on-pastel);
+}
+
+.marketplace-topic-art {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  background:
+    radial-gradient(60% 90% at 78% 30%, var(--color-logo-mint) 0, transparent 60%),
+    radial-gradient(50% 70% at 20% 80%, var(--color-logo-blush) 0, transparent 60%);
+  opacity: .9;
+}
+
+.marketplace-topic-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(to bottom, transparent 55%, var(--color-logo-lilac));
+  pointer-events: none;
+}
+
+.marketplace-topic-hero-content { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 10px; max-width: 720px; min-width: 0; }
+.marketplace-topic-kicker { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.marketplace-topic-hero h2 { margin: 0; font-size: 36px; line-height: 44px; font-weight: 780; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.marketplace-topic-lead { max-width: 640px; margin: 0; font-size: 17px; line-height: 28px; font-weight: 450; }
+.marketplace-topic-count { font-size: 12px; line-height: 16px; font-weight: 550; opacity: .8; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) {
+  .marketplace-topic-hero { min-height: 220px; padding: 22px 22px 28px; }
+  .marketplace-topic-hero h2 { font-size: 28px; line-height: 36px; }
+}
+
+.marketplace-topic-intro {
+  max-width: 820px;
+  padding: 0 2px;
+  color: var(--color-muted);
+  font-size: 12.5px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+
+.marketplace-directory {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.marketplace-directory .category-scroll {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-bottom: 2px;
+}
+
+.marketplace-directory-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+}
+
+.marketplace-directory-search {
+  flex: 0 0 min(220px, 28vw);
+  height: 32px;
+}
+
+.marketplace-directory-search input {
+  min-width: 0;
+  font-size: 11px;
+}
+
+.marketplace-toolbar {
+  padding-bottom: 16px;
+}
+
+.marketplace-toolbar .search-bar {
+  flex: 0 0 250px;
+}
+
+.marketplace-catalog-controls,
+.marketplace-sort {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.marketplace-catalog-controls {
+  margin-left: auto;
+}
+
+.marketplace-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--color-surface);
+}
+
+.marketplace-view-toggle button {
+  width: 29px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.marketplace-view-toggle button:hover,
+.marketplace-view-toggle button.active {
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+}
+
+.marketplace-section-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-grid .skill-card.marketplace .card-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.marketplace-grid .skill-card.marketplace .card-facts > span:first-child {
+  margin-right: auto;
+}
+
+.marketplace-grid .skill-card.marketplace .card-agent-line {
+  min-height: 40px;
+  margin: -3px 0;
+  padding: 3px 0;
+  overflow: visible;
+}
+
+.marketplace-skill-list {
+  display: grid;
+  gap: 7px;
+}
+
+.marketplace-skill-row {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 13px;
+  background: var(--color-surface);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.marketplace-skill-row:hover {
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.marketplace-skill-row.dimmed {
+  opacity: .55;
+  pointer-events: none;
+}
+
+.marketplace-skill-row-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.marketplace-skill-row-main:focus-visible,
+.marketplace-skill-row-install:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.marketplace-skill-row-name {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+/* Name, NEW/HOT and 精选/editorial labels share one line; the name truncates first. */
+.marketplace-skill-row-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  container: marketplace-row-title / inline-size;
+}
+
+.marketplace-skill-row-title > .marketplace-badges { flex: none; }
+
+.marketplace-skill-row-title > .editorial-labels {
+  flex: none;
+  width: auto;
+  max-width: 100%;
+  margin-top: 0;
+  container-type: normal;
+}
+
+.marketplace-skill-row-title .editorial-label-line { flex-wrap: nowrap; }
+.marketplace-skill-row-title .editorial-chip { white-space: nowrap; }
+
+/* A narrow row keeps 精选 (or the first label) and folds the rest into +N. */
+@container marketplace-row-title (max-width: 380px) {
+  .marketplace-skill-row-title .editorial-chip.extra,
+  .marketplace-skill-row-title .editorial-more.wide { display: none; }
+  .marketplace-skill-row-title .editorial-more.narrow { display: inline-flex; }
+}
+
+.marketplace-skill-row-name strong,
+.marketplace-skill-row-name small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-skill-row-name strong {
+  flex: 0 1 auto;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.marketplace-skill-row-name small {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.marketplace-skill-row-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-skill-row-metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.marketplace-skill-row-install {
+  min-width: 54px;
+}
+
+.marketplace-catalog-controls .filter-btn {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.marketplace-results-head {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.marketplace-results-head > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.marketplace-results-head p {
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.marketplace-empty {
+  margin-top: 8px;
+  padding: 50px 24px;
+}
+
+.marketplace-empty.compact {
+  padding: 38px 24px;
+}
+
+.marketplace-empty .btn {
+  margin-top: 2px;
+}
+
+.marketplace-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.marketplace-pagination > span {
+  color: var(--color-muted);
+  font: 600 10.5px var(--font-code);
+}
+
+.marketplace-next-icon {
+  transform: rotate(180deg);
+}
+
+.marketplace-account-panel {
+  min-height: 240px;
+}
+
+.marketplace-submission-list,
+.marketplace-review-list {
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+
+.marketplace-submission-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(190px, .65fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 96px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.marketplace-submission-row:last-child,
+.marketplace-review-row:last-child {
+  border-bottom: 0;
+}
+
+.marketplace-submission-main,
+.marketplace-review-copy {
+  min-width: 0;
+}
+
+.marketplace-submission-kicker {
+  display: block;
+  overflow: hidden;
+  color: var(--color-muted);
+  font: 10px var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-submission-main h3,
+.marketplace-review-copy h3 {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-submission-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.marketplace-status {
+  font-size: 10px;
+}
+
+.marketplace-submission-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-submission-meta b {
+  color: var(--color-muted);
+}
+
+.marketplace-submission-actions,
+.marketplace-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.review-note {
+  margin-top: 7px;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.review-note.rejected {
+  color: var(--color-danger);
+}
+
+.marketplace-review-filters {
+  width: 100%;
+  margin: 0 0 12px;
+}
+
+.marketplace-review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 104px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.marketplace-review-copy > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.marketplace-review-copy > div:first-child > .mono,
+.marketplace-review-copy > span {
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-review-copy > p:not(.review-note) {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-review-detail {
+  width: min(900px, calc(100vw - 48px));
+  max-height: min(820px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+
+.marketplace-review-detail-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 0 2px 16px;
+}
+
+.marketplace-review-detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-review-detail-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.marketplace-review-note,
+.marketplace-review-profile,
+.marketplace-review-env,
+.marketplace-review-package,
+.marketplace-review-source {
+  padding: 13px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 13px;
+  background: var(--color-surface);
+}
+
+.marketplace-review-note h3,
+.marketplace-review-profile h3,
+.marketplace-review-env h3,
+.marketplace-review-package h3,
+.marketplace-review-source h3 {
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.marketplace-review-note p,
+.marketplace-review-description,
+.marketplace-review-muted {
+  margin-top: 5px;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.marketplace-review-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.marketplace-review-section-head p {
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 10px;
+}
+
+.marketplace-review-profile dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 14px;
+  margin-top: 10px;
+}
+
+.marketplace-review-profile dl > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.marketplace-review-profile dt {
+  color: var(--color-muted);
+}
+
+.marketplace-review-profile dd {
+  overflow-wrap: anywhere;
+  color: var(--color-muted);
+}
+
+.marketplace-review-env ul {
+  overflow: hidden;
+  margin-top: 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+
+.marketplace-review-env li {
+  display: grid;
+  grid-template-columns: minmax(150px, .7fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-line);
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-review-env li:last-child {
+  border-bottom: 0;
+}
+
+.marketplace-review-env code {
+  overflow: hidden;
+  color: var(--color-muted);
+  font: 550 10.5px var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-review-env i {
+  color: var(--color-muted);
+  font-size: 9.5px;
+  font-style: normal;
+}
+
+.marketplace-review-source pre {
+  max-height: 280px;
+  overflow: auto;
+  margin-top: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface-sunken);
+  color: var(--color-muted);
+  font: 10.5px/1.6 var(--font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.marketplace-review-integrity {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.marketplace-review-integrity > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--color-surface-sunken);
+}
+
+.marketplace-review-integrity dt {
+  color: var(--color-muted);
+  font-size: 9px;
+}
+
+.marketplace-review-integrity dd {
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+.marketplace-review-integrity .hash dd {
+  overflow-wrap: anywhere;
+  color: var(--color-brand);
+}
+
+.marketplace-review-workbench {
+  min-height: 280px;
+  display: grid;
+  grid-template-columns: minmax(210px, .7fr) minmax(0, 1.3fr);
+  overflow: hidden;
+  margin-top: 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface-sunken);
+}
+
+.marketplace-review-file-tree {
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  border-right: 1px solid var(--color-line);
+  background: var(--color-surface);
+}
+
+.marketplace-review-file-tree button {
+  width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.marketplace-review-file-tree button:hover,
+.marketplace-review-file-tree button.active {
+  background: var(--color-brand-tint);
+  color: var(--color-brand);
+}
+
+.marketplace-review-file-tree button span {
+  min-width: 0;
+  overflow: hidden;
+  font: 10px var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-review-file-tree button i {
+  color: var(--color-muted);
+  font-size: 8.5px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.marketplace-review-file-preview {
+  min-width: 0;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.marketplace-review-file-preview > div:first-child:not(.marketplace-review-no-preview) {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 9px;
+}
+
+.marketplace-review-file-preview > div:first-child > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marketplace-review-file-preview .link-button {
+  margin-left: auto;
+}
+
+.marketplace-review-file-preview pre {
+  min-height: 245px;
+  margin: 0;
+  padding: 11px 12px;
+  color: var(--color-muted);
+  font: 10px/1.6 var(--font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.marketplace-review-no-preview {
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  padding: 24px;
+  color: var(--color-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.marketplace-review-no-preview strong {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.marketplace-review-no-preview span {
+  overflow-wrap: anywhere;
+  font-family: var(--font-code);
+}
+
+.marketplace-review-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--color-brand);
+  border-radius: 10px;
+  background: var(--color-brand-tint);
+  color: var(--color-muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.marketplace-review-confirm input {
+  flex: none;
+  margin-top: 2px;
+}
+
+.marketplace-review-confirm b {
+  overflow-wrap: anywhere;
+  color: var(--color-brand);
+  font-size: 9px;
+}
+
+.marketplace-review-detail-actions {
+  flex: none;
+  margin: 0 -24px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--color-line);
+  background: var(--color-surface);
+}
+
+@media (max-width: 1080px) {
+  .marketplace-title-row .page-heading {
+    flex: 1 1 100%;
+  }
+
+  .marketplace-catalog-controls {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
+  .marketplace-submission-row {
+    grid-template-columns: minmax(220px, 1fr) auto;
+  }
+
+  .marketplace-submission-meta {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .marketplace-submission-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
+@media (max-width: 720px) {
+  .marketplace-mode-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .marketplace-directory {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .marketplace-directory-tools {
+    width: 100%;
+  }
+
+  .marketplace-directory-search {
+    flex: 1 1 auto;
+  }
+
+  .marketplace-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .marketplace-toolbar .search-bar {
+    width: 100%;
+    flex-basis: 36px;
+  }
+
+  .marketplace-catalog-controls {
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding: 2px 0 4px;
+  }
+
+  .marketplace-skill-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 9px;
+  }
+
+  .marketplace-submission-row,
+  .marketplace-review-row {
+    grid-template-columns: 1fr;
+  }
+
+  .marketplace-submission-meta,
+  .marketplace-submission-actions,
+  .marketplace-review-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+
+  .marketplace-review-detail {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .marketplace-review-profile dl {
+    grid-template-columns: 1fr;
+  }
+
+  .marketplace-review-env li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .marketplace-review-env li > span {
+    grid-column: 1 / -1;
+  }
+
+  .marketplace-review-integrity,
+  .marketplace-review-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .marketplace-review-file-tree {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-line);
+  }
+}
+
+.marketplace-row-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }

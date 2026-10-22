@@ -1,0 +1,55 @@
+/* Shared empty / error / loading views (#263): design-system skeletons, never spinners. */
+
+.skeleton {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  border-radius: 6px;
+  background: var(--color-surface-sunken);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse { 50% { opacity: .55; } }
+
+.skeleton-block { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.skeleton-lines { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+.skeleton-rows {
+  gap: 0;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.skeleton-row { display: flex; align-items: center; gap: var(--space-3); min-height: 72px; padding: var(--space-3) var(--space-4); }
+.skeleton-row + .skeleton-row { border-top: 1px solid var(--color-line); }
+
+.skeleton-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
+.skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 148px;
+  padding: var(--space-5);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.skeleton-card-head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+
+.skeleton-text { gap: var(--space-3); padding: var(--space-4) 0; }
+.skeleton-detail { gap: var(--space-3); padding: var(--space-5); }
+.skeleton-detail > .skeleton-card-head { margin-bottom: var(--space-2); }
+.skeleton-block.compact { padding-block: var(--space-3); }
+
+.compact-empty.state-inline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--space-2); }
+.compact-empty.state-inline > b { color: var(--color-ink); font-weight: 650; }
+.load-error-inline { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); color: var(--color-danger); font-size: 13px; line-height: 1.55; }
+.load-error-inline svg { flex: none; margin-top: 2px; }
+.load-error-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px var(--space-2); min-width: 0; }
+.load-error-body > span { min-width: 0; overflow-wrap: anywhere; }
+.load-error .link-button { margin-left: 0; color: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}

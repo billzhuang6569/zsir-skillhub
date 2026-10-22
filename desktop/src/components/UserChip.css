@@ -1,0 +1,19 @@
+/* User chip (#289): names always sit on a background; 「你」 uses the brand tint. */
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 7px;
+  margin: 0 2px;
+  border-radius: 7px;
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  font: 500 var(--font-size-caption) / 1 var(--font-sans);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.user-chip-me { background: var(--color-brand-tint); color: var(--color-brand); }
+.user-chip-avatar { width: 14px; height: 14px; border-radius: 50%; object-fit: cover; }
+.user-chip-name { overflow: hidden; text-overflow: ellipsis; }

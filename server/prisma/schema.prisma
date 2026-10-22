@@ -1,0 +1,1256 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AvatarStyleVersion {
+  styleId       String
+  styleVersion  Int
+  content       String   @db.Text
+  contentSha256 String   @db.Char(64)
+  source        String
+  createdAt     DateTime @default(now())
+  variants      AvatarVariant[]
+  jobs          AvatarGenerationJob[]
+
+  @@id([styleId, styleVersion])
+  @@map("avatar_style_versions")
+}
+
+model AvatarGenerationJob {
+  id String @id @default(uuid())
+  ownerId String
+  logicalSkillId String
+  generationRevision Int
+  selectionRevision Int
+  styleId String
+  styleVersion Int
+  path String?
+  input Json
+  inputFingerprint String
+  promptVersion String
+  prompt String? @db.Text
+  promptSha256 String? @db.Char(64)
+  falModel String
+  falParameters Json
+  idempotencyKey String @unique
+  status String @default("queued")
+  requestId String? @unique
+  submittedAt DateTime?
+  draftDeadline DateTime? @db.Timestamp(3)
+  promptSource String?
+  imageUrl String? @db.Text
+  imageData Bytes?
+  imageSha256 String? @db.Char(64)
+  assetId String?
+  url String?
+  errorCode String?
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String?
+  leaseUntil DateTime?
+  queuedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  anchor SkillAvatar @relation("AvatarJobs", fields: [ownerId, logicalSkillId], references: [ownerId, id], onDelete: Restrict, onUpdate: NoAction)
+  currentFor SkillAvatar? @relation("AvatarCurrentJob")
+  style AvatarStyleVersion @relation(fields: [styleId, styleVersion], references: [styleId, styleVersion], onDelete: Restrict, onUpdate: NoAction)
+  variant AvatarVariant?
+  selections AvatarSelection[]
+  attempt SkillAvatarGenerationAttempt?
+  localAiLeases LocalAiLease[]
+  @@unique([id, ownerId, logicalSkillId])
+  @@unique([ownerId, logicalSkillId, generationRevision])
+  @@index([status, nextAttemptAt, leaseUntil])
+  @@index([ownerId, leaseUntil])
+  @@index([queuedAt])
+  @@index([ownerId, logicalSkillId, createdAt])
+  @@map("avatar_generation_jobs")
+}
+
+model AvatarVariant {
+  id String @id @default(uuid())
+  ownerId String
+  logicalSkillId String
+  styleId String
+  styleVersion Int
+  generationRevision Int
+  inputFingerprint String
+  path String
+  promptVersion String
+  prompt String? @db.Text
+  promptSha256 String? @db.Char(64)
+  assetId String?
+  url String
+  imageSha256 String? @db.Char(64)
+  jobId String @unique
+  createdAt DateTime @default(now())
+  anchor SkillAvatar @relation(fields: [ownerId, logicalSkillId], references: [ownerId, id], onDelete: Restrict, onUpdate: NoAction)
+  style AvatarStyleVersion @relation(fields: [styleId, styleVersion], references: [styleId, styleVersion], onDelete: Restrict, onUpdate: NoAction)
+  job AvatarGenerationJob @relation(fields: [jobId, ownerId, logicalSkillId], references: [id, ownerId, logicalSkillId], onDelete: Restrict, onUpdate: NoAction)
+  selections AvatarSelection[]
+  @@unique([jobId, ownerId, logicalSkillId])
+  @@unique([id, ownerId, logicalSkillId])
+  @@unique([ownerId, logicalSkillId, generationRevision])
+  @@index([ownerId, logicalSkillId, styleId, styleVersion, createdAt], map: "avatar_variants_reuse_idx")
+  @@map("avatar_variants")
+}
+
+model AvatarSelection {
+  ownerId String
+  logicalSkillId String
+  source String @default("generated")
+  variantId String?
+  currentJobId String?
+  revision Int @default(1)
+  customAssetId String?
+  customUrl String?
+  customUpdatedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  anchor SkillAvatar @relation(fields: [ownerId, logicalSkillId], references: [ownerId, id], onDelete: Restrict, onUpdate: NoAction)
+  variant AvatarVariant? @relation(fields: [variantId, ownerId, logicalSkillId], references: [id, ownerId, logicalSkillId], onDelete: Restrict, onUpdate: NoAction)
+  currentJob AvatarGenerationJob? @relation(fields: [currentJobId, ownerId, logicalSkillId], references: [id, ownerId, logicalSkillId], onDelete: Restrict, onUpdate: NoAction)
+  @@id([ownerId, logicalSkillId])
+  @@index([variantId])
+  @@index([currentJobId])
+  @@map("avatar_selections")
+}
+
+model InstanceIdentity {
+  id         Int      @id @default(1)
+  instanceId String   @unique @default(uuid())
+  publicKey  String
+  ciphertext Bytes
+  iv         Bytes
+  tag        Bytes
+  wrappedDek Bytes
+  wrapIv     Bytes
+  wrapTag    Bytes
+  kekVersion Int
+  aadVersion Int
+  createdAt  DateTime @default(now())
+
+  @@map("instance_identity")
+}
+
+model InstanceSetup {
+  id            Int       @id @default(1)
+  initializedAt DateTime?
+  codeHash      String?
+  codeExpiresAt DateTime?
+  codeAttempts  Int       @default(0)
+  updatedAt     DateTime  @updatedAt
+
+  @@map("instance_setup")
+}
+
+model ServerSetting {
+  key              String   @id
+  value            Json
+  secretCiphertext Bytes?
+  secretIv         Bytes?
+  secretTag        Bytes?
+  secretWrappedDek Bytes?
+  secretWrapIv     Bytes?
+  secretWrapTag    Bytes?
+  secretKekVersion Int?
+  secretAadVersion Int?
+  secretLast4      String?
+  version          Int      @default(1)
+  updatedAt        DateTime @updatedAt
+  updatedById      String?
+  updatedBy        User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("server_settings")
+}
+
+model User {
+  skillMigrations SkillMigration[]
+  id              String   @id @default(uuid())
+  email           String   @unique
+  displayName     String
+  avatarUrl       String?
+  avatarStyleId   String?
+  passwordHash    String?
+  passwordSalt    String?
+  tokenVersion    Int      @default(0)
+  catalogTokenVersion Int  @default(0)
+  catalogSources CatalogSkillSource[]
+  catalogOperations CatalogSubmissionOperation[]
+  marketplaceRole String   @default("user") // user | admin
+  oauthProvider   String? // google | wechat
+  oauthId         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ownedTeams                Team[]                       @relation("TeamOwner")
+  serverSettings            ServerSetting[]
+  memberships               TeamMember[]
+  joinRequests              TeamJoinRequest[]
+  skills                    Skill[]
+  localAiLeases             LocalAiLease[]
+  comments                  Comment[]
+  commentMentions           CommentMention[]             @relation("CommentMentionUser")
+  notifications             Notification[]
+  teamCredentialsCreated    TeamCredential[]             @relation("TeamCredentialCreator")
+  teamCredentialVersions    TeamCredentialVersion[]      @relation("TeamCredentialVersionCreator")
+  teamCredentialExclusions  TeamCredentialExclusion[]    @relation("TeamCredentialExclusionCreator")
+  teamCredentialAliases     TeamCredentialAlias[]        @relation("TeamCredentialAliasCreator")
+  credentialAuditEvents     CredentialAuditEvent[]       @relation("CredentialAuditActor")
+  marketplaceSubmissions    MarketplaceSubmission[]      @relation("MarketplaceSubmitter")
+  marketplaceReviews        MarketplaceSubmission[]      @relation("MarketplaceReviewer")
+  marketplaceComments       MarketplaceComment[]
+  marketplaceInstallIntents MarketplaceInstallIntent[]
+  marketplacePresences      MarketplaceManagedPresence[]
+  feedbacks                 Feedback[]
+  announcementsSent         AdminAnnouncement[]
+  externalIdentities        ExternalIdentity[]
+  skillAvatars              SkillAvatar[]
+  skillAvatarAliases SkillAvatarAlias[]
+  avatarListingUpdates MarketplaceListing[] @relation("ListingAvatarUpdater")
+  skillCardsCreated         SkillCard[]                  @relation("SkillCardCreator")
+  skillCardGrants           CardGrant[]
+  libraryEntries            LibraryEntry[]
+  librarySkillTags          LibrarySkillTag[]
+  libraryQuickAccess        LibraryQuickAccess?
+  adminAgentKeys             AdminAgentKey[]              @relation("AdminAgentKeyIssuer")
+  adminAgentAuditEvents      AdminAgentAuditEvent[]       @relation("AdminAgentAuditActor")
+  teamActivities             TeamActivity[]               @relation("TeamActivityActor")
+
+  @@map("users")
+}
+
+model AdminAgentKey {
+  id                String    @id @default(uuid())
+  name              String
+  secretHash        String    @unique
+  scopes            String[]  @default([])
+  issuerAdminId     String?
+  clientOperationId String
+  createdAt         DateTime  @default(now())
+  revokedAt         DateTime?
+  lastUsedAt        DateTime?
+
+  issuer      User?                  @relation("AdminAgentKeyIssuer", fields: [issuerAdminId], references: [id], onDelete: SetNull)
+  auditEvents AdminAgentAuditEvent[]
+
+  @@unique([issuerAdminId, clientOperationId])
+  @@index([issuerAdminId, createdAt])
+  @@map("admin_agent_keys")
+}
+
+model AdminAgentAuditEvent {
+  id           String   @id @default(uuid())
+  /// Null for writes made from a logged-in admin Web session (channel = web).
+  keyId        String?
+  actorAdminId String?
+  /// agent | web
+  channel      String   @default("agent")
+  operationId  String
+  outcome      String
+  createdAt    DateTime @default(now())
+
+  key        AdminAgentKey? @relation(fields: [keyId], references: [id], onDelete: Restrict)
+  actorAdmin User?         @relation("AdminAgentAuditActor", fields: [actorAdminId], references: [id], onDelete: SetNull)
+
+  @@index([keyId, createdAt])
+  @@index([createdAt, id])
+  @@map("admin_agent_audit_events")
+}
+
+model AdminDiagnosticEvent {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  requestId   String
+  method      String
+  route       String
+  statusCode  Int
+  durationMs  Int
+  eventCode   String
+  fingerprint String
+
+  @@index([createdAt, id])
+  @@index([requestId, createdAt])
+  @@index([fingerprint, createdAt])
+  @@map("admin_diagnostic_events")
+}
+
+model ExternalIdentity {
+  id           String    @id @default(uuid())
+  userId       String
+  issuer       String
+  subject      String
+  linkMethod   String
+  linkedAt     DateTime  @default(now())
+  lastLoginAt  DateTime  @default(now())
+  lastLogoutAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issuer, subject])
+  @@unique([userId, issuer])
+  @@index([userId])
+  @@map("external_identities")
+}
+
+model CatalogSkillSource {
+  userId String
+  sourceOrigin String
+  sourceSkillId String
+  skillId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  @@id([userId, sourceOrigin, sourceSkillId])
+  @@map("catalog_skill_sources")
+}
+
+model CatalogSubmissionOperation {
+  userId String
+  clientOperationId String
+  requestDigest String
+  submissionId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  submission MarketplaceSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  @@id([userId, clientOperationId])
+  @@map("catalog_submission_operations")
+}
+
+model OidcLogoutWatermark {
+  issuer         String
+  subject        String
+  latestLogoutAt DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@id([issuer, subject])
+  @@map("oidc_logout_watermarks")
+}
+
+model Team {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  avatarUrl   String?
+  color       String    @default("#7c5cf0")
+  ownerId     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  dissolvedAt DateTime?
+
+  owner                  User                    @relation("TeamOwner", fields: [ownerId], references: [id])
+  members                TeamMember[]
+  joinRequests           TeamJoinRequest[]
+  skillShares            SkillTeamShare[]
+  comments               Comment[]
+  credentials            TeamCredential[]
+  credentialAuditEvents  CredentialAuditEvent[]
+  marketplaceComments    MarketplaceComment[]
+  activities             TeamActivity[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId   String
+  userId   String
+  role     String   @default("member") // owner | member
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@map("team_members")
+}
+
+model TeamJoinRequest {
+  id          String   @id @default(uuid())
+  teamId      String
+  applicantId String
+  invitedBy   String?
+  status      String   @default("pending") // pending | approved | rejected
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  team      Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  applicant User @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, applicantId])
+  @@map("team_join_requests")
+}
+
+model Skill {
+  catalogSources CatalogSkillSource[]
+  analysisStatus    String    @default("unanalysed")
+  labelsManuallyEdited Boolean @default(true)
+  migrationSource   Json?
+  storeCopy         Json?
+  id                String    @id @default(uuid())
+  name              String // raw folder name
+  displayName       String
+  description       String?
+  sourceUrl         String?
+  avatarUrl         String?
+  avatarStatus      String    @default("none")
+  category          String?
+  labels            Json      @default("[]") // string[]
+  triggerScenarios  Json      @default("[]") // string[]
+  compatibleAgents  Json      @default("[]") // string[]
+  envDependencies   Json      @default("[]") // {key, description?, required}[]; never values
+  sourceContent     String?   @db.Text // redacted SKILL.md for authorized remote detail views
+  authorId          String
+  currentVersion    String    @default("0.1.0")
+  versionHighWater Int       @default(-1)
+  importVersionId  String?
+  installCount      Int       @default(0)
+  visibility        String    @default("private") // private | team | public
+  marketplaceStatus String    @default("none") // none | submitted | under_review | approved | rejected
+  ossPackageKey     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  author                 User                    @relation(fields: [authorId], references: [id])
+  versions               SkillVersion[]
+  importVersion          SkillVersion? @relation("ImportedVersion", fields: [importVersionId, id], references: [id, skillId], onDelete: NoAction, onUpdate: NoAction)
+  teamShares             SkillTeamShare[]
+  comments               Comment[]
+  credentialExclusions   TeamCredentialExclusion[]
+  credentialAuditEvents  CredentialAuditEvent[]
+  marketplaceSubmissions MarketplaceSubmission[]
+  marketplaceListing     MarketplaceListing?
+  avatar                 SkillAvatar?
+  libraryEntries         LibraryEntry[]
+  localAiLeases          LocalAiLease[]
+
+  @@index([authorId, name])
+  @@index([authorId, deletedAt])
+  @@map("skills")
+}
+
+model LocalAiLease {
+  id            String   @id @default(uuid())
+  userId        String
+  skillId       String?
+  avatarJobId   String?
+  type          String // analyzeSkill | draftAvatarPrompt
+  inputHash     String
+  configVersion String
+  tokenVersion  Int
+  state         String // leased | failed
+  failureCount  Int      @default(0)
+  expiresAt     DateTime @db.Timestamp(3)
+  createdAt     DateTime @default(now()) @db.Timestamp(3)
+  updatedAt     DateTime @updatedAt @db.Timestamp(3)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill? @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  avatarJob AvatarGenerationJob? @relation(fields: [avatarJobId], references: [id], onDelete: Cascade)
+
+  @@unique([skillId, type])
+  @@unique([avatarJobId, type])
+  @@index([userId, expiresAt])
+  @@map("local_ai_leases")
+}
+
+model AiDailyUsage {
+  day    String
+  userId String
+  count  Int @default(0)
+
+  @@id([day, userId])
+  @@map("ai_daily_usage")
+}
+
+model SkillMigration {
+  id String @id @default(uuid())
+  targetUserId String
+  sourceProfile String
+  sourceOrigin String
+  sourceUserId String
+  protocolVersion Int
+  createdAt DateTime @default(now())
+  targetUser User @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  items SkillMigrationItem[]
+  avatars SkillMigrationAvatar[]
+  @@index([targetUserId, createdAt])
+  @@map("skill_migrations")
+}
+
+model SkillMigrationItem {
+  id String @id @default(uuid())
+  migrationId String
+  operationKey String
+  payloadHash String @db.Char(64)
+  result Json
+  statusCode Int
+  createdAt DateTime @default(now())
+  migration SkillMigration @relation(fields: [migrationId], references: [id], onDelete: Cascade)
+  @@unique([migrationId, operationKey])
+  @@map("skill_migration_items")
+}
+
+model SkillMigrationAvatar {
+  id String @id @default(uuid())
+  migrationId String
+  operationKey String
+  avatarId String
+  payloadHash String @db.Char(64)
+  assetId String?
+  url String?
+  code String?
+  migration SkillMigration @relation(fields: [migrationId], references: [id], onDelete: Cascade)
+  @@unique([migrationId, operationKey, avatarId])
+  @@map("skill_migration_avatars")
+}
+
+model SkillAvatar {
+  id               String    @id @default(uuid())
+  ownerId          String
+  currentJobId     String? @unique
+  localSkillId     String?
+  skillId          String?   @unique
+  input            Json
+  inputFingerprint String
+  promptVersion    String
+  prompt           String?   @db.Text
+  status           String    @default("queued")
+  requestId        String?   @unique
+  submittedAt      DateTime?
+  imageUrl         String?   @db.Text
+  imageData        Bytes?
+  imageSha256      String?
+  assetId          String?
+  url              String?
+  errorCode        String?
+  attempts         Int       @default(0)
+  nextAttemptAt    DateTime  @default(now())
+  leaseToken       String?
+  leaseUntil       DateTime?
+  /// Displayed source: `generated` (this task's result) or `custom` (a user upload). Uploads never touch generation fields.
+  source           String    @default("generated")
+  customAssetId    String?
+  customUrl        String?
+  customUpdatedAt  DateTime?
+  /// When this task last entered the paid generation queue (display and ordering only; the daily quota
+  /// is the generation-attempt ledger). NULL for upload-only rows.
+  queuedAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  owner User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  skill Skill? @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  aliases SkillAvatarAlias[]
+  generationAttempts SkillAvatarGenerationAttempt[]
+  currentJob AvatarGenerationJob? @relation("AvatarCurrentJob", fields: [currentJobId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  jobs AvatarGenerationJob[] @relation("AvatarJobs")
+  variants AvatarVariant[]
+  selection AvatarSelection?
+
+  @@unique([ownerId, id])
+  @@unique([ownerId, localSkillId])
+  @@index([status, nextAttemptAt, leaseUntil])
+  @@index([queuedAt])
+  @@map("skill_avatars")
+}
+
+/// Daily avatar quota ledger (#221): one row per new paid generation attempt, written only by
+/// `reserveAvatarGeneration` in the same transaction as the status transition. Usage for a UTC
+/// day = rows with that `day` and `releasedAt IS NULL`. `kind`: create / restore / retry, or
+/// `baseline` for the one-off backfill. The migration also adds two partial indexes Prisma cannot
+/// declare: `(day) WHERE releasedAt IS NULL` and a unique `(avatarId) WHERE kind = 'baseline'`.
+model SkillAvatarGenerationAttempt {
+  id         String    @id @default(uuid())
+  avatarId   String
+  jobId      String? @unique
+  day        DateTime  @db.Date
+  kind       String
+  createdAt  DateTime  @default(now())
+  /// Set when an unpaid queued task is cancelled by a custom upload: the attempt is refunded.
+  releasedAt DateTime?
+
+  avatar SkillAvatar @relation(fields: [avatarId], references: [id], onDelete: Cascade)
+  job AvatarGenerationJob? @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([avatarId, createdAt])
+  @@map("skill_avatar_generation_attempts")
+}
+
+/// A device-local avatar id that resolves to the account's canonical avatar
+/// task. Written only inside `ensureSkillAvatar`'s transaction; never deleted
+/// by normal flows. Keys are per owner, so no other account can resolve them.
+model SkillAvatarAlias {
+  ownerId      String
+  aliasLocalId String
+  avatarId     String
+  createdAt    DateTime @default(now())
+
+  owner  User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  avatar SkillAvatar @relation(fields: [avatarId], references: [id], onDelete: Cascade)
+
+  @@id([ownerId, aliasLocalId])
+  @@index([avatarId])
+  @@map("skill_avatar_aliases")
+}
+
+model SkillVersion {
+  id                     String   @id @default(uuid())
+  skillId                String
+  version                String
+  changelog              String?
+  gitHash                String?
+  ossPackageKey          String?
+  packageData            Bytes?
+  packageSha256          String?
+  packageSize            Int?
+  mutationDigest         String?
+  cardSha256             String? // immutable content card; packageData stays as the transition fallback
+  profileSnapshotVersion Int? // 1 means the complete public Profile below is pinned to this version
+  skillName              String?
+  displayName            String?
+  description            String?
+  sourceUrl              String?
+  category               String?
+  labels                 Json?
+  triggerScenarios       Json?
+  compatibleAgents       Json?
+  envDependencies        Json?
+  detectedUndeclared     Json? // string[]: keys the Server's package re-check found but nothing declared (#251); author/admin only
+  sourceContent          String?  @db.Text // redacted SKILL.md snapshot for this exact version
+  createdAt              DateTime @default(now())
+
+  skill                  Skill                   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  importedBy             Skill[]                 @relation("ImportedVersion")
+  aliases                SkillVersionLabelAlias[]
+  receipts               LibraryEntryVersion[]
+  card                   SkillCard?              @relation(fields: [cardSha256], references: [sha256], onDelete: Restrict)
+  marketplaceSubmissions MarketplaceSubmission[] @relation("MarketplaceSubmissionVersion")
+  marketplaceListings    MarketplaceListing[]    @relation("MarketplaceListingVersion")
+
+  @@unique([skillId, version])
+  @@unique([id, skillId])
+  @@index([cardSha256])
+  @@map("skill_versions")
+}
+
+// One immutable Skill content snapshot, deduplicated site-wide by the SHA-256
+// of its canonical ZIP bytes. Only storage attribution may be repointed after verification.
+model SkillCard {
+  sha256          String   @id
+  contentHash     String // skillhub-content-v1 hash of relative paths and file bytes
+  executablePaths Json     @default("[]") // sorted string[] of files with executable semantics
+  size            Int
+  storageKey      String
+  storageProvider String   @default("filesystem")
+  storageNamespace String?
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  createdBy User?          @relation("SkillCardCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  grants    CardGrant[]
+  entries   LibraryEntry[]
+  versions  SkillVersion[]
+  receipts  LibraryEntryVersion[]
+
+  @@index([createdById])
+  @@map("skill_cards")
+}
+
+// The only credential for reading or referencing a card. Grants are created
+// inside server transactions and are permanent by design.
+model CardGrant {
+  userId     String
+  cardSha256 String
+  reason     String // upload | marketplace | catalog | team | authored
+  sourceRef  String?
+  uploadedAt DateTime?
+  priorSourceRef String? // Preserve the original local grant when promoted to catalog.
+  createdAt  DateTime @default(now())
+
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card SkillCard @relation(fields: [cardSha256], references: [sha256], onDelete: Restrict)
+
+  @@id([userId, cardSha256])
+  @@index([cardSha256])
+  @@map("skill_card_grants")
+}
+
+// One Skill in a user's synced library. The client generates the id so that
+// a lost response can be retried without creating a duplicate entry.
+model LibraryEntry {
+  id              String    @id
+  userId          String
+  cardSha256      String
+  name            String
+  profile         Json      @default("{}")
+  sourceKind      String    @default("local") // local | marketplace | catalog | team
+  sourceOrigin    String?
+  sourceSkillId   String?
+  sourceVersionId String?
+  authorSkillId   String?
+  migrationKey    String?
+  requestDigest   String
+  revision        Int       @default(1)
+  currentVersionReceiptId String?
+  versionHighWater Int      @default(-1)
+  updatedByDevice String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card        SkillCard @relation(fields: [cardSha256], references: [sha256], onDelete: Restrict)
+  authorSkill Skill?    @relation(fields: [authorSkillId], references: [id], onDelete: SetNull)
+  receipts LibraryEntryVersion[] @relation("EntryReceipts")
+  tags     LibrarySkillTag[]
+  currentVersionReceipt LibraryEntryVersion? @relation("CurrentReceipt", fields: [currentVersionReceiptId, id], references: [id, entryId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([userId, migrationKey])
+  @@index([userId, deletedAt])
+  @@index([cardSha256])
+  @@map("library_entries")
+}
+
+// A user's private tag on one of their library entries (#322). Tags are never
+// part of a Skill's public profile, team share or package; nameKey is the
+// case-insensitive identity, name keeps the user's first-used casing.
+model LibrarySkillTag {
+  userId    String
+  entryId   String
+  nameKey   String
+  name      String
+  createdAt DateTime @default(now())
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry LibraryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@id([userId, entryId, nameKey])
+  @@index([userId, nameKey])
+  @@index([entryId])
+  @@map("library_skill_tags")
+}
+
+// The user's ordered sidebar quick-access list (#322), replaced as a whole
+// under compare-and-swap on revision so devices cannot silently overwrite.
+model LibraryQuickAccess {
+  userId    String   @id
+  revision  Int      @default(0)
+  items     Json     @default("[]") // [{ kind: 'tag' | 'skill', ref: string }]
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("library_quick_access")
+}
+
+model LibraryEntryVersion {
+  id String @id @default(uuid())
+  entryId String
+  label String
+  cardSha256 String
+  formalVersionId String?
+  requestDigest String?
+  createdAt DateTime @default(now())
+
+  entry LibraryEntry @relation("EntryReceipts", fields: [entryId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  currentFor LibraryEntry[] @relation("CurrentReceipt")
+  card SkillCard @relation(fields: [cardSha256], references: [sha256], onDelete: Restrict, onUpdate: NoAction)
+  formalVersion SkillVersion? @relation(fields: [formalVersionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([entryId, label])
+  @@unique([id, entryId])
+  @@unique([entryId, formalVersionId])
+  @@index([cardSha256])
+  @@map("library_entry_versions")
+}
+
+model SkillVersionLabelAlias {
+  skillId String
+  versionId String
+  oldLabel String
+  newLabel String
+  planDigest String
+  version SkillVersion @relation(fields: [versionId, skillId], references: [id, skillId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([skillId, oldLabel])
+  @@index([versionId])
+  @@map("skill_version_label_aliases")
+}
+
+model MarketplaceSubmission {
+  catalogOperations CatalogSubmissionOperation[]
+  id               String    @id @default(uuid())
+  skillId          String
+  versionId        String
+  submittedById    String
+  reviewerId       String?
+  status           String    @default("submitted") // submitted | under_review | approved | rejected | withdrawn
+  submitterNote    String?   @db.Text
+  reviewNote       String?   @db.Text
+  skillName        String
+  displayName      String
+  description      String?
+  category         String?
+  labels           Json      @default("[]")
+  triggerScenarios Json      @default("[]")
+  compatibleAgents Json      @default("[]")
+  envDependencies  Json      @default("[]")
+  sourceContent    String    @db.Text
+  sourceUrl        String?
+  submittedAt      DateTime  @default(now())
+  reviewStartedAt  DateTime?
+  reviewedAt       DateTime?
+  withdrawnAt      DateTime?
+
+  skill       Skill               @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  version     SkillVersion        @relation("MarketplaceSubmissionVersion", fields: [versionId], references: [id], onDelete: Cascade)
+  submittedBy User                @relation("MarketplaceSubmitter", fields: [submittedById], references: [id])
+  reviewer    User?               @relation("MarketplaceReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  listing     MarketplaceListing?
+
+  @@index([status, submittedAt])
+  @@index([skillId, submittedAt])
+  @@map("marketplace_submissions")
+}
+
+model MarketplaceListing {
+  skillId           String    @id
+  submissionId      String    @unique
+  versionId         String
+  avatarUrl         String?
+  avatarStatus      String?
+  avatarSource      String?
+  avatarSnapshotAt  DateTime?
+  avatarUpdatedById String?
+  featured          Boolean   @default(false)
+  original          Boolean   @default(false)
+  editorialLabels   Json      @default("[]")
+  categoryId        String?
+  downloadCount     Int       @default(0)
+  installClickCount Int       @default(0)
+  activeUserCount   Int       @default(0)
+  publishedAt       DateTime  @default(now())
+  /// First time the listing went public; new versions and re-listing never change it.
+  firstPublishedAt  DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  withdrawnAt       DateTime?
+  /// author | admin; set together with withdrawnAt and cleared with it.
+  withdrawnBy       String?
+  /// Reason an admin gave when unlisting; null for author withdrawals.
+  withdrawnReason   String?
+
+  skill            Skill                        @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  avatarUpdatedBy  User? @relation("ListingAvatarUpdater", fields: [avatarUpdatedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  submission       MarketplaceSubmission        @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  version          SkillVersion                 @relation("MarketplaceListingVersion", fields: [versionId], references: [id], onDelete: Cascade)
+  category         MarketplaceCategory?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  topicItems       MarketplaceTopicItem[]
+  comments         MarketplaceComment[]
+  installIntents   MarketplaceInstallIntent[]
+  managedPresences MarketplaceManagedPresence[]
+  dailyMetrics     MarketplaceListingDailyMetric[]
+
+  @@index([withdrawnAt, publishedAt])
+  @@index([withdrawnAt, firstPublishedAt])
+  @@index([withdrawnAt, downloadCount])
+  @@index([withdrawnAt, installClickCount])
+  @@index([withdrawnAt, activeUserCount])
+  @@index([categoryId, withdrawnAt, publishedAt])
+  @@index([avatarUpdatedById])
+  @@map("marketplace_listings")
+}
+
+/// Per listing, per store calendar day (Asia/Shanghai) counters behind 热门 and the store's recent figures.
+/// Holds no user or client identifiers.
+model MarketplaceListingDailyMetric {
+  listingSkillId String
+  day            DateTime @db.Date
+  downloads      Int      @default(0)
+  installs       Int      @default(0)
+
+  listing MarketplaceListing @relation(fields: [listingSkillId], references: [skillId], onDelete: Cascade)
+
+  @@id([listingSkillId, day])
+  @@index([day])
+  @@map("marketplace_listing_daily_metrics")
+}
+
+model MarketplaceCategory {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  listings MarketplaceListing[]
+
+  @@index([enabled, sortOrder, name])
+  @@map("marketplace_categories")
+}
+
+model MarketplaceTopic {
+  id            String    @id @default(uuid())
+  slug          String    @unique
+  title         String
+  description   String?
+  introContent  String?   @db.Text
+  /// Article body (Markdown subset + Skill embeds, ≤ 60 000 chars). When set, items and introContent are derived from it.
+  contentMarkdown String? @db.Text
+  coverImageUrl String?
+  status        String    @default("draft") // draft | published | archived
+  featured      Boolean   @default(false)
+  sortOrder     Int       @default(0)
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  items MarketplaceTopicItem[]
+
+  @@index([status, featured, sortOrder, publishedAt])
+  @@map("marketplace_topics")
+}
+
+model MarketplaceTopicItem {
+  topicId   String
+  skillId   String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  topic   MarketplaceTopic   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  listing MarketplaceListing @relation(fields: [skillId], references: [skillId], onDelete: Cascade)
+
+  @@id([topicId, skillId])
+  @@index([topicId, sortOrder])
+  @@map("marketplace_topic_items")
+}
+
+model MarketplaceComment {
+  id             String    @id @default(uuid())
+  listingSkillId String
+  userId         String
+  visibility     String    @default("public") // public | team
+  teamId         String?
+  parentId       String?
+  content        String
+  status         String    @default("visible") // visible | hidden
+  moderatorId    String?
+  moderationNote String?
+  moderatedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  listing MarketplaceListing   @relation(fields: [listingSkillId], references: [skillId], onDelete: Cascade)
+  user    User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team    Team?                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  parent  MarketplaceComment?  @relation("MarketplaceCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies MarketplaceComment[] @relation("MarketplaceCommentReplies")
+
+  @@index([listingSkillId, visibility, teamId, status, parentId, createdAt])
+  @@index([userId, createdAt])
+  @@map("marketplace_comments")
+}
+
+model MarketplaceInstallIntent {
+  id             String    @id @default(uuid())
+  listingSkillId String
+  userId         String?
+  idempotencyKey String    @unique
+  clientIdHash   String
+  operationKind  String    @default("legacy") // legacy | join | agent
+  source         String    @default("app") // app | web
+  platform       String?
+  status         String    @default("clicked") // clicked | completed | failed | cancelled
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  completedAt    DateTime?
+
+  listing MarketplaceListing @relation(fields: [listingSkillId], references: [skillId], onDelete: Cascade)
+  user    User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([listingSkillId, createdAt])
+  @@index([userId, createdAt])
+  @@map("marketplace_install_intents")
+}
+
+model MarketplaceManagedPresence {
+  listingSkillId String
+  userId         String
+  deviceId       String
+  active         Boolean   @default(true)
+  lastSeenAt     DateTime  @default(now())
+  removedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  listing MarketplaceListing @relation(fields: [listingSkillId], references: [skillId], onDelete: Cascade)
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([listingSkillId, userId, deviceId])
+  @@index([listingSkillId, active, lastSeenAt])
+  @@index([userId, deviceId, active])
+  @@map("marketplace_managed_presences")
+}
+
+model AppReleaseDownloadMetric {
+  day       DateTime @db.Date
+  version   String
+  target    String
+  arch      String
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([day, version, target, arch])
+  @@index([version, day])
+  @@map("app_release_download_metrics")
+}
+
+// Team activity feed (#293): who did what in a team. Payload carries names
+// and ids only — never key values, ciphertext, emails or tokens.
+model TeamActivity {
+  id        String   @id @default(uuid())
+  teamId    String
+  actorId   String?
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  actor User? @relation("TeamActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([teamId, createdAt])
+  @@map("team_activities")
+}
+
+model SkillTeamShare {
+  skillId    String
+  teamId     String
+  sharedById String
+  createdAt  DateTime @default(now())
+
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([skillId, teamId])
+  @@map("skill_team_shares")
+}
+
+// Team key vault (#254): one value per (team, KEY). Any active member may put
+// or rotate it; the holder (`createdById`, the last writer) and the team owner
+// may revoke it or exclude Skills. A Skill may use it at runtime only while it
+// is shared to the team, declares the KEY and is not excluded.
+model TeamCredential {
+  id              String    @id @default(uuid())
+  teamId          String
+  envKey          String
+  status          String    @default("active") // active | revoked
+  currentRevision Int       @default(0)
+  createdById     String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  revokedAt       DateTime?
+
+  team       Team                      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy  User                      @relation("TeamCredentialCreator", fields: [createdById], references: [id])
+  versions   TeamCredentialVersion[]
+  exclusions TeamCredentialExclusion[]
+  aliases    TeamCredentialAlias[]
+
+  @@unique([teamId, envKey])
+  @@index([teamId, status])
+  @@map("team_credentials")
+}
+
+// Envelope-encrypted value; AAD schema 2 covers
+// {credentialId, teamId, envKey, revision}.
+model TeamCredentialVersion {
+  id           String   @id @default(uuid())
+  credentialId String
+  revision     Int
+  ciphertext   Bytes
+  iv           Bytes
+  tag          Bytes
+  wrappedDek   Bytes
+  wrapIv       Bytes
+  wrapTag      Bytes
+  kekVersion   Int
+  aadVersion   Int      @default(2)
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  credential TeamCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  createdBy  User           @relation("TeamCredentialVersionCreator", fields: [createdById], references: [id])
+
+  @@unique([credentialId, revision])
+  @@index([createdAt])
+  @@map("team_credential_versions")
+}
+
+model TeamCredentialExclusion {
+  credentialId String
+  skillId      String
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  credential TeamCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  skill      Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  createdBy  User           @relation("TeamCredentialExclusionCreator", fields: [createdById], references: [id])
+
+  @@id([credentialId, skillId])
+  @@index([skillId])
+  @@map("team_credential_exclusions")
+}
+
+// Other variable names (#288) that resolve to the same team key value. Within
+// one team a name belongs to at most one key: [teamId, envKey] is unique here,
+// and the routes also refuse an alias equal to another active key's main name.
+// Revoking a key deletes its aliases so the names free up.
+model TeamCredentialAlias {
+  credentialId String
+  teamId       String
+  envKey       String
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  credential TeamCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  createdBy  User           @relation("TeamCredentialAliasCreator", fields: [createdById], references: [id])
+
+  @@id([credentialId, envKey])
+  @@unique([teamId, envKey])
+  @@map("team_credential_aliases")
+}
+
+model CredentialAuditEvent {
+  id         String   @id @default(uuid())
+  requestId  String
+  actorId    String?
+  skillId    String?
+  teamId     String?
+  action     String
+  outcome    String
+  reasonCode String?
+  bindingIds Json     @default("[]") // team credential ids involved
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  actor User?  @relation("CredentialAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  skill Skill? @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  team  Team?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([skillId, teamId, createdAt])
+  @@map("credential_audit_events")
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  skillId   String
+  teamId    String?
+  userId    String
+  parentId  String?
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  skill    Skill            @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  team     Team?            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id])
+  parent   Comment?         @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[]        @relation("CommentReplies")
+  mentions CommentMention[]
+
+  @@index([skillId, teamId, parentId])
+  @@map("comments")
+}
+
+model CommentMention {
+  commentId       String
+  mentionedUserId String
+  createdAt       DateTime @default(now())
+
+  comment       Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mentionedUser User    @relation("CommentMentionUser", fields: [mentionedUserId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, mentionedUserId])
+  @@index([mentionedUserId, createdAt])
+  @@map("comment_mentions")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String // system | join_request | team_dissolved | skill_update | ...
+  payload   Json     @default("{}")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AdminAnnouncement {
+  id                String   @id @default(uuid())
+  clientOperationId String   @unique
+  authorId          String
+  message           String   @db.Text
+  recipientCount    Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@map("admin_announcements")
+}
+
+model Feedback {
+  id                 String   @id @default(uuid())
+  userId             String?
+  type               String // bug | usage | feature | other
+  content            String   @db.Text
+  contact            String?
+  attachments        Json     @default("[]") // private Picem asset metadata
+  diagnostics        Json     @default("{}") // bounded, redacted client diagnostics
+  clientOperationId  String?
+  operationScopeHash String?
+  requestDigest      String?
+  status             String   @default("pending") // pending | reviewing | resolved
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([operationScopeHash, clientOperationId])
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("feedback")
+}
+
+model MediaAsset {
+  id           String   @id // stable upload operation digest, or historical asset ID
+  assetId      String?  @unique // provider asset ID, persisted immediately after acceptance
+  status       String   @default("uploading")
+  uploadedById String?
+  ownerRef     String
+  purpose      String
+  visibility   String
+  url          String?  @unique
+  mimeType     String?
+  storageKey   String?
+  storageProvider String?
+  storageNamespace String?
+  createdAt    DateTime @default(now())
+
+  @@index([ownerRef])
+  @@map("media_assets")
+}

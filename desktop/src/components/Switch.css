@@ -1,0 +1,33 @@
+/* Switch (#289): 40×24 track, 20px knob; brand when on, line-strong when off. */
+.ui-switch {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: 40px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-line-strong);
+  cursor: pointer;
+  transition: background var(--motion-base) var(--ease-standard);
+}
+.ui-switch-on { background: var(--color-brand); }
+.ui-switch:disabled { cursor: not-allowed; opacity: .5; }
+.ui-switch[aria-busy="true"] { cursor: progress; }
+.ui-switch-knob {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(20, 33, 61, .25);
+  transform: translateX(0);
+  transition: transform var(--motion-base) var(--ease-standard);
+}
+.ui-switch-on .ui-switch-knob { transform: translateX(16px); }
+.ui-switch:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-switch, .ui-switch-knob { transition: none; }
+}

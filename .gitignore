@@ -1,0 +1,23 @@
+# Local environment
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+desktop/skillhub.build.json
+**/node_modules/
+**/dist/
+**/target/
+**/.vite/
+**/coverage/
+desktop/src-tauri/gen/
+deploy/selfhost/backups/
+.DS_Store
+**/.DS_Store
+*.log
+*.skr
+*.skr.partial
+*.tmp
+.idea/
+.vscode/

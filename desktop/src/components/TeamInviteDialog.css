@@ -1,0 +1,31 @@
+.team-invite-prompt-layer { z-index: 145; }
+.team-invite-prompt { width: min(440px, calc(100vw - 36px)); }
+.team-invite-prompt-team {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.team-invite-prompt-avatar {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  box-shadow: 0 0 0 1px var(--color-line);
+}
+.team-invite-prompt-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.team-invite-prompt-team b,
+.team-invite-prompt-team span { display: block; }
+.team-invite-prompt-team b { color: var(--color-ink); font-size: var(--font-size-skill-name); font-weight: var(--font-weight-skill-name); line-height: var(--line-height-skill-name); }
+.team-invite-prompt-team span { margin-top: 3px; color: var(--color-muted); font-size: 11.5px; line-height: 1.45; }
+.team-invite-prompt-note { display: flex; align-items: center; gap: 8px; margin-top: 11px; color: var(--color-muted); font-size: 11.5px; }
+.team-invite-prompt-note svg { color: var(--color-brand); }

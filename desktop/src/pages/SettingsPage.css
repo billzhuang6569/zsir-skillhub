@@ -1,0 +1,326 @@
+.settings-choice-row { min-height: 68px; flex-wrap: wrap; row-gap: var(--space-2); }
+.settings-choice-row > .settings-row-info { flex: 1 1 200px; }
+
+/* 通用 rows (#289): shared SegmentedControl / Switch on the right, actions wrap under the copy on narrow windows. */
+.settings-choice-row > .ui-seg { flex: none; }
+.settings-switch-row > .settings-row-info,
+.settings-backup-row > .settings-row-info { flex: 1 1 220px; }
+.settings-switch-row > .ui-switch { flex: none; }
+.settings-backup-row { flex-wrap: wrap; row-gap: var(--space-2); }
+.settings-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-left: auto; }
+.settings-row-actions .btn { flex: none; white-space: nowrap; }
+.settings-row-muted { flex: none; margin-left: auto; color: var(--color-muted); font-size: var(--font-size-caption); }
+
+/* #334: AGENT 工具 — one neutral list, no per-card green tint; the group is the only container. */
+/* overflow: visible so the detail / switch tooltips are not clipped by .settings-group. */
+.settings-group.agent-tools-group { overflow: visible; padding: 12px; container: agent-tools / inline-size; }
+
+.agent-tools-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  padding: 0 2px 8px;
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+}
+.agent-tools-head > span { min-width: 0; }
+.agent-tools-head .btn { flex: none; white-space: nowrap; }
+
+.agent-tools-error { padding-bottom: 10px; }
+.agent-tools-error:last-child { padding-bottom: 2px; }
+
+.agent-tool-list { margin: 0; padding: 0; list-style: none; }
+.agent-tool-list + .agent-tool-list { border-top: 1px solid var(--color-line); }
+
+.agent-tool-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 2px;
+}
+.agent-tool-row + .agent-tool-row { border-top: 1px solid var(--color-line); }
+
+.agent-tool-name { min-width: 0; display: flex; align-items: center; gap: 4px; }
+.agent-tool-name b { min-width: 0; color: var(--color-ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+
+.agent-tool-info {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: help;
+}
+.agent-tool-info.warn { color: var(--color-warning); }
+.agent-tool-info:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+
+.agent-tool-tip .ui-tip { width: max-content; max-width: min(340px, 72vw); }
+
+.agent-tool-toggle { display: inline-flex; align-items: center; gap: 10px; }
+.agent-tool-toggle-label { color: var(--color-muted); font-size: var(--font-size-caption); white-space: nowrap; }
+
+/* 检测未完成（#335）: neutral warning chip, never merged into 未检测 and never given a switch. */
+.agent-tool-state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-warning-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-warning-tint);
+  color: var(--color-warning);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-tool-skeleton { display: grid; gap: 6px; padding: 8px 2px; }
+.agent-tool-skeleton span { display: block; height: 28px; border-radius: var(--radius-sm); background: var(--color-surface-sunken); }
+
+.agent-tools-empty { margin: 0; padding: 8px 2px; color: var(--color-muted); font-size: var(--font-size-caption); }
+
+.agent-tools-missing { border-top: 1px solid var(--color-line); }
+.agent-tool-skeleton + .agent-tools-missing,
+.agent-tools-error + .agent-tools-missing { border-top: 0; }
+.agent-tools-missing-toggle {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-tools-missing-toggle > svg { flex: none; transform: rotate(-90deg); transition: transform var(--motion-fast) var(--ease-standard); }
+.agent-tools-missing-toggle[aria-expanded="true"] > svg { transform: rotate(0deg); }
+.agent-tools-missing-toggle > span { min-width: 0; overflow-wrap: anywhere; }
+.agent-tools-missing-toggle:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; border-radius: var(--radius-sm); }
+.agent-tools-missing-list { display: grid; gap: 8px; margin: 0; padding: 0 2px 8px 20px; list-style: none; }
+.agent-tools-missing-list li { min-width: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; }
+.agent-tools-missing-list b { display: block; color: var(--color-ink); font-size: 12px; font-weight: 500; }
+.agent-tool-toggle-label { cursor: pointer; user-select: none; }
+.agent-tools-missing-list small { display: block; color: var(--color-muted); font-size: 11px; overflow-wrap: anywhere; }
+
+@container agent-tools (max-width: 440px) {
+  .agent-tool-toggle-label { display: none; }
+}
+/* WKWebView before Safari 16 (macOS 11–12) has no container queries: viewport fallback. */
+@supports not (container-type: inline-size) {
+  @media (max-width: 760px) { .agent-tool-toggle-label { display: none; } }
+}
+
+@media (hover: hover) {
+  .agent-tool-info:hover,
+  .agent-tools-missing-toggle:hover { color: var(--color-ink); }
+  .agent-tool-info.warn:hover { color: var(--color-warning); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-tools-missing-toggle > svg { transition: none; }
+}
+
+.agent-runtime-notices { display: grid; gap: 7px; margin-top: 9px; }
+.agent-runtime-notice {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+}
+.agent-runtime-notice > svg { color: var(--color-muted); }
+.agent-runtime-notice b,
+.agent-runtime-notice span { display: block; }
+.agent-runtime-notice b { color: var(--color-ink); font-size: 11.5px; }
+.agent-runtime-notice span { margin-top: 1px; overflow: hidden; color: var(--color-muted); font-size: var(--font-size-caption); text-overflow: ellipsis; white-space: nowrap; }
+.agent-runtime-notice small { display: block; margin-top: 2px; overflow: hidden; color: var(--color-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-runtime-notice.danger { border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 9%, transparent); }
+.agent-runtime-notice.danger > svg { color: var(--color-danger); }
+.agent-runtime-notice.warning { border-color: color-mix(in srgb, var(--color-warning) 30%, transparent); background: var(--color-warning-tint); }
+.agent-runtime-notice.warning > svg { color: var(--color-warning); }
+
+.trash-group { overflow: hidden; }
+
+.trash-head {
+  min-height: 62px;
+  padding: 10px 12px 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+}
+
+.trash-head > div:first-child { min-width: 0; }
+.trash-head b { display: block; color: var(--color-ink); font-size: 13px; }
+.trash-head > div:first-child > span { display: block; margin-top: 3px; color: var(--color-muted); font-size: 11px; line-height: 1.45; }
+
+.trash-head-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.trash-head-actions .ico-btn { width: 40px; height: 40px; }
+.trash-count { color: var(--color-muted); font-size: var(--font-size-caption); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.trash-loading,
+.trash-error,
+.trash-empty {
+  min-height: 72px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--color-muted);
+  font-size: 11.5px;
+}
+
+.trash-loading .spin-icon { width: 16px; height: 16px; flex: none; }
+.trash-error { justify-content: space-between; color: var(--color-danger); line-height: 1.5; }
+.trash-error > span { min-width: 0; overflow-wrap: anywhere; }
+.trash-error .btn { min-height: 40px; flex: none; }
+
+.trash-empty { background: var(--color-surface-sunken); }
+.trash-empty-icon,
+.trash-kind-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--color-muted);
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+.trash-empty-icon { width: 36px; height: 36px; border-radius: var(--radius-sm); }
+.trash-empty b,
+.trash-empty span { display: block; }
+.trash-empty b { color: var(--color-muted); font-size: 12px; }
+.trash-empty div > span { margin-top: 2px; line-height: 1.5; }
+
+.trash-list {
+  max-height: min(370px, 46vh);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.trash-item {
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 12px 10px 16px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid var(--color-line);
+  transition-property: background-color;
+  transition-duration: .14s;
+}
+
+.trash-item:last-child { border-bottom: 0; }
+.trash-kind-icon { width: 36px; height: 36px; border-radius: var(--radius-sm); }
+.trash-kind-icon.managed { color: var(--color-brand); background: var(--color-brand-tint); box-shadow: none; }
+.trash-kind-icon.backup { color: var(--color-warning); background: var(--color-warning-tint); box-shadow: none; }
+.trash-kind-icon.account { color: var(--color-brand); background: var(--color-brand-tint); box-shadow: none; }
+.trash-item-copy { min-width: 0; }
+
+.trash-item-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.trash-item-name b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 12.5px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-item-name > span,
+.trash-item-status {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--color-surface-sunken);
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.trash-item-meta {
+  min-width: 0;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
+.trash-item-meta i { width: 3px; height: 3px; border-radius: 50%; background: var(--color-line); }
+.trash-item-meta time { font-variant-numeric: tabular-nums; }
+
+.trash-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.trash-action { height: 40px; min-width: 64px; padding: 0 11px; font-size: 11.5px; }
+.trash-action:active:not(:disabled) { transform: scale(.96); }
+
+/* #186：「关于」第一行右侧的条款入口；空间不足时整组换到下一行，不截断按钮文字。 */
+.settings-about-row { flex-wrap: wrap; row-gap: 10px; }
+.settings-about-row > .settings-row-info { flex: 1 1 180px; }
+.settings-about-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.settings-about-links .btn { flex: none; white-space: nowrap; }
+
+@media (hover: hover) {
+  .trash-item:hover { background: var(--color-surface-sunken); }
+}
+
+@media (max-width: 760px) {
+  .trash-head { align-items: flex-start; }
+  .trash-count { display: none; }
+  .trash-item { grid-template-columns: 36px minmax(0, 1fr); }
+  .trash-actions { grid-column: 2; justify-content: flex-start; }
+}
+
+@media (max-width: 460px) {
+  .trash-head > div:first-child > span { max-width: 30ch; }
+  .trash-item-name { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .trash-actions { width: 100%; }
+  .trash-action { flex: 1; }
+}

@@ -1,0 +1,85 @@
+.window-chrome {
+  position: relative;
+  flex: 0 0 32px;
+  z-index: 120;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  user-select: none;
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 13px;
+}
+
+.window-chrome.windows .window-controls {
+  order: 2;
+  margin-left: auto;
+  gap: 0;
+  padding-left: 0;
+  height: 100%;
+}
+
+.window-chrome.windows .window-drag-region { order: 1; }
+
+.window-chrome.windows .window-control {
+  width: 46px;
+  height: 32px;
+  min-width: 46px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-muted);
+  font: 18px/1 "Segoe UI", sans-serif;
+  cursor: default;
+}
+
+.window-chrome.windows .window-control.minimize { padding-bottom: 8px; }
+.window-chrome.windows .window-control.maximize { font-size: 14px; }
+.window-chrome.windows .window-control:hover { background: var(--color-hover); color: var(--color-ink); }
+.window-chrome.windows .window-control.close:hover { background: #c42b1c; color: #fff; }
+.window-chrome.windows .window-control:active { transform: none; filter: brightness(.94); }
+/* Windows caption glyphs follow the theme ink; Windows' own close red stays. */
+.window-chrome.windows .window-control:focus-visible { outline-offset: -2px; }
+
+.window-control {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+  cursor: default;
+  transition: filter .12s ease-out, transform .12s ease-out;
+}
+
+.window-control::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+}
+
+.window-control.close { background: #ff5f57; }
+.window-control.minimize { background: #febc2e; }
+.window-control.maximize { background: #28c840; }
+.window-control:hover { filter: saturate(1.08) brightness(.94); }
+.window-control:active { transform: scale(.9); }
+.window-control:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+
+.window-drag-region {
+  align-self: stretch;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .window-control { transition: none; }
+}
