@@ -111,7 +111,7 @@ describe('public server information', () => {
   it('uses the checked-in server package version in public status payloads', () => {
     const now = new Date('2026-08-03T00:00:00.000Z')
 
-    expect(SERVER_VERSION).toBe('0.32.0')
+    expect(SERVER_VERSION).toBe('0.32.1')
     expect(publicServiceInfo('ready', now, releaseMetadata)).toEqual({
       profile: 'yitan-official',
       auth: { password: true, yitanOidc: false, registration: 'open' },
@@ -119,7 +119,7 @@ describe('public server information', () => {
       features: { marketplace: true, ai: false, avatars: false },
       minClientVersion: null,
       status: 'ready',
-      version: '0.32.0',
+      version: '0.32.1',
       buildId: releaseMetadata.buildId,
       migrationMarker: releaseMetadata.migrationMarker,
       capabilities: [

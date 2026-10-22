@@ -925,12 +925,21 @@ export const marketplaceRoutes: FastifyPluginAsync<{ agentAccess?: AdminAgentAcc
         return reply.conflict('The selected version contains sensitive public metadata')
       }
       if (!version.packageSha256) {
-        return reply.conflict('The selected version has no safe installable package')
+        return reply.code(409).send({
+          error: 'The selected version has no safe installable package',
+          code: 'PACKAGE_NOT_PUBLISHABLE',
+          reason: 'missing_package',
+        })
       }
       try {
         cachedValidatedPackage(await withPackageBytes(request, version))
-      } catch {
-        return reply.conflict('The selected version has no safe installable package')
+      } catch (error: unknown) {
+        return reply.code(409).send({
+          error: 'The selected version has no safe installable package',
+          code: 'PACKAGE_NOT_PUBLISHABLE',
+          reason: error instanceof SkillPackageValidationError ? error.reason : 'unavailable',
+          path: error instanceof SkillPackageValidationError ? error.path : undefined,
+        })
       }
 
       try {

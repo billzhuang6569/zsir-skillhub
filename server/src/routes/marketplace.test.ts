@@ -784,6 +784,40 @@ describe('Marketplace routes', () => {
     })
   })
 
+  it.each(['tokens.json', 'tokens.mjs', 'missing', 'checksum'])(
+    'returns actionable package results for %s', async (kind) => {
+      const packageData = createStoredZip([
+        { name: 'SKILL.md', data: '# Safe' },
+        { name: kind === 'tokens.json' ? 'tokens.json' : 'tokens.mjs', data: 'export const spacing = 8' },
+      ])
+      mockDb.skill.findUnique.mockResolvedValue(ownedSubmissionSkill(submissionCandidateVersion({
+        packageData,
+        packageSize: packageData.length,
+        packageSha256: kind === 'missing' ? null : kind === 'checksum' ? '0'.repeat(64)
+          : createHash('sha256').update(packageData).digest('hex'),
+      })))
+      mockDb.marketplaceSubmission.create.mockResolvedValue(submission())
+      app = await buildApp()
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/marketplace/skills/${SKILL_ID}/submissions`,
+        payload: { versionId: VERSION_ID, note: '请审核这个固定版本' },
+      })
+      if (kind === 'tokens.mjs') {
+        expect(response.statusCode).toBe(201)
+      } else {
+        expect(response.statusCode).toBe(409)
+        expect(response.json()).toEqual({
+          error: 'The selected version has no safe installable package',
+          code: 'PACKAGE_NOT_PUBLISHABLE',
+          reason: kind === 'missing' ? 'missing_package' : kind === 'checksum' ? 'unavailable' : 'forbidden_file',
+          ...(kind === 'tokens.json' ? { path: 'tokens.json' } : {}),
+        })
+        expect(mockDb.marketplaceSubmission.create).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it.each([
     ['version changelog', {
       changelog: `Rotate to sk_live_${'A'.repeat(24)}`,

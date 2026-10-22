@@ -1201,7 +1201,7 @@ function ScopeFilterControl({ scope, onSelect }: { scope: ManagedScope; onSelect
   return <div className={`agent-filter skills-filter-dropdown scope-filter${open ? ' open' : ''}`} ref={rootRef}>
     <button type="button" className="agent-filter-trigger" ref={triggerRef} aria-expanded={open} aria-controls={menuId} aria-label={`共享范围：${current?.label ?? '所有'}`} title={`共享范围：${current?.label ?? '所有'}`} data-active={scope !== 'all' || undefined} onClick={toggle}>
       <span className="agent-filter-default-icon"><Icon name="team" size={15} /></span>
-      <span className="agent-filter-trigger-label">共享范围 · {current?.label ?? '所有'}</span><Icon name="chev" size={13} />
+      <span className="agent-filter-trigger-label">{scope === 'all' ? '共享范围' : current?.label}</span><Icon name="chev" size={13} />
     </button>
     {open && <div id={menuId} className="agent-filter-menu" role="group" aria-label="按共享范围筛选">
       {SCOPE_OPTIONS.map((option) => <button type="button" key={option.value} aria-pressed={scope === option.value} onClick={() => { onSelect(option.value); close() }}><span className="agent-filter-default-icon"><Icon name={option.value === 'team' ? 'team' : 'box'} size={15} /></span><span>{option.label}</span>{scope === option.value && <Icon name="check" size={14} />}</button>)}
@@ -1219,7 +1219,7 @@ function AgentFilterControl({ agents, selectedKey, onSelect }: { agents: AgentIn
   return <div className={`agent-filter skills-filter-dropdown${open ? ' open' : ''}`} ref={rootRef}>
     <button type="button" className="agent-filter-trigger" ref={triggerRef} aria-expanded={open} aria-controls={menuId} aria-label={`Agent 筛选：${selectedAgent?.name ?? '所有 Agent'}`} title={`Agent 筛选：${selectedAgent?.name ?? '所有 Agent'}`} data-active={Boolean(selectedKey) || undefined} onClick={toggle}>
       {selectedAgent ? <AgentBrandIcon agent={selectedAgent} size={18} /> : <span className="agent-filter-default-icon"><Icon name="spark" size={15} /></span>}
-      <span className="agent-filter-trigger-label">{selectedAgent?.name ?? '所有 Agent'}</span><Icon name="chev" size={13} />
+      <span className="agent-filter-trigger-label">{selectedAgent?.name ?? 'Agent'}</span><Icon name="chev" size={13} />
     </button>
     {open && <div id={menuId} className="agent-filter-menu" role="group" aria-label="按已安装 Agent 筛选">
       <button type="button" aria-pressed={!selectedKey} onClick={() => select('')}><span className="agent-filter-default-icon"><Icon name="spark" size={15} /></span><span>所有 Agent</span>{!selectedKey && <Icon name="check" size={14} />}</button>

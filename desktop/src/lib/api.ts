@@ -66,14 +66,18 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind
   readonly status: number | null
   readonly code: string | null
+  readonly reason: string | null
+  readonly path: string | null
   readonly retryAfterSeconds: number | null
 
-  constructor(kind: ApiErrorKind, message: string, details: { status?: number; code?: string | null; retryAfterSeconds?: number | null } = {}) {
+  constructor(kind: ApiErrorKind, message: string, details: { status?: number; code?: string | null; reason?: string | null; path?: string | null; retryAfterSeconds?: number | null } = {}) {
     super(message)
     this.name = 'ApiError'
     this.kind = kind
     this.status = details.status ?? null
     this.code = details.code ?? null
+    this.reason = details.reason ?? null
+    this.path = details.path ?? null
     this.retryAfterSeconds = details.retryAfterSeconds ?? null
   }
 }
@@ -88,13 +92,15 @@ export function parseRetryAfter(value: string | null, now = Date.now()): number 
 }
 
 async function responseError(response: Response): Promise<ApiError> {
-  const payload = await response.json().catch(() => null) as { message?: unknown; error?: unknown; code?: unknown } | null
+  const payload = await response.json().catch(() => null) as { message?: unknown; error?: unknown; code?: unknown; reason?: unknown; path?: unknown } | null
   const text = typeof payload?.message === 'string' ? payload.message
     : typeof payload?.error === 'string' ? payload.error
       : `${response.status} ${response.statusText}`
   return new ApiError('http', text, {
     status: response.status,
     code: typeof payload?.code === 'string' ? payload.code : null,
+    reason: typeof payload?.reason === 'string' ? payload.reason : null,
+    path: typeof payload?.path === 'string' ? payload.path : null,
     retryAfterSeconds: parseRetryAfter(response.headers.get('Retry-After')),
   })
 }

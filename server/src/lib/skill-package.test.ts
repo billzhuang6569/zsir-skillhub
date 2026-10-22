@@ -628,13 +628,39 @@ describe('env templates and the package env re-check (#251)', () => {
     expect(() => reviewSkillPackageEnv(createZip([{
       name: 'SKILL.md',
       data: '---\nname: demo\nmetadata:\n  skillhub:\n    env:\n      - key: FAL_KEY\n        obtain: http://fal.ai\n---\n',
-    }]))).toThrow(new SkillPackageValidationError('SKILL.md metadata.skillhub.env is invalid: item 1 has an invalid obtain'))
+    }]))).toThrow(new SkillPackageValidationError('SKILL.md metadata.skillhub.env is invalid: item 1 has an invalid obtain', 'env_declaration'))
   })
 })
 
 // Every secret below is self-made and invalid. Each case calls the public
 // Marketplace entry points, never the personal synchronization validators.
 describe('public Marketplace package secret policy (#333)', () => {
+  it.each(['scripts/lib/tokens.mjs', 'src/auth.ts', 'lib/secrets.py', 'tokens.mts', 'auth.cts', 'secrets.lua', 'token.pl'])(
+    'content-scans credential-named source %s', (name) => {
+      expect(() => validatePublicSkillPackage(safeSkill([{ name, data: '/* safe source */' }]))).not.toThrow()
+      for (const [data, reason] of [
+        ['token = "fixture-credential-value-12345"', 'sensitive_content'],
+        [Buffer.from([0xff]), 'invalid_text'],
+      ] as const) {
+        try {
+          validatePublicSkillPackage(safeSkill([{ name, data }]))
+          expect.fail('Expected package rejection')
+        } catch (error: unknown) {
+          expect(error).toBeInstanceOf(SkillPackageValidationError)
+          expect(error).toMatchObject({ reason, path: name })
+          expect(JSON.stringify(error)).not.toContain('fixture-credential-value')
+        }
+      }
+    }
+  )
+
+  it.each(['tokens.json', 'auth.txt', 'credentials', 'secrets.yaml', '.env', 'id_ed25519'])(
+    'reports the forbidden path %s', (name) => {
+      expect(() => validatePublicSkillPackage(safeSkill([{ name, data: 'safe' }])))
+        .toThrow(expect.objectContaining({ reason: 'forbidden_file', path: name }))
+    }
+  )
+
   const AUTH_DOC = [
     '# Authentication',
     '',

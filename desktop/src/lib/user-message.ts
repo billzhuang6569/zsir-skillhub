@@ -18,6 +18,25 @@ function apiErrorMessage(error: ApiError): string | null {
   if (error.kind === 'timeout') return '请求超时，请稍后重试'
   if (error.kind === 'aborted') return '请求已取消'
   const status = error.status
+  if (status === 409 && error.code === 'PACKAGE_NOT_PUBLISHABLE') {
+    const path = error.path || '未知文件'
+    switch (error.reason) {
+      case 'forbidden_file':
+        return `安装包里的「${path}」被识别为凭据文件，请改名或移除后重新上传版本`
+      case 'sensitive_content':
+        return `「${path}」中有疑似密钥或令牌的文本，请改为占位内容后重新上传版本`
+      case 'invalid_text':
+        return `「${path}」不是有效的文本文件，请检查编码后重新上传版本`
+      case 'limits':
+      case 'review_limit':
+        return '安装包超过公开发布的大小限制，请精简后重新上传版本'
+      case 'structure':
+      case 'missing_skill_md':
+        return '安装包结构不完整（缺少 SKILL.md 或 ZIP 结构异常），请重新上传版本'
+      default:
+        return '该版本当前没有可公开的安装包，请重新上传版本后再试'
+    }
+  }
   if (status === 429 && (error.code === 'GATEWAY_RATE_LIMITED' || !isReadableServerText(error.message))) {
     return error.retryAfterSeconds && error.retryAfterSeconds > 0 && error.retryAfterSeconds <= 600
       ? `请求过于频繁，请 ${error.retryAfterSeconds} 秒后再试`

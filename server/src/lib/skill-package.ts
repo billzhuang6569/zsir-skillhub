@@ -45,10 +45,18 @@ export type InspectedSkillPackage = ValidatedSkillPackage & {
   readableTextBytes: number
 }
 
+export type SkillPackageValidationReason =
+  | 'forbidden_file' | 'sensitive_content' | 'invalid_text' | 'limits'
+  | 'structure' | 'missing_skill_md' | 'review_limit' | 'env_declaration'
+
 export class SkillPackageValidationError extends Error {
-  constructor(message: string) {
+  readonly reason: SkillPackageValidationReason
+  readonly path?: string
+  constructor(message: string, reason: SkillPackageValidationReason, path?: string) {
     super(message)
     this.name = 'SkillPackageValidationError'
+    this.reason = reason
+    this.path = path
   }
 }
 
@@ -73,33 +81,33 @@ const likelyTextExtensions = new Set([
   'csv', 'fish', 'go', 'gradle', 'h', 'hpp', 'html', 'ini', 'java', 'js', 'json',
   'jsonc', 'jsx', 'kt', 'kts', 'lock', 'md', 'mjs', 'php', 'properties', 'ps1',
   'py', 'rb', 'rs', 'sh', 'sql', 'swift', 'toml', 'ts', 'tsx', 'tsv', 'txt',
-  'xml', 'yaml', 'yml', 'zsh',
+  'xml', 'yaml', 'yml', 'zsh', 'mts', 'cts', 'lua', 'pl',
 ])
 const likelyTextBasenames = new Set([
   'dockerfile', 'gemfile', 'makefile', 'procfile', 'readme',
 ])
 
-function invalid(message: string): never {
-  throw new SkillPackageValidationError(message)
+function invalid(message: string, reason: SkillPackageValidationReason, path?: string): never {
+  throw new SkillPackageValidationError(message, reason, path)
 }
 
 function ensureRange(buffer: Buffer, offset: number, length: number): void {
   if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0) {
-    invalid('Invalid Skill package structure')
+    invalid('Invalid Skill package structure', 'structure')
   }
   if (offset > buffer.length || length > buffer.length - offset) {
-    invalid('Invalid Skill package structure')
+    invalid('Invalid Skill package structure', 'structure')
   }
 }
 
 function decodeEntryName(bytes: Buffer): string {
   if (bytes.length === 0 || bytes.length > SKILL_PACKAGE_LIMITS.maxPathBytes) {
-    invalid('Skill package contains an unsafe path')
+    invalid('Skill package contains an unsafe path', 'structure')
   }
   try {
     return utf8Decoder.decode(bytes)
   } catch {
-    return invalid('Skill package contains an unsafe path')
+    return invalid('Skill package contains an unsafe path', 'structure')
   }
 }
 
@@ -110,13 +118,13 @@ function normalizedEntryName(name: string): { normalized: string; duplicateKey: 
     || name.startsWith('/')
     || /^[A-Za-z]:/.test(name)
   ) {
-    invalid('Skill package contains an unsafe path')
+    invalid('Skill package contains an unsafe path', 'structure')
   }
   const directory = name.endsWith('/')
   const withoutTrailingSlash = directory ? name.slice(0, -1) : name
   const parts = withoutTrailingSlash.split('/')
   if (parts.length === 0 || parts.some((part) => part.length === 0 || part === '.' || part === '..')) {
-    invalid('Skill package contains an unsafe path')
+    invalid('Skill package contains an unsafe path', 'structure')
   }
   const normalized = parts.join('/').normalize('NFC')
   return {
@@ -132,15 +140,15 @@ function findEndOfCentralDirectory(buffer: Buffer): number {
     const commentLength = buffer.readUInt16LE(offset + 20)
     if (offset + 22 + commentLength === buffer.length) return offset
   }
-  return invalid('Invalid Skill package structure')
+  return invalid('Invalid Skill package structure', 'structure')
 }
 
 function parseCentralDirectory(buffer: Buffer): { entries: CentralEntry[]; centralOffset: number } {
-  if (buffer.length < 22) invalid('Invalid Skill package structure')
+  if (buffer.length < 22) invalid('Invalid Skill package structure', 'structure')
   const eocdOffset = findEndOfCentralDirectory(buffer)
   ensureRange(buffer, eocdOffset, 22)
   if (buffer.readUInt16LE(eocdOffset + 20) !== 0) {
-    invalid('Skill package uses unsupported ZIP features')
+    invalid('Skill package uses unsupported ZIP features', 'structure')
   }
   const disk = buffer.readUInt16LE(eocdOffset + 4)
   const centralDisk = buffer.readUInt16LE(eocdOffset + 6)
@@ -149,21 +157,21 @@ function parseCentralDirectory(buffer: Buffer): { entries: CentralEntry[]; centr
   const centralSize = buffer.readUInt32LE(eocdOffset + 12)
   const centralOffset = buffer.readUInt32LE(eocdOffset + 16)
   if (disk !== 0 || centralDisk !== 0 || diskEntries !== totalEntries) {
-    invalid('Skill package uses unsupported ZIP features')
+    invalid('Skill package uses unsupported ZIP features', 'structure')
   }
   if (
     totalEntries === 0xffff
     || centralSize === 0xffffffff
     || centralOffset === 0xffffffff
   ) {
-    invalid('Skill package uses unsupported ZIP features')
+    invalid('Skill package uses unsupported ZIP features', 'structure')
   }
   if (totalEntries === 0 || totalEntries > SKILL_PACKAGE_LIMITS.maxFiles) {
-    invalid('Skill package exceeds safety limits')
+    invalid('Skill package exceeds safety limits', 'limits')
   }
   ensureRange(buffer, centralOffset, centralSize)
   if (centralOffset + centralSize !== eocdOffset) {
-    invalid('Invalid Skill package structure')
+    invalid('Invalid Skill package structure', 'structure')
   }
 
   const entries: CentralEntry[] = []
@@ -172,7 +180,7 @@ function parseCentralDirectory(buffer: Buffer): { entries: CentralEntry[]; centr
   for (let index = 0; index < totalEntries; index += 1) {
     ensureRange(buffer, cursor, 46)
     if (buffer.readUInt32LE(cursor) !== CENTRAL_SIGNATURE) {
-      invalid('Invalid Skill package structure')
+      invalid('Invalid Skill package structure', 'structure')
     }
     const versionNeeded = buffer.readUInt16LE(cursor + 6)
     const flags = buffer.readUInt16LE(cursor + 8)
@@ -200,29 +208,29 @@ function parseCentralDirectory(buffer: Buffer): { entries: CentralEntry[]; centr
       || extraLength !== 0
       || commentLength !== 0
     ) {
-      invalid('Skill package uses unsupported ZIP features')
+      invalid('Skill package uses unsupported ZIP features', 'structure')
     }
     if (uncompressedSize > SKILL_PACKAGE_LIMITS.maxSingleFileBytes) {
-      invalid('Skill package exceeds safety limits')
+      invalid('Skill package exceeds safety limits', 'limits')
     }
 
     const nameBytes = buffer.subarray(cursor + 46, cursor + 46 + nameLength)
     const { normalized, duplicateKey } = normalizedEntryName(decodeEntryName(nameBytes))
-    if (duplicatePaths.has(duplicateKey)) invalid('Skill package contains duplicate paths')
+    if (duplicatePaths.has(duplicateKey)) invalid('Skill package contains duplicate paths', 'structure')
     duplicatePaths.add(duplicateKey)
     const isDirectory = normalized.endsWith('/')
     const unixMode = externalAttributes >>> 16
     const unixKind = unixMode & 0o170000
     const isSymlink = unixKind === 0o120000
-    if (isSymlink) invalid('Skill package contains unsupported links')
+    if (isSymlink) invalid('Skill package contains unsupported links', 'structure')
     if (unixKind !== 0 && unixKind !== 0o100000 && unixKind !== 0o040000) {
-      invalid('Skill package contains an unsupported file type')
+      invalid('Skill package contains an unsupported file type', 'structure')
     }
     if ((isDirectory && unixKind === 0o100000) || (!isDirectory && unixKind === 0o040000)) {
-      invalid('Skill package entry type does not match its path')
+      invalid('Skill package entry type does not match its path', 'structure')
     }
     if (isDirectory && (compressedSize !== 0 || uncompressedSize !== 0)) {
-      invalid('Invalid Skill package structure')
+      invalid('Invalid Skill package structure', 'structure')
     }
 
     entries.push({
@@ -241,7 +249,7 @@ function parseCentralDirectory(buffer: Buffer): { entries: CentralEntry[]; centr
     })
     cursor += 46 + variableLength
   }
-  if (cursor !== eocdOffset) invalid('Invalid Skill package structure')
+  if (cursor !== eocdOffset) invalid('Invalid Skill package structure', 'structure')
   return { entries, centralOffset }
 }
 
@@ -279,7 +287,7 @@ function readDataDescriptor(
     || buffer.readUInt32LE(valuesOffset + 4) !== entry.compressedSize
     || buffer.readUInt32LE(valuesOffset + 8) !== entry.uncompressedSize
   ) {
-    invalid('Skill package integrity check failed')
+    invalid('Skill package integrity check failed', 'structure')
   }
   return valuesOffset + 12
 }
@@ -290,7 +298,7 @@ function inflateEntry(buffer: Buffer, entry: CentralEntry, centralOffset: number
 } {
   ensureRange(buffer, entry.localOffset, 30)
   if (entry.localOffset >= centralOffset || buffer.readUInt32LE(entry.localOffset) !== LOCAL_SIGNATURE) {
-    invalid('Invalid Skill package structure')
+    invalid('Invalid Skill package structure', 'structure')
   }
   const versionNeeded = buffer.readUInt16LE(entry.localOffset + 4)
   const flags = buffer.readUInt16LE(entry.localOffset + 6)
@@ -309,7 +317,7 @@ function inflateEntry(buffer: Buffer, entry: CentralEntry, centralOffset: number
     || !localName.equals(entry.nameBytes)
     || extraLength !== 0
   ) {
-    invalid('Invalid Skill package structure')
+    invalid('Invalid Skill package structure', 'structure')
   }
   const usesDescriptor = (flags & 0x0008) !== 0
   if (!usesDescriptor) {
@@ -318,25 +326,25 @@ function inflateEntry(buffer: Buffer, entry: CentralEntry, centralOffset: number
       || localCompressedSize !== entry.compressedSize
       || localUncompressedSize !== entry.uncompressedSize
     ) {
-      invalid('Skill package integrity check failed')
+      invalid('Skill package integrity check failed', 'structure')
     }
   } else if (
     (localCrc !== 0 && localCrc !== entry.crc)
     || (localCompressedSize !== 0 && localCompressedSize !== entry.compressedSize)
     || (localUncompressedSize !== 0 && localUncompressedSize !== entry.uncompressedSize)
   ) {
-    invalid('Skill package integrity check failed')
+    invalid('Skill package integrity check failed', 'structure')
   }
 
   const dataOffset = entry.localOffset + 30 + nameLength + extraLength
   ensureRange(buffer, dataOffset, entry.compressedSize)
-  if (dataOffset + entry.compressedSize > centralOffset) invalid('Invalid Skill package structure')
+  if (dataOffset + entry.compressedSize > centralOffset) invalid('Invalid Skill package structure', 'structure')
   const compressed = buffer.subarray(dataOffset, dataOffset + entry.compressedSize)
   let data: Buffer
   try {
     if (entry.method === 0) {
       if (entry.compressedSize !== entry.uncompressedSize) {
-        invalid('Skill package integrity check failed')
+        invalid('Skill package integrity check failed', 'structure')
       }
       data = Buffer.from(compressed)
     } else {
@@ -348,35 +356,36 @@ function inflateEntry(buffer: Buffer, entry: CentralEntry, centralOffset: number
         )),
       }) as unknown as { buffer: Uint8Array; engine: { bytesWritten: number } }
       if (inflated.engine.bytesWritten !== compressed.length) {
-        invalid('Skill package integrity check failed')
+        invalid('Skill package integrity check failed', 'structure')
       }
       data = Buffer.from(inflated.buffer)
     }
   } catch (error: unknown) {
     if (error instanceof SkillPackageValidationError) throw error
-    return invalid('Skill package decompression failed')
+    return invalid('Skill package decompression failed', 'structure')
   }
   if (data.length !== entry.uncompressedSize || crc32(data) !== entry.crc) {
-    invalid('Skill package integrity check failed')
+    invalid('Skill package integrity check failed', 'structure')
   }
   if (
     data.length > 0
     && (entry.compressedSize === 0
       || data.length / entry.compressedSize > SKILL_PACKAGE_LIMITS.maxCompressionRatio)
   ) {
-    invalid('Skill package compression ratio exceeds safety limits')
+    invalid('Skill package compression ratio exceeds safety limits', 'limits')
   }
   const rawEnd = dataOffset + entry.compressedSize
   const end = usesDescriptor ? readDataDescriptor(buffer, rawEnd, entry) : rawEnd
-  if (end > centralOffset) invalid('Invalid Skill package structure')
+  if (end > centralOffset) invalid('Invalid Skill package structure', 'structure')
   return { data, range: { start: entry.localOffset, end } }
 }
 
 const CREDENTIAL_FILE_STEMS: ReadonlySet<string> = new Set([
   'credentials', 'credential', 'auth', 'token', 'tokens', 'secret', 'secrets',
 ])
-const DOCUMENTATION_EXTENSIONS: ReadonlySet<string> = new Set([
-  'md', 'markdown', 'mdx', 'rst', 'adoc', 'asciidoc', 'html', 'htm',
+const CREDENTIAL_DATA_EXTENSIONS: ReadonlySet<string> = new Set([
+  'json', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'config',
+  'txt', 'csv', 'tsv', 'env', 'pem', 'key', 'p12', 'pfx', 'crt', 'cer', 'der', 'jks', 'keystore',
 ])
 
 function forbiddenFileName(name: string): boolean {
@@ -389,12 +398,10 @@ function forbiddenFileName(name: string): boolean {
   if (base === '.env' || base.startsWith('.env.') || base === '.envrc') return true
   if (base === '.npmrc' || base === '.netrc') return true
   if (CREDENTIAL_FILE_STEMS.has(stem)) {
-    // Ordinary documentation such as `references/auth.md` explains a credential
-    // flow and is still content-scanned. Every other name with one of these
-    // stems (`auth.json`, `credentials`, `token.txt`, ...) is a credential file.
+    // Source and documentation are checked by the content scanner instead.
     const extensionIndex = base.lastIndexOf('.')
     const extension = extensionIndex > 0 ? base.slice(extensionIndex + 1) : ''
-    return !DOCUMENTATION_EXTENSIONS.has(extension)
+    if (!extension || CREDENTIAL_DATA_EXTENSIONS.has(extension)) return true
   }
   if (/^(?:id_rsa|id_dsa|id_ecdsa|id_ed25519|private(?:[_-]?key)?)(?:\.|$)/i.test(base)) {
     return true
@@ -606,7 +613,7 @@ function parseValidatedSkillPackage(
 ): ValidatedSkillPackage & { files: SkillPackageReviewEntry[]; readableTextBytes: number } {
   try {
     if (buffer.length === 0 || buffer.length > SKILL_PACKAGE_LIMITS.maxArchiveBytes) {
-      invalid('Skill package exceeds safety limits')
+      invalid('Skill package exceeds safety limits', 'limits')
     }
     const { entries, centralOffset } = parseCentralDirectory(buffer)
     const localRanges: { start: number; end: number }[] = []
@@ -628,11 +635,11 @@ function parseValidatedSkillPackage(
       }
       totalUncompressedBytes += data.length
       if (totalUncompressedBytes > SKILL_PACKAGE_LIMITS.maxTotalUncompressedBytes) {
-        invalid('Skill package exceeds safety limits')
+        invalid('Skill package exceeds safety limits', 'limits')
       }
       contentFiles?.push({ path: entry.name, data, isExecutable: entry.isExecutable })
       if (rejectSensitiveContent && forbiddenFileName(entry.name)) {
-        invalid('Skill package contains a forbidden file')
+        invalid('Skill package contains a forbidden file', 'forbidden_file', entry.name)
       }
       const inspectedText = inspectTextContent(
         data,
@@ -641,10 +648,10 @@ function parseValidatedSkillPackage(
         rejectSensitiveContent
       )
       if (inspectedText.rejection === 'sensitive') {
-        invalid('Skill package contains sensitive content')
+        invalid('Skill package contains sensitive content', 'sensitive_content', entry.name)
       }
       if (inspectedText.rejection === 'invalid') {
-        invalid('Skill package contains invalid text content')
+        invalid('Skill package contains invalid text content', 'invalid_text', entry.name)
       }
       if (includeReviewFiles) {
         const content = inspectedText.content
@@ -653,7 +660,7 @@ function parseValidatedSkillPackage(
         } else {
           readableTextBytes += data.length
           if (readableTextBytes > SKILL_PACKAGE_REVIEW_LIMITS.maxReadableTextBytes) {
-            invalid('Skill package readable text exceeds review limit')
+            invalid('Skill package readable text exceeds review limit', 'review_limit', entry.name)
           }
           files.push({ path: entry.name, kind: 'text', size: data.length, content })
         }
@@ -662,30 +669,30 @@ function parseValidatedSkillPackage(
         try {
           const decodedSkillMd = utf8Decoder.decode(data)
           if (containsUnsafeTextControl(decodedSkillMd)) {
-            invalid('SKILL.md must be valid UTF-8 text')
+            invalid('SKILL.md must be valid UTF-8 text', 'invalid_text', entry.name)
           }
           skillMd = decodedSkillMd
         } catch {
-          invalid('SKILL.md must be valid UTF-8 text')
+          invalid('SKILL.md must be valid UTF-8 text', 'invalid_text', entry.name)
         }
       }
     }
 
     localRanges.sort((left, right) => left.start - right.start)
-    if (localRanges[0]?.start !== 0) invalid('Invalid Skill package structure')
+    if (localRanges[0]?.start !== 0) invalid('Invalid Skill package structure', 'structure')
     for (let index = 1; index < localRanges.length; index += 1) {
       const previous = localRanges[index - 1]
       const current = localRanges[index]
       if (previous && current && current.start !== previous.end) {
-        invalid('Invalid Skill package structure')
+        invalid('Invalid Skill package structure', 'structure')
       }
     }
-    if (localRanges.at(-1)?.end !== centralOffset) invalid('Invalid Skill package structure')
-    if (skillMd === undefined) invalid('Skill package must contain SKILL.md')
+    if (localRanges.at(-1)?.end !== centralOffset) invalid('Invalid Skill package structure', 'structure')
+    if (skillMd === undefined) invalid('Skill package must contain SKILL.md', 'missing_skill_md')
     return { entryNames, skillMd, totalUncompressedBytes, files, readableTextBytes }
   } catch (error: unknown) {
     if (error instanceof SkillPackageValidationError) throw error
-    return invalid('Invalid Skill package structure')
+    return invalid('Invalid Skill package structure', 'structure')
   }
 }
 
@@ -747,7 +754,7 @@ export function reviewSkillPackageEnv(buffer: Buffer): ValidatedSkillPackage & {
   try {
     declared = parseEnvDeclarations(result.skillMd)
   } catch (error: unknown) {
-    if (error instanceof EnvDeclarationError) invalid(error.message)
+    if (error instanceof EnvDeclarationError) invalid(error.message, 'env_declaration')
     throw error
   }
   return {
