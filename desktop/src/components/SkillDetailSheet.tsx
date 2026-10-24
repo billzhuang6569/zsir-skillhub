@@ -1,11 +1,16 @@
 import { useCatalogOffline } from '../lib/use-catalog-offline.js'
 import CatalogPublish from './CatalogPublish.js'
+import TeamSkillUpdateButton from './TeamSkillUpdateButton.js'
+import TeamSkillPushButton from './TeamSkillPushButton.js'
+import UnshareSkillDialog from './UnshareSkillDialog.js'
 import { catalogPublishMode } from '../lib/catalog-login.js'
 import { catalogOfflineAt, catalogOfflineMessage, CATALOG_INSTALL_OFFLINE } from '../lib/catalog-cache.js'
 import { useSpaceCapabilities } from '../lib/use-space-capabilities.js'
-import { currentSpace, type SpaceHandle } from '../lib/tauri.js'
+import { currentSpace, getSkillSourceDiff, saveSkillAsPersonal, discardSkillSourceChanges, librarySyncRun, type SpaceHandle } from '../lib/tauri.js'
+import { sourceModificationLabel, sourceUpdateBlockReason } from '../lib/skill-library.js'
 import { marketplaceAction } from '../lib/marketplace-state.js'
 import { acquireMarketplaceSkill } from '../lib/marketplace-acquisition.js'
+import { acquireTeamSkill } from '../lib/team-skill-acquisition.js'
 import { OFFICIAL_ENDPOINTS } from '../lib/official-endpoints.js'
 import { userMessage } from '../lib/user-message.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
@@ -22,7 +27,7 @@ import { EditorialLabels } from './EditorialLabels.js'
 import { MarketplaceBadges } from './SkillCard.js'
 import { editorialLabelsBesideBadges, storeDetailStats } from '../lib/store-home.js'
 import { envDepsNeedingAttention, skillDiagnosticsText, skillOriginLine } from '../lib/skill-library.js'
-import { skillListText } from '../lib/skill-title.js'
+import { skillListText, UNANALYSED_SKILL_NAME } from '../lib/skill-title.js'
 import AgentBrandIcon from './AgentBrandIcon.js'
 import type { EnvDep, LocalSkill, SkillDetailFocus, SkillDetailTab } from '../store/index.js'
 import { UNCONFIRMED_SKILL_ROOT_HINT, agentAcceptsSkillWrites, agentDisplayName, orderedAgentEntries } from '../lib/agents.js'
@@ -65,7 +70,7 @@ import type {
 import { readAuthSpace } from '../store/index.js'
 import { toast } from './Toast.js'
 import ConfirmModal from './ConfirmModal.js'
-import { aiAnalysisJobKey, runSkillAiAnalysis, type AiAnalysisEnvironment } from '../lib/ai-analysis-job.js'
+import { aiAnalysisJobKey, importAnalysisMessage, runSkillAiAnalysis, type AiAnalysisEnvironment } from '../lib/ai-analysis-job.js'
 import { avatarIdentityFor } from '../lib/avatar-identity.js'
 import {
   canChangeSkillAvatar, customAvatarErrorMessage, restoreGeneratedSkillAvatar,
@@ -268,10 +273,19 @@ function SkillDetailTitle({ skill, onCopyName, problem: problemButton }: { skill
   const version = isTeamDetailSkill(skill) ? skillVersionDisplay(skill).label : null
   // Quick access (#325) pins Skills of 「我的 Skills」, not store or team previews.
   const pinnable = useStore((state) => state.skills.some((item) => item.id === skill.id)) && !isMarketplaceCatalogSource(skill) && !isTeamDetailSkill(skill)
-  const problem = <>{pinnable && <SkillQuickAccessButton skill={skill} />}{problemButton}</>
   return <>
-    <div className="sh-title-row"><h2 className="sh-store-title"><span className={preference === 'skill-name' ? 'skill-primary-name' : undefined} title={title.primary}>{title.primary}</span><button type="button" className="rawname sh-store-copy" title={`复制 Skill 名称：${skill.name}`} aria-label={`复制 Skill 名称 ${skill.name}`} onClick={onCopyName}><Icon name="doc" size={10} /></button><MarketplaceBadges badges={skill.marketplaceBadges} />{version && <span className="sh-title-version mono">{version}</span>}</h2>{problem}</div>
-    {title.secondary && <p className={`sh-store-subtitle${preference === 'ai-title' ? ' mono' : ''}`} title={title.secondary}>{title.secondary}</p>}
+    <div className="sh-title-row">
+      <h2 className="sh-store-title"><span className={preference === 'skill-name' ? 'skill-primary-name' : undefined} title={title.primary}>{title.primary}</span><MarketplaceBadges badges={skill.marketplaceBadges} />{version && <span className="sh-title-version mono">{version}</span>}</h2>
+      <div className="sh-title-actions">
+        <TeamSkillUpdateButton skill={skill} />
+        <button type="button" className="rawname sh-store-copy" title={`复制 Skill 名称：${skill.name}`} aria-label={`复制 Skill 名称 ${skill.name}`} onClick={onCopyName}><Icon name="doc" size={16} /></button>
+        {pinnable && <SkillQuickAccessButton skill={skill} />}
+        {problemButton}
+      </div>
+    </div>
+    <p className={`sh-store-subtitle${title.secondary ? preference === 'ai-title' ? ' mono' : '' : ' placeholder'}`} title={title.secondary || undefined}>{title.secondary || UNANALYSED_SKILL_NAME}</p>
+    {skill.teamUnshared && <p>团队已停止共享 · 本机副本保留</p>}
+    {skill.teamUpdateStatus === 'account_mismatch' && <p>当前账号与获取此 Skill 的账号不一致，不能更新。</p>}
   </>
 }
 
@@ -385,6 +399,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
     closeSheet, setSheetTab, currentUser, promptForAuth, teams, activeTeamId, view,
   } = useStore(useShallow(selectSkillDetailSheetState))
   const skill = resolveSkillFromSources(skillId, skills, marketplaceSkills)
+  const sourceSpace = useStore(state => state.authSpace)
   const descriptionRef = useRef<HTMLParagraphElement>(null)
   const [descriptionOverflow, setDescriptionOverflow] = useState(false)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
@@ -412,6 +427,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
   const [installOpen, setInstallOpen] = useState(false)
   const [marketUpdateOpen, setMarketUpdateOpen] = useState(false)
   const [marketBusy, setMarketBusy] = useState(false)
+  const [sourceCheck, setSourceCheck] = useState<{ id: string; space: SpaceHandle | null; pending: boolean; error: string | null } | null>(null)
   const [installStep, setInstallStep] = useState<InstallStep>('agents')
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [agentsLoading, setAgentsLoading] = useState(true)
@@ -528,11 +544,36 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
   const { reviewEnvDeclarations, envReviewElement } = useEnvDeclarationReview()
   const capabilities = useSpaceCapabilities()
   const offlineAt = useCatalogOffline()
+  const sourceCheckId = skill ? localManagedSkillId(skill) : ''
+  const sourceUnknown = Boolean(skill?.localPath && (skill.acquisitionSource === 'team' || skill.acquisitionSource === 'marketplace' || skill.catalogOrigin) && (skill.sourceModifiedFiles == null || skill.sourcePackageReady === false))
+  const sourceChecking = sourceUnknown && (sourceCheck?.id !== sourceCheckId || sourceCheck.space !== sourceSpace || sourceCheck.pending)
+  useEffect(() => {
+    if (!sourceUnknown) return
+    let active = true
+    const userId = currentUser?.id
+    const current = (): boolean => active && readAuthSpace() === sourceSpace && useStore.getState().currentUser?.id === userId
+    setSourceCheck({ id: sourceCheckId, space: sourceSpace, pending: true, error: null })
+    void getSkillSourceDiff(sourceCheckId).then(() => getLocalSkill(sourceCheckId)).then(updated => {
+      if (current()) {
+        if (updated) replaceSkill(updated)
+        setSourceCheck({ id: sourceCheckId, space: sourceSpace, pending: false, error: null })
+      }
+    }).catch(async (e: unknown) => {
+      const updated = await getLocalSkill(sourceCheckId).catch(() => null)
+      if (current()) {
+        if (updated) replaceSkill(updated)
+        setSourceCheck({ id: sourceCheckId, space: sourceSpace, pending: false, error: userMessage(e) })
+      }
+    })
+    return () => { active = false }
+  }, [sourceCheckId, sourceUnknown, currentUser?.id, sourceSpace])
   if (!skill) return null
+  const sourceUpdateReason = sourceUpdateBlockReason(skill, sourceChecking)
   const versionDisplay = skillVersionDisplay(skill)
   const managedSkillId = localManagedSkillId(skill)
   const marketAction = marketplaceAction(skill)
   const acquireFromStore = async (update = false): Promise<void> => {
+    if (update && sourceUpdateReason) { toast(sourceUpdateReason, 'error'); return }
     if (catalogOfflineAt()) { toast(CATALOG_INSTALL_OFFLINE, 'error'); return }
     if (marketBusy || !skill.serverId) return
     setMarketBusy(true)
@@ -619,7 +660,12 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
       marketplaceIntentId = await ensureMarketplaceInstallIntent()
       let localId = managedSkillId
       let currentAsset = skill
-      if (!skill.localPath) {
+      if (!skill.localPath && skill.teamSharedFrom && !isMarketplaceCatalogSource(skill)) {
+        currentAsset = await acquireTeamSkill(skill, currentUser?.id ?? '', skill.teamSharedFrom, installSpace)
+        localId = currentAsset.id
+        acquired = { id: localId, acquisitionSource: 'team', envDeps: currentAsset.envDeps }
+        replaceSkillInStore(skill.id, currentAsset)
+      } else if (!skill.localPath) {
         if (!skill.serverId) throw new Error('该资产缺少服务端标识，无法下载')
         const serverOwnerId = skill.serverOwnerId ?? currentUser?.id
         if (!serverOwnerId) throw new Error('该资产缺少服务端归属信息，无法安全下载')
@@ -630,7 +676,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         }
         const packageData = marketplaceInstall
           ? await apiDownloadMarketplacePackage(skill.serverId)
-          : await apiDownloadSkillPackage(skill.serverId)
+          : await apiDownloadSkillPackage(skill.serverId, installSpace, skill.teamSharedFrom)
         if (marketplaceInstall) {
           if (!skill.marketplacePackageSha256) {
             throw new Error('商店审核版本缺少固定包校验值，请刷新后重试')
@@ -646,6 +692,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
             ?? remoteManagedSkillId(skill.name, skill.serverId, marketplaceInstall ? installSpace.spaceId : undefined),
           name: skill.name,
           packageBase64: packageData.base64, expectedSha256: packageData.sha256,
+          sourceVersionId: 'versionId' in packageData ? packageData.versionId as string | undefined : undefined,
           serverId: skill.serverId, serverOwnerId, displayName: skill.displayName, description: skill.description,
           sourceUrl: skill.sourceUrl, category: skill.category, labels: skill.labels, version: packageData.version,
           teamId: skill.teamSharedFrom, teamIds: Object.keys(skill.sharedTo), isOwn: skill.isOwn,
@@ -807,11 +854,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         isOwn: true,
       }
       replaceSkill(normalized)
-      const analysisMessage = result.analysis.status === 'completed'
-        ? '资料已完善'
-        : result.analysis.status === 'recovered'
-          ? '已恢复云端关联'
-          : '现有资料已保留，可稍后重试分析'
+      const analysisMessage = importAnalysisMessage(result.analysis)
       if (announce) toast(`「${result.skill.displayName}」已同步；${analysisMessage}`)
       return normalized
     } catch (error: unknown) {
@@ -892,13 +935,14 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
       <div className="sh-head" {...blankDragRegion()}>{mode === 'overlay' && <button className="ico-btn sh-close" onClick={closeSheet} title="关闭" aria-label="关闭 Skill 详情"><Icon name="x" size={17} /></button>}<div className="sh-id" {...blankDragRegion()}>
         {isMarketplaceCatalogSource(skill)
           ? <SkillAvatarIcon className="sh-cat-icon sh-store-avatar" avatarUrl={skill.avatarUrl} status={skill.avatarStatus} size={64} />
-          : <SkillAvatarControl key={skill.id} skill={skill} />}<div className="sh-idtx" {...blankDragRegion()}><SkillDetailTitle skill={skill} onCopyName={copySkillName} problem={<SkillProblemButton skill={skill} onRepair={(brokenAgents) => void openInstall(brokenAgents)} />} />{skill.description && <><p ref={descriptionRef} className="sh-desc">{skill.description}</p>{descriptionOverflow && <button type="button" className="connection-link sh-desc-more" aria-haspopup="dialog" onClick={(event) => { event.currentTarget.focus(); setDescriptionOpen(true) }}>更多</button>}</>}{isMarketplaceCatalogSource(skill) && <EditorialLabels labels={editorialLabelsBesideBadges(skill.marketplaceEditorialLabels, skill.marketplaceBadges)} limit={0}/>}<div className="sh-meta" {...blankDragRegion()}>{unanalysed && <span className="chip">未分析</span>}{skill.category && <span className="tsh-tag">{skill.category}</span>}{skill.labels.slice(0, 3).map((label) => <span key={label} className="tsh-tag">{label}</span>)}{!teamDetail && <span className="tsh-tag tsh-tag-brand mono">{versionDisplay.label}</span>}{skill.versionStatus === 'pending' && <span className="tsh-tag">待确认</span>}{skill.hasWorkingCopy && <span className="tsh-tag">已修改</span>}{skill.formalLabel && skill.formalLabel !== skill.version && <span className="tsh-tag">上游 {skill.formalLabel}</span>}{detailTeamName && <span className="tsh-tag"><Icon name="team" size={13} strokeWidth={1.75} className="tsh-icon" />来自 {detailTeamName}</span>}</div><SkillOriginLineView skill={skill} />{isMarketplaceCatalogSource(skill) && <StoreDetailFacts skill={skill} />}{versionDisplay.problem && <p className="banner banner-error" role="status">{versionDisplay.problem}</p>}<AvatarStatusRow skill={skill} /></div>
-        <div className="sh-act" {...blankDragRegion()}>{skill.localPath && !skill.isSystem && <details ref={manageMenuRef} className="skill-manage-menu"><summary className="btn btn-ghost">管理 Skill</summary><div><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setConfirmation('uninstall') }}>在所有 Agent 停用</button><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setUnmanageOpen(true) }}>取消 SkillHub 托管</button><button className="btn btn-danger-soft" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setDeleteError(null); setConfirmation('delete') }}>删除…</button></div></details>}{skill.isSystem ? <span className="tsh-tag tsh-tag-brand"><Icon name="check" size={13} strokeWidth={1.75} className="tsh-icon" />系统自动维护</span> : isMarketplaceCatalogSource(skill) ? <button className={`btn btn-ghost btn-lg${marketAction.update ? ' marketplace-update' : ''}`} title={offlineAt ? CATALOG_INSTALL_OFFLINE : undefined} disabled={Boolean(offlineAt) || marketBusy || (marketAction.joined && !marketAction.update)} onClick={() => marketAction.update ? setMarketUpdateOpen(true) : void acquireFromStore()}>{marketBusy ? '处理中…' : marketAction.label}</button> : !skill.localPath && (skill.marketplaceReplacementLocalId
+          : <SkillAvatarControl key={skill.id} skill={skill} />}<div className="sh-idtx" {...blankDragRegion()}><SkillDetailTitle skill={skill} onCopyName={copySkillName} problem={<SkillProblemButton skill={skill} onRepair={(brokenAgents) => void openInstall(brokenAgents)} />} />{skill.description && <><p ref={descriptionRef} className="sh-desc">{skill.description}</p>{descriptionOverflow && <button type="button" className="connection-link sh-desc-more" aria-haspopup="dialog" onClick={(event) => { event.currentTarget.focus(); setDescriptionOpen(true) }}>更多</button>}</>}{isMarketplaceCatalogSource(skill) && <EditorialLabels labels={editorialLabelsBesideBadges(skill.marketplaceEditorialLabels, skill.marketplaceBadges)} limit={0}/>}<div className="sh-meta" {...blankDragRegion()}>{unanalysed && <span className="chip">未分析</span>}{skill.category && <span className="tsh-tag">{skill.category}</span>}{skill.labels.slice(0, 3).map((label) => <span key={label} className="tsh-tag">{label}</span>)}{!teamDetail && <span className="tsh-tag tsh-tag-brand mono">{versionDisplay.label}</span>}{skill.versionStatus === 'pending' && <span className="tsh-tag">待确认</span>}{skill.hasWorkingCopy && <span className="tsh-tag">已修改</span>}{skill.formalLabel && skill.formalLabel !== skill.version && <span className="tsh-tag">来源版本 {skill.formalLabel}</span>}{detailTeamName && <span className="tsh-tag"><Icon name="team" size={13} strokeWidth={1.75} className="tsh-icon" />来自 {detailTeamName}</span>}</div><SkillOriginLineView skill={skill} />{isMarketplaceCatalogSource(skill) && <StoreDetailFacts skill={skill} />}{versionDisplay.problem && <p className="banner banner-error" role="status">{versionDisplay.problem}</p>}<AvatarStatusRow skill={skill} /></div>
+        <div className="sh-act" {...blankDragRegion()}>{skill.localPath && !skill.isSystem && <details ref={manageMenuRef} className="skill-manage-menu"><summary className="btn btn-ghost">管理 Skill</summary><div><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setConfirmation('uninstall') }}>在所有 Agent 停用</button><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setUnmanageOpen(true) }}>取消 SkillHub 托管</button><button className="btn btn-danger-soft" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setDeleteError(null); setConfirmation('delete') }}>删除…</button></div></details>}{skill.isSystem ? <span className="tsh-tag tsh-tag-brand"><Icon name="check" size={13} strokeWidth={1.75} className="tsh-icon" />系统自动维护</span> : isMarketplaceCatalogSource(skill) ? <button className={`btn btn-ghost btn-lg${marketAction.update ? ' marketplace-update' : ''}`} title={offlineAt ? CATALOG_INSTALL_OFFLINE : marketAction.update ? sourceUpdateReason ?? undefined : undefined} disabled={Boolean(offlineAt) || marketBusy || (marketAction.update && Boolean(sourceUpdateReason)) || (marketAction.joined && !marketAction.update)} onClick={() => marketAction.update ? setMarketUpdateOpen(true) : void acquireFromStore()}>{marketBusy ? '处理中…' : marketAction.update && sourceChecking ? '核验中…' : marketAction.label}</button> : !skill.localPath && (skill.marketplaceReplacementLocalId
           ? <button className="btn btn-primary btn-lg" onClick={() => void openInstall()}><Icon name="import" size={15} />更新到商店审核版本</button>
           // #295 board 9: a 36px brand icon button 「获取到本机」 replaces the 「下载并安装」 text button.
           : <button type="button" className="btn btn-primary sh-get-btn" aria-label="获取到本机" title="获取到本机" onClick={() => void openInstall()}><Icon name="download" size={17} /></button>)}</div>
       </div><div className="sh-tabs" role="tablist" aria-label="Skill 详情栏目" {...blankDragRegion()}>{detailTabs.map((item, index) => <button key={item.key} ref={(element) => { tabRefs.current[index] = element }} id={`skill-detail-tab-${item.key}`} role="tab" aria-selected={tab === item.key} aria-controls={`skill-detail-panel-${item.key}`} tabIndex={tab === item.key ? 0 : -1} className={`sh-tab${tab === item.key ? ' on' : ''}`} onClick={() => setSheetTab(item.key)} onKeyDown={(event) => onTabKeyDown(event, index)}><Icon name={item.icon} size={14} /><span>{item.label}</span>{item.key === 'environment' && keyAttention > 0 && <span className="sh-tab-count" aria-label={`${keyAttention} 把钥匙需要处理`}>{keyAttention}</span>}</button>)}</div></div>
       <div className="sh-body" ref={bodyRef} id={`skill-detail-panel-${tab}`} role="tabpanel" aria-labelledby={`skill-detail-tab-${tab}`} tabIndex={0}>
+        {skill.localPath && <SourceEdits key={managedSkillId} skill={skill} replaceSkill={replaceSkill} checking={sourceChecking} baselineError={sourceCheck?.id === managedSkillId ? sourceCheck.error : null} />}
         {tab === 'profile' && <ProfileTab skill={skill} installedAgents={agents} agentsLoading={agentsLoading} replaceSkill={replaceSkill} onRefresh={() => refreshLocal()} onRepairAgent={(agent) => void openInstall([agent])} onSync={(announce) => syncToServer(announce)} onRequestSync={() => currentUser ? activeSyncJobs.has(`${currentUser.id}:${managedSkillId}`) ? toast('这个 Skill 正在重新同步') : setConfirmation('sync') : promptForAuth({ reason: '登录后可由 AI 完善资料，并同步到云端或团队' })} syncBusy={syncBusy} onDelete={() => { setDeleteError(null); setConfirmation('delete') }} showDiscussion={view !== 'skills'} discussionTargetId={focus?.startsWith('comment:') ? focus.slice('comment:'.length) : undefined} />}
         {tab === 'details' && <DetailsTab skill={skill} />}
         {tab === 'environment' && <EnvironmentTab skill={skill} replaceSkill={replaceSkill} />}
@@ -1107,7 +1151,7 @@ function ProfilePanel({ skill, replaceSkill, canManage, onSync, onDelete, action
     void runSkillAiAnalysis(aiAnalysisEnvironment, { skill, serverId: ownedServerId })
   }
   return <>
-    <div className="sh-panel profile-panel"><div className="panel-title-row"><h4>Skill 概览 {unanalysed && <span className="chip">未分析</span>}</h4>{canManage && <div className="env-panel-actions">{capabilities.ai && currentUser && skill.serverId && !skill.accountSyncRequired && <button className="btn btn-ghost btn-sm" disabled={saving || analysisRunning} aria-busy={analysisRunning} onClick={analyze}><Icon name="spark" size={12} />{analysisRunning ? '分析中' : 'AI 分析'}</button>}{capabilities.ai && currentUser && (!skill.serverId || skill.accountSyncRequired) && <button className="btn btn-ghost btn-sm" disabled={saving} onClick={onSync}><Icon name="spark" size={12} />生成标签</button>}<button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setEditing(true)}><Icon name="gear" size={12} />编辑</button></div>}</div>{capabilities.ai && canManage && currentUser && skill.serverId && !skill.accountSyncRequired && <p className="profile-analysis-note" role="note">{analysisRunning ? '正在后台分析，可以继续浏览或操作其他 Skill；完成后会提示结果。' : '点击「AI 分析」会把脱敏后的 SKILL.md 发送给服务端 AI；只有返回完整有效的资料才会覆盖当前内容，失败时保留现有内容。'}</p>}<dl className="kv profile-kv"><dt>可以帮你</dt><dd>{skill.description || '未分析'}</dd><dt>什么时候会用</dt><dd>{skill.fitScenarios?.length ? skill.fitScenarios.join('、') : skill.trigger || '未分析'}</dd><dt>来源</dt><dd>{skill.sources.join(' + ')}</dd><dt>版本</dt><dd className="mono">{versionDisplay.label}{skill.versionStatus === 'pending' ? ' · 待确认' : ''}{skill.hasWorkingCopy ? ' · 已修改' : ''}{skill.formalLabel && skill.formalLabel !== skill.version ? ` · 上游 ${skill.formalLabel}` : ''}</dd><dt>标签</dt><dd><SkillProfileLabels skill={skill} /></dd>{canTag && <><dt>目录</dt><dd><SkillProfileCatalog skill={skill} /></dd></>}</dl>{actions}</div>
+    <div className="sh-panel profile-panel"><div className="panel-title-row"><h4>Skill 概览 {unanalysed && <span className="chip">未分析</span>}</h4>{canManage && <div className="env-panel-actions">{capabilities.ai && currentUser && skill.serverId && !skill.accountSyncRequired && <button className="btn btn-ghost btn-sm" disabled={saving || analysisRunning} aria-busy={analysisRunning} onClick={analyze}><Icon name="spark" size={12} />{analysisRunning ? '分析中' : 'AI 分析'}</button>}{capabilities.ai && currentUser && (!skill.serverId || skill.accountSyncRequired) && <button className="btn btn-ghost btn-sm" disabled={saving} onClick={onSync}><Icon name="spark" size={12} />生成标签</button>}<button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setEditing(true)}><Icon name="gear" size={12} />编辑</button></div>}</div>{capabilities.ai && canManage && currentUser && skill.serverId && !skill.accountSyncRequired && <p className="profile-analysis-note" role="note">{analysisRunning ? '正在后台分析，可以继续浏览或操作其他 Skill；完成后会提示结果。' : '点击「AI 分析」会把脱敏后的 SKILL.md 发送给服务端 AI；只有返回完整有效的资料才会覆盖当前内容，失败时保留现有内容。'}</p>}<dl className="kv profile-kv"><dt>可以帮你</dt><dd>{skill.description || '未分析'}</dd><dt>什么时候会用</dt><dd>{skill.fitScenarios?.length ? skill.fitScenarios.join('、') : skill.trigger || '未分析'}</dd><dt>来源</dt><dd>{skill.sources.join(' + ')}</dd><dt>版本</dt><dd className="mono">{versionDisplay.label}{skill.versionStatus === 'pending' ? ' · 待确认' : ''}{skill.hasWorkingCopy ? ' · 已修改' : ''}{skill.formalLabel && skill.formalLabel !== skill.version ? ` · 来源版本 ${skill.formalLabel}` : ''}</dd><dt>标签</dt><dd><SkillProfileLabels skill={skill} /></dd>{canTag && <><dt>目录</dt><dd><SkillProfileCatalog skill={skill} /></dd></>}</dl>{actions}</div>
     {editing && <FocusTrapDialog className="modal-layer above-sheet" label="编辑 Skill 概览" onEscape={() => setEditing(false)} escapeDisabled={saving}><div className="modal-card skill-dialog compact"><div className="modal-head"><div><span className="eyebrow">Skill 概览</span><h2>编辑资料</h2></div><button className="ico-btn" onClick={() => !saving && setEditing(false)} disabled={saving} aria-label="关闭 Profile 编辑"><Icon name="x" size={16} /></button></div><div className="form-stack"><label>显示名称<input autoFocus maxLength={80} value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>简介<textarea rows={3} maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} /></label><label>分类<select value={category} onChange={(event) => setCategory(event.target.value)}>{PROFILE_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label><label>标签（用逗号或顿号分隔，最多 8 个）<input value={labels} onChange={(event) => setLabels(event.target.value)} /></label><label>来源（可选）<input type="url" inputMode="url" spellCheck={false} maxLength={SOURCE_URL_MAX_LENGTH} placeholder="https://github.com/owner/repo" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} /><span className="profile-source-hint">Skill 的原始网址，仅支持 http/https；清空即删除来源</span></label></div>{error && <div className="banner banner-error"><Icon name="warn" size={14} />{error}</div>}<div className="modal-actions"><button className="btn btn-ghost" onClick={() => setEditing(false)} disabled={saving}>取消</button><button className="btn btn-primary" onClick={() => void save()} disabled={saving || !displayName.trim()}>{saving ? '保存中…' : '保存资料'}</button></div></div></FocusTrapDialog>}
   </>
 }
@@ -1183,14 +1227,14 @@ function DetailsTab({ skill }: { skill: LocalSkill }) {
       }
       if (skill.marketplaceSkillMd !== undefined) return skill.marketplaceSkillMd
       if (!readableServerId) throw new Error('当前资产没有可读取的本机 SKILL.md')
-      return (await apiGetSkillSource(readableServerId)).skillMd
+      return (await apiGetSkillSource(readableServerId, undefined, skill.teamSharedFrom)).skillMd
     }
     void load()
       .then((content) => { if (active) setSource(content) })
       .catch((reason: unknown) => { if (active) setSourceError(messageOf(reason)) })
       .finally(() => { if (active) setSourceLoading(false) })
     return () => { active = false }
-  }, [managedSkillId, readableServerId, skill.localPath, skill.marketplaceSkillMd, documentReload])
+  }, [managedSkillId, readableServerId, skill.localPath, skill.marketplaceSkillMd, skill.teamSharedFrom, documentReload])
   useEffect(() => {
     let active = true
     setTree([])
@@ -1320,7 +1364,7 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
     let active = true
     setRemoteLoading(true)
     setRemoteError(null)
-    void apiGetSkillVersions(remoteServerId)
+    void apiGetSkillVersions(remoteServerId, skill.teamSharedFrom)
       .then((versions) => { if (active) setRemoteVersions(versions) })
       .catch((error: unknown) => {
         if (!active) return
@@ -1329,7 +1373,7 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
       })
       .finally(() => { if (active) setRemoteLoading(false) })
     return () => { active = false }
-  }, [remoteReload, remoteServerId])
+  }, [remoteReload, remoteServerId, skill.teamSharedFrom])
 
   const versionRows = mergeSkillVersionHistory(skill.versions, remoteVersions, skill.formalVersionId)
   const saveSnapshot = async (): Promise<void> => {
@@ -1501,6 +1545,52 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
     {diffView && <FocusTrapDialog className="modal-layer above-sheet" label="版本差异" onEscape={() => setDiffView(null)}><div className="modal-card skill-dialog diff-modal"><div className="modal-head"><div><span className="eyebrow">版本差异</span><h2>{diffView.title}</h2></div><button className="ico-btn" onClick={() => setDiffView(null)} aria-label="关闭版本差异"><Icon name="x" size={16} /></button></div><DiffPreview lines={diffView.lines} loading={false} /><div className="modal-actions"><button className="btn btn-primary" onClick={() => setDiffView(null)}>完成</button></div></div></FocusTrapDialog>}
     {restoreTarget && <ConfirmModal eyebrow="版本恢复" title="恢复为这个版本？" description="当前文件会恢复为所选版本内容，现有历史和版本编号上界保持不变。" confirmLabel="确认恢复" onCancel={() => setRestoreTarget(null)} onConfirm={() => void restore(restoreTarget)} busy={busy} />}
   </>
+}
+
+function SourceEdits({ skill, replaceSkill, checking, baselineError }: { skill: LocalSkill; replaceSkill: (skill: LocalSkill) => void; checking: boolean; baselineError: string | null }): ReactNode {
+  const managedId = localManagedSkillId(skill)
+  const [busy, setBusy] = useState(false)
+  const [action, setAction] = useState<'copy' | 'discard' | null>(null)
+  const [diff, setDiff] = useState<SkillDiffLine[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const unavailable = skill.sourceModifiedFiles == null || skill.sourcePackageReady === false
+  const label = sourceModificationLabel(skill) ?? (unavailable && (skill.acquisitionSource !== 'local' || skill.catalogOrigin) ? '取得时的内容不可用' : null)
+  const [copyId, setCopyId] = useState<string | null>(null)
+  const showDiff = async (): Promise<void> => {
+    setBusy(true); setError(null)
+    try { setDiff(await getSkillSourceDiff(managedId)) } catch (e) { setError(userMessage(e)) } finally { setBusy(false) }
+  }
+  const apply = async (): Promise<void> => {
+    setBusy(true); setError(null)
+    const userId = useStore.getState().currentUser?.id
+    const space = readAuthSpace()
+    const current = (): boolean => useStore.getState().currentUser?.id === userId && readAuthSpace() === space
+    try {
+      if (action === 'discard') {
+        const restored = await discardSkillSourceChanges(managedId)
+        if (!current()) throw new Error('账号已切换，请刷新当前账号')
+        replaceSkill(restored)
+      }
+      else {
+        const copy = copyId ? await getLocalSkill(copyId) : await saveSkillAsPersonal(managedId)
+        if (!current()) throw new Error('账号已切换，副本已保留在原账号')
+        if (!copy) throw new Error('副本已不存在，请刷新后重试')
+        setCopyId(copy.id)
+        if (!useStore.getState().skills.some(item => item.id === copy.id)) useStore.getState().setSkills([...useStore.getState().skills, copy])
+        if (userId && space) {
+          await librarySyncRun()
+          if (useStore.getState().currentUser?.id !== userId || readAuthSpace() !== space) throw new Error('账号已切换，副本已保留')
+          await libraryAuthorAsset(copy.id)
+          const updated = await getLocalSkill(copy.id)
+          if (updated && useStore.getState().currentUser?.id === userId && readAuthSpace() === space) useStore.getState().replaceSkill(copy.id, updated)
+        }
+        toast('已保留自己的 Skill 副本')
+      }
+      setAction(null); requestLibrarySync()
+    } catch (e) { setAction(null); setError(userMessage(e)) } finally { setBusy(false) }
+  }
+  if (!label) return error ? <p className="banner banner-error" role="alert">{error}</p> : null
+  return <><div className="working-copy-banner source-edits-banner"><Icon name="pencil" size={16} /><div><b>{unavailable ? checking ? '正在核验取得时的内容…' : '取得时的内容不可用' : `${label}（${skill.sourceModifiedFiles} 个文件）`}</b><span>{unavailable ? checking ? '核验完成前暂不能更新。' : `${baselineError ?? '无法读取取得时的内容。'} 无法放弃修改；${skill.sourceLocalModified ? '有本机修改，请先另存为自己的 Skill 再更新。' : '没有取得后的本机修改，可以更新，也可以先另存一份。'}` : skill.acquisitionSource === 'team' ? '你的修改只在这台电脑上，团队其他人看不到。' : '你的修改只在这台电脑上，不影响商店里的 Skill。'}</span></div><div className="env-panel-actions"><button className="btn btn-ghost btn-sm" disabled={busy || skill.sourceModifiedFiles == null} onClick={() => void showDiff()}><Icon name="eye" size={14} />看看我改了什么</button><button className="btn btn-ghost btn-sm" disabled={busy || unavailable} title={unavailable ? '取得时的内容不可用，无法放弃修改；可另存为自己的 Skill。' : undefined} onClick={() => setAction('discard')}><Icon name="hist" size={14} />放弃我的修改</button><button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setAction('copy')}><Icon name="copy-plus" size={14} />另存为我自己的 Skill</button></div></div>{error && <p className="banner banner-error" role="alert">{error}</p>}{action && <ConfirmModal title={action === 'copy' ? '另存为我自己的 Skill' : '放弃我的修改'} description={action === 'copy' ? `复制一份成为你自己的 Skill，可以随便改、自己共享。原来的${skill.acquisitionSource === 'team' ? '团队' : '商店'} Skill 保持不变。` : '先保存当前内容到历史，再恢复取得时的内容。完整目录（包括本机配置文件）保留在回收站，可从回收站恢复。'} confirmLabel={action === 'copy' ? '另存为我自己的 Skill' : '放弃我的修改'} busy={busy} onCancel={() => setAction(null)} onConfirm={() => void apply()} />}{diff && <FocusTrapDialog className="modal-layer above-sheet" label="看看我改了什么" onEscape={() => setDiff(null)}><div className="modal-card skill-dialog diff-modal"><div className="modal-head"><h2>看看我改了什么</h2><button className="ico-btn" aria-label="关闭" onClick={() => setDiff(null)}><Icon name="x" size={16} /></button></div><DiffPreview lines={diff} loading={false} /></div></FocusTrapDialog>}</>
 }
 
 function DiffPreview({ lines, loading }: { lines: SkillDiffLine[]; loading: boolean }) {
@@ -1897,6 +1987,7 @@ function SharingSection({ skill, replaceSkill, canManage, onSync }: { skill: Loc
 }
 
 function TeamShareTab({ skill, replaceSkill, onSync }: { skill: LocalSkill; replaceSkill: (skill: LocalSkill) => void; onSync: (announce?: boolean) => Promise<LocalSkill | null> }) {
+  const [unshareTeam, setUnshareTeam] = useState<string | null>(null)
   const teams = useStore((state) => state.teams)
   const setTeams = useStore((state) => state.setTeams)
   const currentUser = useStore((state) => state.currentUser)
@@ -1982,8 +2073,10 @@ function TeamShareTab({ skill, replaceSkill, onSync }: { skill: LocalSkill; repl
       const shared = Boolean((skill.sharedTo ?? {})[team.id])
       const busy = shareJob?.teamId === team.id
       const needsSync = !currentUser || !currentOwnedServerSkillId(skill, currentUser.id)
-      return <div key={team.id} className="marketplace-share-card team-share-row"><span className="tava2" style={{ background: team.color }}>{team.name[0]}</span><div className="marketplace-share-copy"><b>{team.name}</b><span>{shared ? `已共享 ${skill.version}` : '尚未共享'}</span></div><button className={`btn btn-sm ${shared ? 'btn-soft' : 'btn-ghost'}`} disabled={Boolean(shareJob)} onClick={() => void toggle(team.id, shared)}>{busy ? shareJob.action === 'unshare' ? '正在停止…' : needsSync ? '正在准备…' : '正在共享…' : shared ? '停止共享' : '共享'}</button></div>
+      return <div key={team.id} className="marketplace-share-card team-share-row"><span className="tava2" style={{ background: team.color }}>{team.name[0]}</span><div className="marketplace-share-copy"><b>{team.name}</b><span>{shared ? `团队版本 ${skill.sharedTo[team.id].version}` : '尚未共享'}</span></div>{shared && <TeamSkillPushButton skill={skill} team={team} />}
+        <button className={`btn btn-sm ${shared ? 'btn-soft' : 'btn-ghost'}`} disabled={Boolean(shareJob)} onClick={() => shared ? setUnshareTeam(team.id) : void toggle(team.id, false)}>{busy ? needsSync ? '正在准备…' : '正在共享…' : shared ? '停止共享' : '共享'}</button></div>
     })}</div>}
+    {unshareTeam && teams.find(team => team.id === unshareTeam) && <UnshareSkillDialog skill={skill} team={teams.find(team => team.id === unshareTeam)!} onClose={() => setUnshareTeam(null)} />}
     {capabilities.teamKeys && teams.length > 0 && skill.envDeps.length > 0 && <button type="button" className="btn btn-ghost btn-sm team-share-keys" onClick={() => setSharingKeys(true)}><Icon name="key-round" size={13} />{KEY_COPY.shareKeysToTeam}</button>}
     {sharingKeys && <ShareKeyLauncher declaredKeys={skill.envDeps.map((dependency) => dependency.key)} onClose={() => setSharingKeys(false)} onFallback={() => { setSharingKeys(false); setKeysPageIntent({ tab: 'team' }); setView('keys') }} />}
   </>

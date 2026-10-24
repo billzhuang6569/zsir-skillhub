@@ -28,6 +28,8 @@ use crate::{
     SkillProfileUpdateInput, SkillUpstream, SkillVersion, TrashItem, UnmanagedSkill,
 };
 
+#[path = "source_edits.rs"]
+pub mod source_edits;
 #[path = "skill_unmanage.rs"]
 pub mod unmanage;
 
@@ -3586,9 +3588,10 @@ fn parse_skill_document(
 /// `get_local_skills_blocking`, which the CLI keeps calling directly.
 #[tauri::command]
 pub async fn get_local_skills() -> Result<Vec<LocalSkill>, String> {
-    tauri::async_runtime::spawn_blocking(get_local_skills_blocking)
+    let skills = tauri::async_runtime::spawn_blocking(get_local_skills_blocking)
         .await
-        .map_err(|error| format!("本地 Skill 列表读取异常结束: {error}"))
+        .map_err(|error| format!("本地 Skill 列表读取异常结束: {error}"))?;
+    Ok(skills)
 }
 
 /// Thread on which the most recent offloaded read core started. Tests use it to
@@ -3617,9 +3620,10 @@ fn note_read_command_thread() {
 /// managed directory does not exist. Runs on a blocking worker.
 #[tauri::command]
 pub async fn get_local_skill(skill_id: String) -> Result<Option<LocalSkill>, String> {
-    tauri::async_runtime::spawn_blocking(move || get_local_skill_blocking(skill_id))
+    let skill = tauri::async_runtime::spawn_blocking(move || get_local_skill_blocking(skill_id))
         .await
-        .map_err(|error| format!("本地 Skill 读取异常结束: {error}"))?
+        .map_err(|error| format!("本地 Skill 读取异常结束: {error}"))??;
+    Ok(skill)
 }
 
 pub fn get_local_skill_blocking(skill_id: String) -> Result<Option<LocalSkill>, String> {
@@ -3699,10 +3703,6 @@ fn maintain_list_skill_version_at(
     }
     let _lease = version_session_lease_at(skillhub_root, &profile)?;
     reconcile_skill_projection_at(skillhub_root, managed_root, skill_id)?;
-    profile = library_read_profile_readonly(&path)?;
-    if working_copy_state_for_path(&path).0 && promote_profile_to_personal(&mut profile) {
-        write_profile_at_path(&path, &profile).map_err(|error| error.to_string())?;
-    }
     // Keep ownership changes and any reconciled sidecar metadata authoritative.
     profile = library_read_profile_readonly(&path)?;
     ensure_current_local_version_at(&path, &mut profile)?;
@@ -4833,7 +4833,10 @@ fn profile_team_ids(profile: &SkillHubProfile) -> Vec<String> {
 }
 
 fn promote_profile_to_personal(profile: &mut SkillHubProfile) -> bool {
-    if profile.catalog_origin.is_some() || profile.is_system || profile.is_own.unwrap_or(true) {
+    if profile.is_system
+        || (profile.catalog_origin.is_none()
+            && profile_acquisition_source(profile) == AcquisitionSource::Local)
+    {
         return false;
     }
     profile.upstream = Some(SkillUpstream {
@@ -4844,10 +4847,16 @@ fn promote_profile_to_personal(profile: &mut SkillHubProfile) -> bool {
             .team_shared_from
             .clone()
             .or_else(|| profile_team_ids(profile).into_iter().next()),
-        version: profile.version.clone(),
+        version: profile
+            .acquisition_version
+            .clone()
+            .unwrap_or_else(|| profile.version.clone()),
         package_sha256: profile.acquisition_package_sha256.clone(),
     });
     profile.is_own = Some(true);
+    profile.catalog_origin = None;
+    profile.acquisition_version = None;
+    profile.source_version_id = None;
     profile.acquisition_source = Some(AcquisitionSource::Local);
     profile.acquisition_package_sha256 = None;
     profile.acquired_by_user_id = None;
@@ -4896,6 +4905,7 @@ struct FinishSkillEditOutput {
     skill_id: String,
     changed: bool,
     promoted_to_personal: bool,
+    source_kept: bool,
     version: String,
     working_copy_path: String,
     projection_path: String,
@@ -4965,7 +4975,7 @@ fn resolve_edit_skill_at(
 ) -> Result<(String, PathBuf), String> {
     if skill_id.is_some() == skill_path_value.is_some() {
         return Err(
-            "用法：skillhub skill prepare-edit (--skill-id <id> | --skill-path <SKILL.md>) --json"
+            "用法：skillhub skill prepare-edit (--skill-id <id> | --skill-path <SKILL.md>) [--json]"
                 .into(),
         );
     }
@@ -5132,14 +5142,13 @@ fn finish_skill_edit_at(
     let changed = fingerprint_hex(&canonical)? != session.baseline_fingerprint;
     let mut profile = read_profile_at_path(&canonical)?;
     let _lease = version_session_lease_at(skillhub_root, &profile)?;
+    source_edits::preserve_acquisition_version(&canonical, &mut profile)?;
     let normalized =
         crate::version_policy::normalize_history(&canonical, &mut profile.version_metadata)?;
     if let Some(current) = crate::version_policy::current(&canonical, &profile.version_metadata) {
         profile.version = current.label.clone();
     }
-    let mut promoted_to_personal = false;
     if changed {
-        promoted_to_personal = promote_profile_to_personal(&mut profile);
         let version = crate::version_policy::allocate(profile.version_metadata.high_water, None)?;
         profile.version = version.clone();
         profile.updated_at = Some(chrono_from_secs(unix_timestamp_now()? as i64));
@@ -5160,7 +5169,8 @@ fn finish_skill_edit_at(
         session_id: session.id,
         skill_id: session.skill_id,
         changed,
-        promoted_to_personal,
+        promoted_to_personal: false,
+        source_kept: true,
         version: profile.version,
         working_copy_path: canonical.to_string_lossy().to_string(),
         projection_path: session.projection_path,
@@ -5201,7 +5211,7 @@ pub fn execute_skill_management_cli(args: &[String]) -> Option<Result<String, St
                 repair_system_manager()?;
                 let session_id = args
                     .get(2)
-                    .ok_or("用法：skillhub skill finish-edit <session-id> --json")?;
+                    .ok_or("用法：skillhub skill finish-edit <session-id> [--json]")?;
                 let output = finish_skill_edit_at(&skillhub_dir(), &skills_dir(), session_id)?;
                 serde_json::to_string(&output).map_err(|error| error.to_string())
             }
@@ -5309,7 +5319,8 @@ fn build_local_skill_with(
     let team_ids = profile_team_ids(&profile);
     let acquisition_source = profile_acquisition_source(&profile);
 
-    // Detect agent status via symlinks
+    // Installation ownership is derived, not stored in sidecars or markers.
+    // #548 reassigns old .workbuddy-ai links on every read without moving them.
     let home = crate::user_home_dir().unwrap_or_default();
     let agents: HashMap<String, Option<String>> = crate::known_agents()
         .iter()
@@ -5456,6 +5467,10 @@ fn build_local_skill_with(
         }),
         acquisition_source,
         acquisition_package_sha256: profile.acquisition_package_sha256.clone(),
+        source_modified_files: source_edits::changed_files(&skill_path(skill_id), &profile).ok(),
+        source_local_modified: source_edits::replacement_blocked(&skill_path(skill_id), &profile),
+        source_package_ready: source_edits::package_cached(&skill_path(skill_id), &profile),
+        copied_from_source: profile.copy_origin.is_some(),
         marketplace_replacement_recovery_id: None,
         undeclared_env_suggestions: Vec::new(),
         team_shared_from: profile.team_shared_from.clone(),
@@ -5486,6 +5501,8 @@ fn build_local_skill_with(
         local_path: skill_path(skill_id).to_string_lossy().to_string(),
         catalog_origin: profile.catalog_origin.clone(),
         acquisition_version: profile.acquisition_version.clone(),
+        source_version_id: profile.source_version_id.clone(),
+        acquired_by_user_id: profile.acquired_by_user_id.clone(),
         server_id: profile.server_id.clone(),
         server_owner_id: profile
             .server_owner_id
@@ -6571,6 +6588,18 @@ fn validate_adoption_original_path(
                 .iter()
                 .find(|(key, _, _)| *key == agent_key)
                 .map(|(_, _, relative)| *relative)
+                // Historical macOS adoption records used workbuddy for AI.
+                // Accept only its exact old path, never a caller-chosen root.
+                .map(|relative| {
+                    if cfg!(target_os = "macos")
+                        && agent_key == "workbuddy"
+                        && original == home.join(".workbuddy-ai/skills").join(&entry_name)
+                    {
+                        ".workbuddy-ai/skills"
+                    } else {
+                        relative
+                    }
+                })
                 // v0.10 and earlier used this pseudo-Agent for ~/.agents/skills.
                 // Keep it only for validating existing recovery manifests; it
                 // must not re-enter current detection or installation targets.
@@ -7725,6 +7754,7 @@ pub(crate) fn save_snapshot_with_version_at(
     version: Option<&str>,
     allocation: Option<&str>,
 ) -> Result<(), String> {
+    source_edits::preserve_acquisition_version(root, profile)?;
     let before_metadata = profile.version_metadata.clone();
     let before_version = profile.version.clone();
     crate::version_policy::normalize_history(root, &mut profile.version_metadata)?;
@@ -7821,7 +7851,6 @@ pub(crate) fn save_snapshot_with_version_at(
     // A supplied auto candidate is validated against the same full-history
     // bound; it is not silently discarded in favor of a different number.
     let next = crate::version_policy::allocate(profile.version_metadata.high_water, version)?;
-    promote_profile_to_personal(profile);
     create_numbered_snapshot_at(root, profile, &next, mode, message)
 }
 
@@ -7906,7 +7935,11 @@ pub(crate) fn create_numbered_snapshot_at(
     {
         return Ok(());
     }
-    create_skill_snapshot_at_path(root, &format!("{message}\n\nSkillHub-Version: {version}"))?;
+    if source_edits::acquired(profile) {
+        source_edits::snapshot(root, &format!("{message}\n\nSkillHub-Version: {version}"))?;
+    } else {
+        create_skill_snapshot_at_path(root, &format!("{message}\n\nSkillHub-Version: {version}"))?;
+    }
     let hash = crate::version_policy::head(root).ok_or("无法读回版本快照")?;
     let repo = git2::Repository::open(root).map_err(|e| e.to_string())?;
     let commit = repo
@@ -7964,6 +7997,7 @@ pub(crate) fn ensure_current_local_version_at(
     if profile.is_system {
         return Ok(());
     }
+    source_edits::preserve_acquisition_version(root, profile)?;
     let before_metadata = profile.version_metadata.clone();
     let before_version = profile.version.clone();
     crate::version_policy::normalize_history(root, &mut profile.version_metadata)?;
@@ -8727,16 +8761,39 @@ pub async fn ensure_skill_avatar_identity(skill_id: String) -> Result<String, St
 }
 
 fn ensure_skill_avatar_identity_blocking(skill_id: String) -> Result<String, String> {
-    let _lock = SKILL_AVATAR_LOCK.lock().map_err(|_| "头像缓存不可用")?;
     validate_skill_id(&skill_id)?;
+    let _skill_lock = crate::skill_lock::lock_skill_dir(&skill_id)?;
+    let _lock = SKILL_AVATAR_LOCK.lock().map_err(|_| "头像缓存不可用")?;
+    let session = crate::runtime_env::runtime_session_snapshot()?;
+    let _lease =
+        crate::runtime_env::acquire_current_session_lease(&session)?.ok_or(crate::spaces::STALE)?;
     if !skill_path(&skill_id).join("SKILL.md").is_file() {
         return Err("Skill 不存在".into());
     }
-    ensure_skill_avatar_identity_at(&skill_path(&skill_id))
+    ensure_skill_avatar_identity_at(&skill_path(&skill_id), &session)
 }
 
-fn ensure_skill_avatar_identity_at(root: &Path) -> Result<String, String> {
-    let mut profile = read_current_profile_at_path(root)?;
+fn ensure_skill_avatar_identity_at(
+    root: &Path,
+    session: &crate::runtime_env::RuntimeSession,
+) -> Result<String, String> {
+    // Read without normalization: even a migration write must wait for ownership checks.
+    let mut profile = if root.join(".skillhub.json").exists() {
+        read_profile_at_path(root)?
+    } else {
+        SkillHubProfile::default()
+    };
+    crate::spaces::require_profile(&profile, session)?;
+    if session.is_sync_pending() || session.auth_token().is_none() {
+        return Err(crate::spaces::STALE.into());
+    }
+    if profile
+        .library_account_id
+        .as_deref()
+        .is_some_and(|id| id != session.user_id())
+    {
+        return Err("这个 Skill 属于另一个账号".into());
+    }
     if profile.is_system {
         return Ok(crate::system_skill::SYSTEM_MANAGER_ID.to_string());
     }
@@ -8744,7 +8801,22 @@ fn ensure_skill_avatar_identity_at(root: &Path) -> Result<String, String> {
         uuid::Uuid::parse_str(&id).map_err(|_| "头像身份无效")?;
         return Ok(id);
     }
-    let id = uuid::Uuid::new_v4().to_string();
+    // Use the same identity that account sync will register, before either task exists.
+    let bound_entry = (profile.library_account_id.as_deref() == Some(session.user_id()))
+        .then_some(profile.library_entry_id.as_ref())
+        .flatten();
+    if bound_entry.is_some_and(|id| uuid::Uuid::parse_str(id).is_err()) {
+        return Err("头像身份无效".into());
+    }
+    let id = bound_entry
+        .or(profile.id.as_ref())
+        .filter(|id| uuid::Uuid::parse_str(id).is_ok_and(|parsed| parsed.to_string() == **id))
+        .cloned()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    if bound_entry.is_none() {
+        // Replace legacy folder-name ids with the UUID account sync will use; bound ids stay untouched.
+        profile.id = Some(id.clone());
+    }
     profile.avatar_local_id = Some(id.clone());
     write_profile_at_path(root, &profile).map_err(|error| error.to_string())?;
     Ok(id)
@@ -10050,12 +10122,62 @@ pub fn disable_legacy_shell_integration() -> Result<Option<String>, String> {
 }
 
 fn create_skill_package_from_root(root: &Path) -> Result<SkillPackage, String> {
-    let bytes = package_skill_root(root, None)?;
+    #[cfg(windows)]
+    let executables = {
+        let baseline = if root.join(".git").exists() {
+            let repo = git2::Repository::open(root).map_err(|e| e.to_string())?;
+            let identity = match repo.head() {
+                Ok(head) => {
+                    let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+                    Some(crate::version_policy::commit_content(&repo, &commit)?)
+                }
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
+                    ) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            identity
+        } else {
+            None
+        };
+        let (identity, files) = crate::library_sync::content::local_identity(
+            root,
+            baseline
+                .as_ref()
+                .map(|identity| identity.executable_paths.as_slice()),
+        )?;
+        crate::library_sync::content::package_executables(&files, &identity)
+    };
+    #[cfg(not(windows))]
+    let executables = None;
+    let bytes = package_skill_root(root, executables.as_ref())?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    // Describe the packaged bytes, not a second read of the mutable working tree.
+    let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).map_err(|e| e.to_string())?;
+    let mut files = Vec::new();
+    let mut executable_paths = Vec::new();
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).map_err(|e| e.to_string())?;
+        let name = crate::library_sync::content::nfc(file.name());
+        if file.unix_mode().is_some_and(|mode| mode & 0o111 != 0) {
+            executable_paths.push(name.clone());
+        }
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        files.push((name, data));
+    }
+    executable_paths.sort();
     Ok(SkillPackage {
         base64: BASE64.encode(&bytes),
         sha256,
         size: bytes.len(),
+        content_hash: crate::library_sync::content::content_hash(&files),
+        executable_paths,
     })
 }
 
@@ -10236,11 +10358,28 @@ fn capture_marketplace_replacement_guard_at(
     skill_id: &str,
 ) -> Result<MarketplaceReplacementGuard, String> {
     let canonical = managed_root.join(skill_id);
+    let profile = library_read_profile_readonly(&canonical)?;
+    if source_edits::replacement_blocked(&canonical, &profile) {
+        return Err(
+            "此 Skill 有本机修改或取得时的内容尚未核验，请先另存为自己的 Skill 或放弃修改，再更新"
+                .into(),
+        );
+    }
+    capture_replacement_guard_at(home, skillhub_root, managed_root, skill_id)
+}
+
+fn capture_replacement_guard_at(
+    home: &Path,
+    skillhub_root: &Path,
+    managed_root: &Path,
+    skill_id: &str,
+) -> Result<MarketplaceReplacementGuard, String> {
+    let canonical = managed_root.join(skill_id);
     validate_real_directory(&canonical, "待更新的商店 Skill")?;
     let repository = git2::Repository::open(&canonical)
         .map_err(|error| format!("待更新的商店 Skill 缺少可验证版本记录: {error}"))?;
     if working_copy_state_for_path(&canonical).0 {
-        return Err("当前商店 Skill 有尚未版本化的本机修改，请先创建版本或恢复后再更新".into());
+        return Err("当前 Skill 有未保存的修改，拒绝替换".into());
     }
     let metadata = fs::symlink_metadata(&canonical).map_err(|error| error.to_string())?;
     let projection_root = projection_root_at(skillhub_root, skill_id);
@@ -10298,8 +10437,7 @@ fn validate_marketplace_replacement_guard_at(
     skill_id: &str,
     expected: &MarketplaceReplacementGuard,
 ) -> Result<(), String> {
-    let actual =
-        capture_marketplace_replacement_guard_at(home, skillhub_root, managed_root, skill_id)?;
+    let actual = capture_replacement_guard_at(home, skillhub_root, managed_root, skill_id)?;
     if &actual != expected {
         return Err("商店 Skill、Agent 投影或安装链接在切换期间发生变化".into());
     }
@@ -10842,7 +10980,11 @@ where
         return Err("拒绝替换非真实目录的现有 Skill".into());
     }
     let managed_root = destination.parent().ok_or("无法确定 SkillHub 资产目录")?;
-    let guard = capture_marketplace_replacement_guard_at(home, root, managed_root, skill_id)?;
+    let guard = if verify_moved.is_some() {
+        capture_replacement_guard_at(home, root, managed_root, skill_id)?
+    } else {
+        capture_marketplace_replacement_guard_at(home, root, managed_root, skill_id)?
+    };
     let stage_metadata = fs::symlink_metadata(stage).map_err(|error| error.to_string())?;
     if stage_metadata.file_type().is_symlink() || !stage_metadata.is_dir() {
         return Err("待启用的商店版本不是安全目录".into());
@@ -10860,6 +11002,12 @@ where
             }
             write_private_file(&target, &contents)?;
         }
+    }
+    // Windows' metadata identity includes last_write_time: pin it only after
+    // our own env-file writes, alongside the completed staging fingerprint.
+    let stage_metadata = fs::symlink_metadata(stage).map_err(|error| error.to_string())?;
+    if stage_metadata.file_type().is_symlink() || !stage_metadata.is_dir() {
+        return Err("待启用的商店版本不是安全目录".into());
     }
     let stage_fingerprint = skill_tree_fingerprint(stage)?;
     let prepared_projection =
@@ -11220,8 +11368,7 @@ where
         {
             return Err("待恢复商店版本在原子启用期间发生变化".into());
         }
-        let restored_guard =
-            capture_marketplace_replacement_guard_at(home, root, managed_root, skill_id)?;
+        let restored_guard = capture_replacement_guard_at(home, root, managed_root, skill_id)?;
         if restored_guard.current_projection != guard.current_projection
             || restored_guard.agent_links != guard.agent_links
         {
@@ -11321,7 +11468,7 @@ fn rollback_marketplace_replacement_at(
                 return Err("Agent 投影或安装链接在中断恢复期间发生变化".into());
             }
             if current_snapshot.is_some() {
-                capture_marketplace_replacement_guard_at(home, root, managed_root, skill_id)?;
+                capture_replacement_guard_at(home, root, managed_root, skill_id)?;
             }
             update_marketplace_replacement_manifest(&old_manifest_path, "restored", "complete")?;
             Ok(())
@@ -11369,7 +11516,7 @@ fn rollback_marketplace_replacement_at(
         );
     }
 
-    let guard = capture_marketplace_replacement_guard_at(home, root, managed_root, skill_id)?;
+    let guard = capture_replacement_guard_at(home, root, managed_root, skill_id)?;
     let old_metadata = fs::symlink_metadata(&old_recovered).map_err(|error| error.to_string())?;
     let old_fingerprint = skill_tree_fingerprint(&old_recovered)?;
     let prepared_projection =
@@ -11524,6 +11671,8 @@ pub fn import_skill_package(
     data: ImportSkillPackageInput,
 ) -> Result<LocalSkill, String> {
     let ImportSkillPackageInput {
+        source_version_id,
+        team_modifications,
         catalog_origin,
         skill_id,
         name,
@@ -11675,9 +11824,11 @@ pub fn import_skill_package(
         git2::Repository::init(&stage).map_err(|error| error.to_string())?;
         ensure_git_excludes(&stage).map_err(|error| error.to_string())?;
         let mut profile = SkillHubProfile {
+            source_version_id,
             id: Some(uuid::Uuid::new_v4().to_string()),
             catalog_origin: catalog_origin.clone(),
-            acquisition_version: catalog_origin.as_ref().map(|_| version.clone()),
+            acquisition_version: (acquisition_source != AcquisitionSource::Local)
+                .then(|| version.clone()),
             library_account_id: preserved
                 .as_ref()
                 .and_then(|profile| profile.library_account_id.clone()),
@@ -11691,10 +11842,11 @@ pub fn import_skill_package(
             acquisition_package_sha256: (acquisition_source != AcquisitionSource::Local)
                 .then_some(actual_sha256.clone()),
             acquired_by_user_id,
-            team_shared_from: (acquisition_source == AcquisitionSource::Team)
-                .then(|| persisted_team_ids.first().cloned())
-                .flatten()
-                .or(team_id.clone()),
+            team_shared_from: team_id.clone().or_else(|| {
+                (acquisition_source == AcquisitionSource::Team)
+                    .then(|| persisted_team_ids.first().cloned())
+                    .flatten()
+            }),
             name: Some(projection_name),
             display_name: Some(display_name.clone()),
             description,
@@ -11726,6 +11878,7 @@ pub fn import_skill_package(
             AcquisitionSource::Marketplace => "从 Skill 商店导入",
         };
         create_skill_snapshot_at_path(&stage, &format!("{version} · {source_label}"))?;
+        source_edits::remember_acquisition(&stage, &profile, &bytes)?;
         ensure_current_local_version_at(&stage, &mut profile)
     })();
     if let Err(error) = initialize_result {
@@ -11739,6 +11892,22 @@ pub fn import_skill_package(
         }
     }
     let home = crate::user_home_dir().ok_or("Cannot find home dir")?;
+    if replace_existing_marketplace && acquisition_source == AcquisitionSource::Team {
+        let result = library_read_profile_readonly(&stage).and_then(|next| {
+            source_edits::replace_team_source_at(
+                &home,
+                &skillhub_dir(),
+                &managed_root,
+                &skill_id,
+                &bytes,
+                next,
+                team_modifications.as_deref(),
+            )
+        });
+        let _ = fs::remove_dir_all(&stage);
+        result?;
+        return Ok(build_local_skill(&skill_id));
+    }
     let replacement_recovery_id = match activate_staged_marketplace_package(
         &home,
         &skillhub_dir(),
@@ -11977,6 +12146,7 @@ pub(crate) struct LibraryLanding<'a> {
     /// again immediately before the switch. Required whenever it exists.
     pub(crate) verify_existing: Option<&'a LibraryStateCheck>,
     pub(crate) message: &'a str,
+    pub(crate) retain_backup: bool,
 }
 
 /// Both checks of an existing directory, see `LibraryLanding`.
@@ -12009,6 +12179,7 @@ pub(crate) fn land_library_package_at(
         expected_existing,
         verify_existing,
         message,
+        retain_backup,
     } = landing;
     validate_skill_id(skill_id)?;
     if is_system_skill_id(skill_id) {
@@ -12049,7 +12220,8 @@ pub(crate) fn land_library_package_at(
         write_profile_at_path(&stage, &profile).map_err(|error| error.to_string())?;
         // Always a new version, even when the tree is unchanged (e.g. only an
         // ignored sidecar changed): its message carries the recovery token.
-        library_snapshot_inner(&stage, message, true)
+        library_snapshot_inner(&stage, message, true)?;
+        source_edits::remember_acquisition(&stage, &profile, package)
     })();
     if let Err(error) = prepared {
         let _ = fs::remove_dir_all(&stage);
@@ -12106,6 +12278,7 @@ pub(crate) fn land_library_package_at(
             // not fill the recycle bin.
             if let Some(segment) = recovery
                 .as_deref()
+                .filter(|_| !retain_backup)
                 .and_then(|id| id.strip_prefix("managed:"))
             {
                 let trash = skillhub_root.join("trash");
@@ -12150,6 +12323,39 @@ pub(crate) fn library_copy_tree(source: &Path, target: &Path) -> Result<(), Stri
 
 #[cfg(all(test, windows))]
 mod windows_projection_tests {
+    #[test]
+    fn package_keeps_executable_semantics_from_the_saved_tree() {
+        let root =
+            std::env::temp_dir().join(format!("skillhub-push-package-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("SKILL.md"), "# Windows\n").unwrap();
+        std::fs::write(root.join("run.sh"), "echo ok\n").unwrap();
+        let repo = git2::Repository::init(&root).unwrap();
+        assert!(super::create_skill_package_from_root(&root)
+            .unwrap()
+            .executable_paths
+            .is_empty());
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder
+            .insert("SKILL.md", repo.blob(b"# Windows\n").unwrap(), 0o100644)
+            .unwrap();
+        builder
+            .insert("run.sh", repo.blob(b"echo ok\n").unwrap(), 0o100755)
+            .unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let signature = git2::Signature::now("fixture", "fixture@example.test").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "saved", &tree, &[])
+            .unwrap();
+        let config = std::fs::read(root.join(".git/config")).unwrap();
+        let package = super::create_skill_package_from_root(&root).unwrap();
+        assert_eq!(package.executable_paths, vec!["run.sh"]);
+        assert_eq!(std::fs::read(root.join(".git/config")).unwrap(), config);
+        drop(tree);
+        drop(builder);
+        drop(repo);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     use super::{
         managed_skill_agent_projection_state_at, refresh_skill_projection_at, runtime_header,
         uninstall_skill_projections, ManagedSkillAgentProjectionState,
@@ -12321,24 +12527,93 @@ mod windows_projection_tests {
 
 #[cfg(all(test, unix))]
 mod tests {
+    fn avatar_test_session(root: &std::path::Path) -> crate::runtime_env::RuntimeSession {
+        crate::runtime_env::test_sessions::sign_in(root, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        crate::runtime_env::runtime_session_snapshot_at(root).unwrap()
+    }
+
     #[test]
     fn avatar_identity_survives_profile_edits_and_managed_folder_rename() {
         let root = std::env::temp_dir().join(format!("skillhub-avatar-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create test Skill");
         fs::write(root.join("SKILL.md"), "# Sources").expect("write source");
-        let first = super::ensure_skill_avatar_identity_at(&root).expect("persist identity");
+        let session = avatar_test_session(&root);
+        let first =
+            super::ensure_skill_avatar_identity_at(&root, &session).expect("persist identity");
         let mut profile = super::read_current_profile_at_path(&root).expect("read profile");
+        assert_eq!(profile.id.as_deref(), Some(first.as_str()));
         profile.display_name = Some("Renamed".into());
         profile.description = Some("Changed introduction".into());
         super::write_profile_at_path(&root, &profile).expect("write metadata");
         let renamed = root.with_extension("renamed");
         fs::rename(&root, &renamed).expect("rename managed folder");
         assert_eq!(
-            super::ensure_skill_avatar_identity_at(&renamed).expect("reuse identity"),
+            super::ensure_skill_avatar_identity_at(&renamed, &session).expect("reuse identity"),
             first
         );
         assert!(uuid::Uuid::parse_str(&first).is_ok());
         fs::remove_dir_all(renamed).expect("cleanup");
+    }
+
+    #[test]
+    fn avatar_identity_reuses_sync_uuid_and_preserves_legacy_avatar() {
+        let root = std::env::temp_dir().join(format!("skillhub-avatar-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("SKILL.md"), "# Sources").unwrap();
+        let session = avatar_test_session(&root);
+        let mut profile = super::read_current_profile_at_path(&root).unwrap();
+        let stable = uuid::Uuid::new_v4().to_string();
+        profile.id = Some(stable.clone());
+        super::write_profile_at_path(&root, &profile).unwrap();
+        assert_eq!(
+            super::ensure_skill_avatar_identity_at(&root, &session).unwrap(),
+            stable
+        );
+        let legacy = uuid::Uuid::new_v4().to_string();
+        profile.avatar_local_id = Some(legacy.clone());
+        super::write_profile_at_path(&root, &profile).unwrap();
+        assert_eq!(
+            super::ensure_skill_avatar_identity_at(&root, &session).unwrap(),
+            legacy
+        );
+        assert_eq!(
+            super::read_current_profile_at_path(&root).unwrap().id,
+            Some(stable)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn avatar_identity_checks_account_before_writing_and_prefers_bound_entry() {
+        let root = std::env::temp_dir().join(format!("skillhub-avatar-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let session = avatar_test_session(&root);
+        let entry = uuid::Uuid::new_v4().to_string();
+        let local = uuid::Uuid::new_v4().to_string();
+        let mut profile = SkillHubProfile {
+            id: Some(local.clone()),
+            library_account_id: Some(session.user_id().into()),
+            library_entry_id: Some(entry.clone()),
+            ..Default::default()
+        };
+        super::write_profile_at_path(&root, &profile).unwrap();
+        let before = fs::read(root.join(".skillhub.json")).unwrap();
+        crate::runtime_env::test_sessions::sign_in(&root, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        let other = crate::runtime_env::runtime_session_snapshot_at(&root).unwrap();
+        assert!(super::ensure_skill_avatar_identity_at(&root, &other).is_err());
+        assert_eq!(fs::read(root.join(".skillhub.json")).unwrap(), before);
+        assert_eq!(
+            super::ensure_skill_avatar_identity_at(&root, &session).unwrap(),
+            entry
+        );
+        assert_eq!(super::read_profile_at_path(&root).unwrap().id, Some(local));
+        profile.library_account_id = None;
+        profile.scope = Some(crate::spaces::SidecarScope::for_session(&session));
+        super::write_profile_at_path(&root, &profile).unwrap();
+        let before = fs::read(root.join(".skillhub.json")).unwrap();
+        assert!(super::ensure_skill_avatar_identity_at(&root, &other).is_err());
+        assert_eq!(fs::read(root.join(".skillhub.json")).unwrap(), before);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -12496,7 +12771,7 @@ mod tests {
         candidate_skill_md: &str,
     ) -> (ProjectionFixture, PathBuf, PathBuf) {
         let fixture = projection_fixture(current_skill_md, false);
-        let profile = crate::SkillHubProfile {
+        let mut profile = crate::SkillHubProfile {
             server_id: Some("server-a".into()),
             acquisition_source: Some(crate::AcquisitionSource::Marketplace),
             name: Some("sample".into()),
@@ -12512,6 +12787,15 @@ mod tests {
         .expect("make current Marketplace script executable");
         create_skill_snapshot_at_path(&fixture.skill_root, "v1.0.0 · Marketplace")
             .expect("snapshot current Marketplace Skill");
+        let package = super::create_skill_package_from_root(&fixture.skill_root).unwrap();
+        profile.acquisition_package_sha256 = Some(package.sha256);
+        write_profile_at_path(&fixture.skill_root, &profile).unwrap();
+        super::source_edits::remember_acquisition(
+            &fixture.skill_root,
+            &profile,
+            &BASE64.decode(package.base64).unwrap(),
+        )
+        .unwrap();
 
         let stage = fixture.managed_root.join(".stage-approved");
         fs::create_dir_all(stage.join("scripts")).expect("create Marketplace stage");
@@ -12527,6 +12811,15 @@ mod tests {
         write_profile_at_path(&stage, &profile).expect("write approved Marketplace profile");
         create_skill_snapshot_at_path(&stage, "v2.0.0 · Marketplace")
             .expect("snapshot approved Marketplace Skill");
+        let package = super::create_skill_package_from_root(&stage).unwrap();
+        profile.acquisition_package_sha256 = Some(package.sha256);
+        write_profile_at_path(&stage, &profile).unwrap();
+        super::source_edits::remember_acquisition(
+            &stage,
+            &profile,
+            &BASE64.decode(package.base64).unwrap(),
+        )
+        .unwrap();
 
         let agent_link = fixture.home.join(".codex/skills/sample");
         fs::create_dir_all(agent_link.parent().expect("Agent link parent"))
@@ -12895,8 +13188,9 @@ mod tests {
         super::create_skill_snapshot_at_path(&root, "import").unwrap();
         super::ensure_current_local_version_at(&root, &mut profile).unwrap();
         assert_eq!(profile.acquisition_version.as_deref(), Some("1.2.3"));
-        assert!(!super::promote_profile_to_personal(&mut profile));
-        assert_eq!(profile.is_own, Some(false));
+        assert!(super::promote_profile_to_personal(&mut profile));
+        assert_eq!(profile.is_own, Some(true));
+        assert_eq!(profile.upstream.as_ref().unwrap().version, "1.2.3");
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -13845,6 +14139,139 @@ mod tests {
             super::ManagedSkillAgentProjectionState::Installed
         );
         fixture.cleanup();
+    }
+
+    #[test]
+    fn workbuddy_upgrade_preserves_old_projection_and_installs_new_target_independently() {
+        let fixture = projection_fixture("# Original\n", true);
+        let roots = crate::known_agents_for_platform(crate::AgentPlatform::Macos);
+        let target = |key| {
+            fixture
+                .home
+                .join(
+                    roots
+                        .iter()
+                        .find(|(candidate, _, _)| *candidate == key)
+                        .unwrap()
+                        .2,
+                )
+                .join("sample")
+        };
+        let old = target("workbuddy-ai");
+        let new = target("workbuddy");
+        assert_eq!(old, fixture.home.join(".workbuddy-ai/skills/sample"));
+        assert_eq!(new, fixture.home.join(".workbuddy/skills/sample"));
+        fs::create_dir_all(old.parent().unwrap()).expect("old root");
+        unix_fs::symlink(&fixture.current, &old).expect("pre-upgrade projection");
+        let state = |link: &Path| {
+            super::managed_skill_agent_projection_state_at(
+                link,
+                &fixture.skillhub_root,
+                &fixture.managed_root,
+                "sample",
+            )
+            .expect("projection state")
+        };
+        let original = fs::read(fixture.projected_skill_md()).unwrap();
+        let marker = fs::read(fixture.generation().join(PROJECTION_MARKER_NAME)).unwrap();
+        refresh_installed_projections_at(
+            &fixture.home,
+            &fixture.skillhub_root,
+            &fixture.managed_root,
+        )
+        .expect("upgrade refresh");
+        assert_eq!(fs::read(fixture.projected_skill_md()).unwrap(), original);
+        assert_eq!(
+            fs::read(fixture.generation().join(PROJECTION_MARKER_NAME)).unwrap(),
+            marker
+        );
+        refresh_installed_projections_at(
+            &fixture.home,
+            &fixture.skillhub_root,
+            &fixture.managed_root,
+        )
+        .expect("repeat upgrade refresh");
+        assert_eq!(fs::read(fixture.projected_skill_md()).unwrap(), original);
+        assert_eq!(
+            state(&old),
+            super::ManagedSkillAgentProjectionState::Installed
+        );
+        assert_eq!(
+            state(&new),
+            super::ManagedSkillAgentProjectionState::Missing
+        );
+        assert_eq!(fs::read_link(&old).unwrap(), fixture.current);
+
+        fs::create_dir_all(&new).expect("unmanaged native Skill");
+        fs::write(new.join("SKILL.md"), "user-owned").unwrap();
+        let install = || {
+            install_skill_projections_with(&fixture.current, vec![new.clone()], |source, link| {
+                unix_fs::symlink(source, link).map_err(|error| error.to_string())
+            })
+        };
+        assert!(install().is_err());
+        assert_eq!(
+            fs::read_to_string(new.join("SKILL.md")).unwrap(),
+            "user-owned"
+        );
+        fs::remove_dir_all(&new).expect("remove fixture conflict");
+        install().expect("explicit install to WorkBuddy.app");
+        assert_eq!(
+            state(&old),
+            super::ManagedSkillAgentProjectionState::Installed
+        );
+        assert_eq!(
+            state(&new),
+            super::ManagedSkillAgentProjectionState::Installed
+        );
+        let native = old.parent().unwrap().join("native");
+        fs::create_dir_all(&native).unwrap();
+        fs::write(native.join("SKILL.md"), "untouched").unwrap();
+        uninstall_skill_projections(&fixture.home, &fixture.managed_root, "sample")
+            .expect("both targets remain managed for uninstall");
+        assert_eq!(
+            state(&old),
+            super::ManagedSkillAgentProjectionState::Missing
+        );
+        assert_eq!(
+            state(&new),
+            super::ManagedSkillAgentProjectionState::Missing
+        );
+        assert_eq!(
+            fs::read_to_string(native.join("SKILL.md")).unwrap(),
+            "untouched"
+        );
+        fixture.cleanup();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn workbuddy_historical_adoption_record_keeps_its_exact_restore_destination() {
+        let home = std::env::temp_dir().join(format!(
+            "skillhub-workbuddy-restore-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let old = home.join(".workbuddy-ai/skills/sample");
+        for key in ["workbuddy", "workbuddy-ai"] {
+            let source = serde_json::json!({"agentKey": key, "entryName": "sample"});
+            for _ in 0..2 {
+                assert_eq!(
+                    validate_adoption_original_path(&home, &source, &old).unwrap(),
+                    "sample"
+                );
+            }
+            assert!(
+                validate_adoption_original_path(&home, &source, &home.join("foreign/sample"))
+                    .is_err()
+            );
+        }
+        let ai = serde_json::json!({"agentKey": "workbuddy-ai", "entryName": "sample"});
+        assert!(validate_adoption_original_path(
+            &home,
+            &ai,
+            &home.join(".workbuddy/skills/sample")
+        )
+        .is_err());
     }
 
     #[test]
@@ -16496,6 +16923,15 @@ mod tests {
         let package_b = create_skill_package_from_root(&second).expect("package second fixture");
         assert_eq!(package_a.sha256, package_b.sha256);
         assert_eq!(package_a.base64, package_b.base64);
+        assert_eq!(package_a.content_hash, package_b.content_hash);
+        assert_eq!(package_a.executable_paths, vec!["scripts/run.sh"]);
+        assert_eq!(
+            package_a.content_hash,
+            crate::library_sync::content::local_identity(&first, None)
+                .unwrap()
+                .0
+                .content_hash
+        );
 
         let bytes = BASE64
             .decode(package_a.base64)
@@ -17306,6 +17742,90 @@ labels: [验收, Mac, SkillHub]
     }
 
     #[test]
+    fn system_manager_repairs_read_only_legacy_version() {
+        let home = std::env::temp_dir().join(format!(
+            "skillhub-system-manager-legacy-version-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let skillhub_root = home.join(if crate::official_channel::CHANNEL == "dev" {
+            ".skillhub-dev"
+        } else {
+            ".skillhub"
+        });
+        let managed_root = skillhub_root.join("skills");
+        fs::create_dir_all(&managed_root).expect("create managed root");
+        fs::set_permissions(&skillhub_root, fs::Permissions::from_mode(0o700))
+            .expect("protect root");
+        fs::set_permissions(&managed_root, fs::Permissions::from_mode(0o700))
+            .expect("protect managed root");
+        let detected = HashSet::from(["codex".to_string()]);
+        fs::create_dir_all(home.join(".codex/skills")).expect("create ready Codex Skill root");
+        repair_system_manager_at(&home, &skillhub_root, &managed_root, &detected)
+            .expect("install manager fixture");
+
+        let canonical = managed_root.join(crate::system_skill::SYSTEM_MANAGER_ID);
+        fs::set_permissions(&canonical, fs::Permissions::from_mode(0o700))
+            .expect("unlock manager for legacy fixture");
+        let mut profile = super::system_manager_profile();
+        profile.system_version = Some("v2.0.4".into());
+        profile.version = "v2.0.4".into();
+        write_profile_at_path(&canonical, &profile).expect("write legacy profile");
+        fs::set_permissions(
+            canonical.join(".skillhub.json"),
+            fs::Permissions::from_mode(0o400),
+        )
+        .expect("protect legacy sidecar");
+        fs::set_permissions(&canonical, fs::Permissions::from_mode(0o500))
+            .expect("protect legacy manager directory");
+        for path in crate::system_skill::files()
+            .into_iter()
+            .map(|(relative, _)| canonical.join(relative))
+            .chain([canonical.join(".skillhub.json")])
+        {
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o400
+            );
+        }
+        for path in [&canonical, &canonical.join("references")] {
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o500
+            );
+        }
+        assert!(!super::system_manager_is_healthy_at(
+            &home,
+            &skillhub_root,
+            &managed_root,
+            &detected
+        ));
+
+        repair_system_manager_at(&home, &skillhub_root, &managed_root, &detected)
+            .expect("upgrade read-only legacy manager");
+        let repaired = super::read_profile_at_path(&canonical).expect("read repaired sidecar");
+        assert_eq!(
+            repaired.system_version.as_deref(),
+            Some(crate::system_skill::SYSTEM_MANAGER_VERSION)
+        );
+        assert!(super::system_manager_files_are_current_at(&managed_root));
+        assert!(super::system_manager_is_healthy_at(
+            &home,
+            &skillhub_root,
+            &managed_root,
+            &detected
+        ));
+
+        fs::set_permissions(&canonical, fs::Permissions::from_mode(0o700))
+            .expect("unlock canonical cleanup");
+        fs::set_permissions(
+            canonical.join("references"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .expect("unlock references cleanup");
+        fs::remove_dir_all(home).expect("remove legacy manager fixture");
+    }
+
+    #[test]
     fn system_manager_does_not_create_agent_skill_directories_without_ready_targets() {
         let home = std::env::temp_dir().join(format!(
             "skillhub-system-manager-no-ready-agent-{}",
@@ -17352,7 +17872,7 @@ labels: [验收, Mac, SkillHub]
     }
 
     #[test]
-    fn edit_session_promotes_team_skill_to_personal_and_snapshots_it() {
+    fn edit_session_keeps_team_source_and_snapshots_it() {
         let home =
             std::env::temp_dir().join(format!("skillhub-edit-session-{}", uuid::Uuid::new_v4()));
         let skillhub_root = home.join(if crate::official_channel::CHANNEL == "dev" {
@@ -17401,22 +17921,27 @@ labels: [验收, Mac, SkillHub]
         let finished = finish_skill_edit_at(&skillhub_root, &managed_root, &prepared.session_id)
             .expect("finish edit");
         assert!(finished.changed);
-        assert!(finished.promoted_to_personal);
+        assert!(!finished.promoted_to_personal);
+        assert!(finished.source_kept);
         assert_eq!(finished.version, "2.3.1");
         let profile = super::read_profile_at_path(&skill_root).expect("read promoted profile");
-        assert_eq!(profile.is_own, Some(true));
+        assert_eq!(profile.is_own, Some(false));
         assert_eq!(
             profile.acquisition_source,
-            Some(crate::AcquisitionSource::Local)
+            Some(crate::AcquisitionSource::Team)
         );
-        assert!(profile.server_id.is_none());
-        assert_eq!(
-            profile
-                .upstream
-                .as_ref()
-                .and_then(|value| value.server_skill_id.as_deref()),
-            Some("upstream-skill")
-        );
+        assert_eq!(profile.server_id.as_deref(), Some("upstream-skill"));
+        assert_eq!(profile.acquisition_version.as_deref(), Some("v2.3.0"));
+        assert!(!super::working_copy_state_for_path(&skill_root).0);
+        assert!(super::capture_marketplace_replacement_guard_at(
+            &home,
+            &skillhub_root,
+            &managed_root,
+            "shared-skill"
+        )
+        .unwrap_err()
+        .contains("本机修改"));
+        assert!(profile.upstream.is_none());
         let repo = git2::Repository::open(&skill_root).expect("open promoted repo");
         let head = repo
             .head()

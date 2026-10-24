@@ -38,6 +38,13 @@ export const VersionIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('formal'), versionId: z.string().uuid() }).strict(),
 ])
 export type VersionIntent = z.infer<typeof VersionIntentSchema>
+
+export async function sameCardContent(tx: Prisma.TransactionClient, left: string, right: string): Promise<boolean> {
+  if (left === right) return true
+  const cards = await tx.skillCard.findMany({ where: { sha256: { in: [left, right] } } })
+  return cards.length === 2 && cards[0]!.contentHash === cards[1]!.contentHash
+    && JSON.stringify(cards[0]!.executablePaths) === JSON.stringify(cards[1]!.executablePaths)
+}
 export const receiptInclude = { formalVersion: { select: { version: true, aliases: true } } } as const
 export type Receipt = Prisma.LibraryEntryVersionGetPayload<{ include: typeof receiptInclude }>
 
@@ -165,15 +172,16 @@ export async function acceptVersionIntent(tx: Prisma.TransactionClient, entry: L
     const previouslyAcquired = historicalReceipt !== null || acquiredRefs.includes(`version:${intent.versionId}`)
       || (formal?.marketplaceSubmissions.some((s) => acquiredRefs.includes(`submission:${s.id}`)) ?? false)
     const accessible = formal && (formal.skill.authorId === entry.userId || previouslyAcquired || (!formal.skill.deletedAt && (
-      formal.marketplaceListings.length > 0 || formal.skill.teamShares.some((s) => !s.team.dissolvedAt && s.team.members.length > 0))))
+      formal.marketplaceListings.length > 0 || formal.skill.teamShares.some((s) => !s.team.dissolvedAt && s.team.members.length > 0
+        && (s.versionId ? s.versionId === formal.id : s.skillId === formal.skillId && formal.version === formal.skill.currentVersion)))))
     if (!formal || !accessible || !grant || formal.cardSha256 !== targetCard) throw new VersionPolicyError('VERSION_SOURCE_UNAVAILABLE', 'Formal version is not available to this account', 403)
     if (versionOrdinal(formal.version) === null) throw new VersionPolicyError('VERSION_LABEL_MIGRATION_REQUIRED', 'The source version needs label migration; refresh later')
     formalVersionId = formal.id
     if (formal.skillId === entry.authorSkillId) {
       const occupied = await tx.libraryEntryVersion.findUnique({ where: { entryId_label: { entryId: entry.id, label: formal.version } }, include: receiptInclude })
       if (occupied) {
-        if (occupied.cardSha256 !== targetCard || (occupied.formalVersionId && occupied.formalVersionId !== formal.id)) throw new VersionPolicyError('VERSION_LABEL_CONFLICT', 'Formal label conflicts with a reserved version')
-        return tx.libraryEntryVersion.update({ where: { id: occupied.id }, data: { formalVersionId: formal.id }, include: receiptInclude })
+        if (occupied.formalVersionId || !await sameCardContent(tx, occupied.cardSha256, targetCard)) throw new VersionPolicyError('VERSION_LABEL_CONFLICT', 'Formal label conflicts with a reserved version')
+        return tx.libraryEntryVersion.update({ where: { id: occupied.id }, data: { formalVersionId: formal.id, cardSha256: targetCard }, include: receiptInclude })
       }
       label = formal.version
     } else label = allocateVersion(highWater, formal.version)

@@ -256,5 +256,5 @@ export function SkillQuickAccessButton({ skill }: { skill: LocalSkill }) {
     aria-label={pinned ? '移出快捷访问' : '加入快捷访问'}
     title={pinned ? '移出快捷访问' : '加入左侧快捷访问'}
     onClick={() => toggleSkillQuickAccess(skill)}
-  ><Icon name="star" size={10} /></button>
+  ><Icon name="star" size={16} /></button>
 }

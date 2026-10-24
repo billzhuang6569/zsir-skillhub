@@ -52,6 +52,12 @@ export type AiAnalysisResult = {
 
 export type AiAnalysisNoticeKind = 'default' | 'warn' | 'error'
 
+export function importAnalysisMessage(analysis: AiAnalysisResult['analysis'] & { queued?: boolean }): string {
+  if (analysis.status === 'completed') return '资料已完善'
+  if (analysis.status === 'recovered') return '已恢复云端关联'
+  return analysis.queued ? '正在后台分析' : '现有资料已保留，可稍后重试分析'
+}
+
 export type AiAnalysisEnvironment = {
   currentUserId: () => string | null
   readSpace: () => SpaceHandle | null

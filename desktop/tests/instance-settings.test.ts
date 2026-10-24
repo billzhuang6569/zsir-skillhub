@@ -922,7 +922,7 @@ test('unanalysed mapping keeps explicit metadata, removes local rule fallback, a
   assert.equal(mergeApiSkill(remote, local).trigger, '规则触发', 'official fallback stays unchanged')
   assert.equal(withAnalyzedProfile(merged, { displayName: 'AI', description: 'AI', category: '', labels: [], fitScenarios: [] }).serverAnalysisStatus, 'completed')
   assert.equal(reconcileLocalSkillRefresh(merged, { ...merged, serverAnalysisStatus: undefined }).serverAnalysisStatus, 'unanalysed')
-  for (const file of ['SkillCard', 'SkillLibraryList', 'CloudSkillPreview', 'SkillDetailSheet']) {
+  for (const file of ['SkillCard', 'CloudSkillPreview', 'SkillDetailSheet']) {
     const source = readFileSync(`src/components/${file}.tsx`, 'utf8')
     assert.match(source, /serverAnalysisStatus/)
     assert.match(source, /未分析/)

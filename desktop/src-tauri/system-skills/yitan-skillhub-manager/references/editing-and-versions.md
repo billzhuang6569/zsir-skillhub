@@ -29,9 +29,9 @@ skillhub skill prepare-edit --skill-id "<skill-id>" --json
    skillhub skill finish-edit "<session-id>" --json
    ```
 
-5. 根据完成结果报告是否变化、是否成为个人副本、版本号及确认状态。本机保存成功不代表账号同步或团队发布成功。
+5. 根据完成结果报告是否变化、来源是否保留、版本号及确认状态。`finish-edit --json` 保留 `promotedToPersonal: false`，并返回 `sourceKept: true`。本机保存成功不代表账号同步或团队发布成功。
 
-如果目标来自团队或 Marketplace，只有真实内容变化才应成为当前用户的个人版本；不得修改上游资产。若误改投影，重新 `prepare-edit` 让 SkillHub reconciliation，不要自行复制。
+如果目标来自团队或 Marketplace，修改后仍保留来源与更新通道，APP 显示「团队共享后修改」或「商店获取后修改」。只有用户在 APP 显式选择「另存为我自己的 Skill」才创建独立个人副本，原 Skill 保持不变。若误改投影，重新 `prepare-edit` 让 SkillHub reconciliation，不要自行复制。
 
 已加入当前账号库的托管源在本机编辑后可能自动同步到其他设备；`finish-edit` 的本机成功不等于已发布正式 Server 版本或团队已共享。需要确认传播时查询 `skillhub sync status --json` 并在 APP 核对，不能从本机版本号猜测云端结果。
 

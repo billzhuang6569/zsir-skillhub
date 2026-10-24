@@ -9,7 +9,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 
 pub(crate) use crate::official_channel::APP_OPEN_LINK;
-use crate::official_channel::INVITE_PREFIX;
+use crate::official_channel::{DEEP_LINK_SCHEME, INVITE_PREFIX};
 use crate::spaces::{canonical_base, normalize_base};
 const MAX_LINK_LENGTH: usize = 4096;
 const MAX_CLIPBOARD_LENGTH: usize = 64 * 1024;
@@ -163,6 +163,50 @@ fn is_app_open_link(value: &str) -> bool {
     value.trim() == APP_OPEN_LINK || value.trim().strip_suffix('/') == Some(APP_OPEN_LINK)
 }
 
+fn normalized_team_skill_link(value: &str) -> Option<String> {
+    if value.len() > MAX_LINK_LENGTH
+        || !value.starts_with(&format!("{DEEP_LINK_SCHEME}://team-skill/"))
+    {
+        return None;
+    }
+    let url = Url::parse(value).ok()?;
+    if value.split('?').next()? != format!("{DEEP_LINK_SCHEME}://team-skill{}", url.path()) {
+        return None;
+    }
+    if url.host_str() != Some("team-skill")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let parts: Vec<_> = url.path().split('/').collect();
+    if parts.len() != 3
+        || !parts[1..].iter().all(|part| {
+            part.len() == 36
+                && uuid::Uuid::parse_str(part).is_ok()
+                && matches!(part.as_bytes()[14], b'1'..=b'8')
+                && matches!(part.as_bytes()[19], b'8' | b'9' | b'a' | b'b' | b'A' | b'B')
+        })
+    {
+        return None;
+    }
+    let query = url.query()?;
+    if !query.starts_with("server=") || query.contains('&') {
+        return None;
+    }
+    let params: Vec<_> = url.query_pairs().collect();
+    if params.len() != 1 || params[0].0 != "server" {
+        return None;
+    }
+    let server = normalize_invite_server(params[0].1.to_string()).ok()?;
+    let mut normalized = url.clone();
+    normalized.set_query(None);
+    normalized.query_pairs_mut().append_pair("server", &server);
+    Some(normalized.to_string())
+}
+
 fn unique_invite_links<I>(values: I) -> Vec<String>
 where
     I: IntoIterator,
@@ -194,7 +238,15 @@ where
         .map(|value| value.as_ref().trim().to_string())
         .collect::<Vec<_>>();
     let open_requested = values.iter().any(|value| is_app_open_link(value));
-    let links = unique_invite_links(&values);
+    let mut links = unique_invite_links(&values);
+    for link in values
+        .iter()
+        .filter_map(|value| normalized_team_skill_link(value))
+    {
+        if !links.contains(&link) {
+            links.push(link);
+        }
+    }
     if links.is_empty() && !open_requested {
         return;
     }
@@ -340,6 +392,36 @@ pub async fn read_clipboard_text(app: AppHandle) -> Result<Option<String>, Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn team_skill_links_validate_identity_and_server() {
+        let base = format!("{}://team-skill/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222", super::DEEP_LINK_SCHEME);
+        let valid = format!("{base}?server=https%3A%2F%2Fexample.test%2Fbase");
+        assert_eq!(
+            super::normalized_team_skill_link(&valid),
+            Some(valid.clone())
+        );
+        for invalid in [
+            base.to_string(),
+            format!("{valid}&extra=1"),
+            format!("{valid}&"),
+            valid.replace("?server=", "?&server="),
+            format!("{valid}&server=https://other.test"),
+            format!("{valid}#fragment"),
+            format!("{base}/?server=https://example.test"),
+            valid.replace("team-skill/", "other/"),
+            valid.replace("team-skill/", "user@team-skill/"),
+            valid.replace("team-skill/", "team-skill:99/"),
+            valid.replace("11111111-1111-4111-8111-111111111111", "bad"),
+            format!("{base}?server=http://evil.test"),
+            format!("{valid}{}", "a".repeat(4096)),
+        ] {
+            assert!(
+                super::normalized_team_skill_link(&invalid).is_none(),
+                "{invalid}"
+            );
+        }
+    }
+
     use super::{
         clipboard_retry_delay, is_app_open_link, poll_clipboard, unique_invite_links,
         ClipboardPoll, APP_OPEN_LINK, CLIPBOARD_RETRY_BASE, CLIPBOARD_RETRY_MAX,

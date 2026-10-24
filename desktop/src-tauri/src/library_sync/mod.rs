@@ -8,6 +8,34 @@ pub(crate) mod engine;
 mod index;
 pub(crate) mod profile;
 
+pub(crate) async fn acquired_package(profile: &crate::SkillHubProfile) -> Result<Vec<u8>, String> {
+    let profile = profile.clone();
+    in_background(move || {
+        block_on(async move {
+            let sha = profile
+                .acquisition_package_sha256
+                .as_deref()
+                .ok_or("缺少取得时的内容包")?;
+            if let Some(origin) = &profile.catalog_origin {
+                return crate::catalog::package(
+                    &crate::skillhub_dir(),
+                    origin,
+                    profile.server_id.as_deref().ok_or("缺少商店来源")?,
+                    sha,
+                )
+                .await;
+            }
+            let session = signed_in_session().map_err(|e| e.message())?;
+            crate::spaces::require_profile(&profile, &session)?;
+            HttpLibraryApi::new(&session)?
+                .download_card(sha)
+                .await
+                .map_err(api_message)
+        })
+    })
+    .await?
+}
+
 use crate::cli::{
     CliAccount, CliAccountState, CliCommandOutput, CliErrorCode, EXIT_AUTH, EXIT_NETWORK,
     EXIT_USAGE,
@@ -127,6 +155,10 @@ fn app_paths() -> SyncPaths {
 
 fn signed_in_session() -> Result<RuntimeSession, SyncError> {
     let session = runtime_session_snapshot().map_err(SyncError::Fatal)?;
+    validate_signed_in_session(session)
+}
+
+fn validate_signed_in_session(session: RuntimeSession) -> Result<RuntimeSession, SyncError> {
     if session.is_sync_pending() || session.auth_token().is_none() {
         return Err(SyncError::Fatal("请先登录 SkillHub 后再同步".into()));
     }
@@ -870,7 +902,13 @@ pub async fn library_author_asset(skill_id: String) -> Result<LibraryAuthorAsset
             return Err("Skill 内容在同步后又发生变化，请重试".into());
         }
         let api = HttpLibraryApi::new(&session)?;
-        let mut asset = block_on(api.author_asset(&entry_id))?.map_err(api_message)?;
+        let sidecar = library_read_profile(&skill_root)?;
+        let inherit_from = sidecar
+            .copy_origin
+            .as_ref()
+            .and_then(|origin| origin.server_skill_id.as_deref());
+        let mut asset =
+            block_on(api.author_asset(&entry_id, inherit_from))?.map_err(api_message)?;
         let formal =
             block_on(api.formal_version_by_label(&asset.skill.id, &asset.skill.current_version))?
                 .map_err(api_message)?;
@@ -1069,10 +1107,8 @@ pub async fn record_skill_formal_version(
                 })
                 .is_some_and(|i| i == current);
             if !carries {
-                crate::commands::library_snapshot_at(
-                    &path,
-                    &format!("补全正式版本记录\n\nSkillHub-Version: {}", formal.version),
-                )?;
+                // The authorized receipt assigns this snapshot's number; it is not a new local save.
+                crate::commands::library_snapshot_at(&path, "补全正式版本记录")?;
             }
         }
         let hash = git_hash
@@ -1138,6 +1174,9 @@ pub async fn record_skill_formal_version(
             let mut index = load_index(&root, session.user_id())?;
             if let Some(indexed) = index.entries.get_mut(&entry_id) {
                 indexed.revision = updated.revision;
+                if let Some(card) = updated.card.as_ref() {
+                    indexed.card_sha256 = card.sha256.clone();
+                }
                 indexed.baseline.version_state = updated.version_state;
             }
             save_index(&root, &index)?;
@@ -1181,7 +1220,7 @@ pub async fn record_skill_formal_version(
 }
 
 pub(crate) const SYNC_USAGE: &str =
-    "用法：\n  skillhub sync [--retry] --json\n  skillhub sync status --json";
+    "用法：\n  skillhub sync [--retry] [--json]\n  skillhub sync status [--json]";
 
 fn cli_account(state: CliAccountState) -> CliAccount {
     match runtime_session_snapshot() {
@@ -1223,7 +1262,11 @@ pub(crate) async fn execute_sync_cli(args: &[String]) -> Option<CliCommandOutput
     let output = match rest.as_slice() {
         [] | ["--retry"] => {
             let retry = rest.contains(&"--retry");
-            match run_sync(retry).await {
+            let session = match cli_sync_session("sync") {
+                Ok(session) => session,
+                Err(output) => return Some(output),
+            };
+            match run_sync_for_session(session, retry, None).await {
                 Ok(report) => CliCommandOutput::success(
                     "sync",
                     cli_account(CliAccountState::Authenticated),
@@ -1245,19 +1288,22 @@ pub(crate) async fn execute_sync_cli(args: &[String]) -> Option<CliCommandOutput
                 Err(error) => cli_failure("sync", &error),
             }
         }
-        ["status"] => match signed_in_session()
-            .map_err(|error| error.message())
-            .and_then(|session| status_for(&session))
-        {
-            Ok(status) => CliCommandOutput::success(
-                "sync status",
-                cli_account(CliAccountState::Unverified),
-                serde_json::to_value(&status).unwrap_or_default(),
-                Vec::new(),
-                Vec::new(),
-            ),
-            Err(message) => cli_failure("sync status", &SyncError::Fatal(message)),
-        },
+        ["status"] => {
+            let session = match cli_sync_session("sync status") {
+                Ok(session) => session,
+                Err(output) => return Some(output),
+            };
+            match status_for(&session) {
+                Ok(status) => CliCommandOutput::success(
+                    "sync status",
+                    cli_account(CliAccountState::Unverified),
+                    serde_json::to_value(&status).unwrap_or_default(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+                Err(message) => cli_failure("sync status", &SyncError::Fatal(message)),
+            }
+        }
         _ => CliCommandOutput::failure(
             "sync",
             cli_account(CliAccountState::Unverified),
@@ -1268,6 +1314,14 @@ pub(crate) async fn execute_sync_cli(args: &[String]) -> Option<CliCommandOutput
         ),
     };
     Some(output)
+}
+
+fn cli_sync_session(command: &'static str) -> Result<RuntimeSession, CliCommandOutput> {
+    let session = runtime_session_snapshot()
+        .map_err(|message| cli_failure(command, &SyncError::Fatal(message)))?;
+    crate::cli_auth::require_server_space(&session)
+        .map_err(|error| crate::cli_auth::auth_guard_failure(command, error))?;
+    validate_signed_in_session(session).map_err(|error| cli_failure(command, &error))
 }
 
 #[cfg(test)]

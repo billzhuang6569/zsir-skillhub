@@ -789,7 +789,11 @@ impl LibraryApi for FakeServer {
         Ok(stored.entry.clone())
     }
 
-    async fn author_asset(&self, _id: &str) -> Result<AuthorAsset, ApiError> {
+    async fn author_asset(
+        &self,
+        _id: &str,
+        _inherit_from: Option<&str>,
+    ) -> Result<AuthorAsset, ApiError> {
         Err(ApiError::Rejected {
             code: None,
             status: 400,
@@ -1194,6 +1198,61 @@ fn store_download_uses_package_name_without_changing_folder_or_existing_identity
             assert_eq!(second.skill_ids(), [folder]);
         }
     }
+}
+
+#[test]
+fn team_library_materialization_and_legacy_backfill_bind_acquirer_to_library_account() {
+    let server = FakeServer::new();
+    let account = user();
+    let source = ready_device(&account);
+    source.create_skill("team-skill", "# Team skill\n", SkillHubProfile::default());
+    source.sync(&server);
+    let entry_id = source.entry_id("team-skill");
+    server
+        .entries
+        .borrow_mut()
+        .get_mut(&entry_id)
+        .unwrap()
+        .entry
+        .source_kind = "team".into();
+
+    let member_device = ready_device(&account);
+    assert_eq!(member_device.sync(&server).downloaded, 1);
+    assert_eq!(
+        member_device
+            .sidecar("team-skill")
+            .acquired_by_user_id
+            .as_deref(),
+        Some(account.as_str())
+    );
+
+    member_device.edit_sidecar("team-skill", |sidecar| sidecar.acquired_by_user_id = None);
+    member_device.sync(&server);
+    assert_eq!(
+        member_device
+            .sidecar("team-skill")
+            .acquired_by_user_id
+            .as_deref(),
+        Some(account.as_str())
+    );
+
+    let other_account = user();
+    let other_session = member_device.signed_in_as(&other_account);
+    other_session.sync(&server);
+    assert_eq!(
+        member_device
+            .sidecar("team-skill")
+            .library_account_id
+            .as_deref(),
+        Some(account.as_str())
+    );
+    assert_eq!(
+        member_device
+            .sidecar("team-skill")
+            .acquired_by_user_id
+            .as_deref(),
+        Some(account.as_str())
+    );
 }
 
 #[test]
@@ -2616,7 +2675,7 @@ fn two_devices_migrating_one_asset_preserve_unpublished_edits() {
 }
 
 #[test]
-fn migration_with_trusted_history_treats_local_edits_as_one_sided() {
+fn migration_with_trusted_history_keeps_team_edits_local_and_processes_remote_changes() {
     let server = FakeServer::new();
     let account = user();
     let team_card = server_with_source(&server, "team-skill", "# Team v1\n");
@@ -2637,11 +2696,25 @@ fn migration_with_trusted_history_treats_local_edits_as_one_sided() {
     );
     let report = mac.sync(&server);
     assert_eq!(report.copies_created, 0);
+    assert_eq!(report.uploaded, 0);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
     assert_eq!(
-        report.uploaded, 1,
-        "local edit uploaded as a one-sided change"
+        mac.sidecar("team").acquisition_source,
+        Some(AcquisitionSource::Team)
     );
     assert_eq!(mac.read("team", "SKILL.md"), "# Team v1\n\nmy notes\n");
+    let id = mac.entry_id("team");
+    let mut profile = server.entry(&id).profile;
+    profile.description = Some("remote description".into());
+    server.remote_edit(&id, None, Some(profile));
+    assert!(mac.sync(&server).problems.is_empty());
+    assert_eq!(
+        mac.sidecar("team").description.as_deref(),
+        Some("remote description")
+    );
+    server.remote_delete(&id);
+    let report = mac.sync(&server);
+    assert!(report.copies_created > 0);
 }
 
 #[test]
@@ -2794,6 +2867,7 @@ fn profile_edit_after_the_last_check_is_preserved() {
             expected_existing: Some(&expected_tree),
             verify_existing: Some(&verify),
             message: "landing race",
+            retain_backup: false,
         },
     );
     assert_eq!(result, Err(LibraryLandingError::LocalChanged));
@@ -3044,7 +3118,7 @@ fn catalog_local_edits_and_deleted_entry_conflicts_never_become_author_assets() 
         device.write("catalog-demo", "SKILL.md", "# Personal edits");
         let uploads = server.uploads.get();
         let report = device.sync(&server);
-        assert!(!report.problems.is_empty());
+        assert_eq!(!report.problems.is_empty(), deleted);
         assert_eq!(server.uploads.get(), uploads);
         assert_eq!(device.read("catalog-demo", "SKILL.md"), "# Personal edits");
         assert!(server
@@ -3481,11 +3555,15 @@ fn marketplace_acquisition_binds_trusted_source_response_without_private_history
     for _ in 0..2 {
         assert!(mac.sync(&server).problems.is_empty());
     }
-    assert!(mac
-        .sidecar("demo")
-        .version_metadata
-        .current_receipt
-        .is_none());
+    assert_eq!(server.uploads.get(), 0);
+    assert_eq!(
+        mac.read("demo", "SKILL.md"),
+        "# unsaved marketplace change\n"
+    );
+    assert_eq!(
+        mac.sidecar("demo").acquisition_source,
+        Some(AcquisitionSource::Marketplace)
+    );
 }
 
 #[test]
@@ -4491,6 +4569,57 @@ fn edits_between_the_scan_and_the_upload_are_sent_or_synced_without_a_copy() {
     let entry = server.entry(&windows.entry_id("other"));
     assert_eq!(entry.profile.display_name, "Renamed during upload");
     assert_eq!(server.active().len(), 2);
+}
+
+#[test]
+fn avatar_identity_assigned_after_scan_is_used_for_the_account_entry() {
+    let server = FakeServer::new();
+    let mac = Device::new(&user());
+    mac.create_skill("sample", "# Sample", SkillHubProfile::default());
+    let root = mac.skill("sample");
+    let mut profile = library_read_profile(&root).unwrap();
+    profile.id = None;
+    library_write_profile(&root, &profile).unwrap();
+    let stable = uuid::Uuid::new_v4().to_string();
+    let assigned = stable.clone();
+    *server.on_own_skills.borrow_mut() = Some(Box::new(move || {
+        let mut profile = library_read_profile(&root).unwrap();
+        profile.id = Some(assigned.clone());
+        profile.avatar_local_id = Some(assigned.clone());
+        library_write_profile(&root, &profile).unwrap();
+    }));
+    mac.sync(&server);
+    let profile = library_read_profile(&mac.skill("sample")).unwrap();
+    assert_eq!(profile.library_entry_id.as_deref(), Some(stable.as_str()));
+    assert_eq!(profile.avatar_local_id.as_deref(), Some(stable.as_str()));
+}
+
+#[test]
+fn copied_sidecar_gets_an_independent_avatar_identity() {
+    let server = FakeServer::new();
+    let mac = ready_device(&user());
+    let stable = user();
+    for name in ["first", "second"] {
+        mac.create_skill(
+            name,
+            "# Sample",
+            SkillHubProfile {
+                id: Some(stable.clone()),
+                avatar_local_id: Some(stable.clone()),
+                ..Default::default()
+            },
+        );
+    }
+    mac.sync(&server);
+    let profiles = [mac.sidecar("first"), mac.sidecar("second")];
+    assert_ne!(profiles[0].id, profiles[1].id);
+    for profile in profiles {
+        if profile.id.as_ref() == Some(&stable) {
+            assert_eq!(profile.avatar_local_id.as_ref(), Some(&stable));
+        } else {
+            assert!(profile.avatar_local_id.is_none());
+        }
+    }
 }
 
 #[test]

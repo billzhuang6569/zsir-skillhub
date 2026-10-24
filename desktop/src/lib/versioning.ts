@@ -13,6 +13,11 @@ export function skillVersionOrdinal(value: string): number | null {
   return /^[0-9]\.[0-9]\.[0-9]$/.test(value) ? Number(value.replace(/\./g, '')) : null
 }
 
+export function latestFormalForPackage<T extends Pick<ApiSkillVersion, 'id' | 'version' | 'packageSha256'>>(versions: readonly T[], sha256: string): T | null {
+  const latest = [...versions].sort((a, b) => (skillVersionOrdinal(b.version) ?? -1) - (skillVersionOrdinal(a.version) ?? -1))[0]
+  return latest?.packageSha256 === sha256 ? latest : null
+}
+
 export function skillVersionExists(version: string, knownVersions: string[]): boolean {
   return skillVersionOrdinal(version) !== null && knownVersions.includes(version)
 }

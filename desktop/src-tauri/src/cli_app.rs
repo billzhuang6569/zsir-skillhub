@@ -14,8 +14,8 @@ use std::time::Duration;
 
 const APP_OPEN_COMMAND: &str = "app open";
 const UPDATE_CHECK_COMMAND: &str = "update check";
-pub(crate) const APP_USAGE: &str = "用法：\n  skillhub app open --json";
-pub(crate) const UPDATE_USAGE: &str = "用法：\n  skillhub update check --json";
+pub(crate) const APP_USAGE: &str = "用法：\n  skillhub app open [--json]";
+pub(crate) const UPDATE_USAGE: &str = "用法：\n  skillhub update check [--json]";
 const MAX_UPDATE_RESPONSE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -43,7 +43,9 @@ fn current_account() -> CliAccount {
 }
 
 fn exact_json_command(args: &[String], family: &str, action: &str) -> bool {
-    args.len() == 3 && args[0] == family && args[1] == action && args[2] == "--json"
+    (args.len() == 2 || (args.len() == 3 && args[2] == "--json"))
+        && args[0] == family
+        && args[1] == action
 }
 
 fn platform_release_target() -> Result<(&'static str, &'static str), String> {
@@ -351,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn app_and_update_commands_require_exact_json_form() {
+    fn app_and_update_commands_accept_optional_json() {
         assert!(exact_json_command(
             &strings(&["app", "open", "--json"]),
             "app",
@@ -362,7 +364,12 @@ mod tests {
             "update",
             "check"
         ));
-        assert!(!exact_json_command(
+        assert!(exact_json_command(
+            &strings(&["update", "check"]),
+            "update",
+            "check"
+        ));
+        assert!(exact_json_command(
             &strings(&["app", "open"]),
             "app",
             "open"

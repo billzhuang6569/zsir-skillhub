@@ -391,7 +391,7 @@ describe('Marketplace routes', () => {
     expect(mockDb.marketplaceListing.findMany).not.toHaveBeenCalled()
   })
 
-  it.each(['workbuddy', 'doubao', 'trae'])('accepts the %s Agent filter', async (agent) => {
+  it.each(['workbuddy', 'workbuddy-ai', 'doubao', 'trae'])('accepts the %s Agent filter', async (agent) => {
     app = await buildApp()
     const response = await app.inject({ method: 'GET', url: `/api/marketplace?agent=${agent}` })
 

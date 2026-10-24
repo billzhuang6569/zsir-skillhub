@@ -7,6 +7,9 @@ const mockDb = vi.hoisted(() => ({
   $transaction: vi.fn(),
   user: { findUnique: vi.fn() },
   skill: { findUnique: vi.fn() },
+  skillVersion: { findFirst: vi.fn() },
+  cardGrant: { findUnique: vi.fn() },
+  teamSkillAcquisition: { findFirst: vi.fn() },
   skillTeamShare: { findFirst: vi.fn(), findMany: vi.fn() },
   teamMember: { findMany: vi.fn() },
   teamCredential: { findMany: vi.fn() },
@@ -62,6 +65,10 @@ function deferred(): Deferred {
   return { promise, resolve }
 }
 
+function skillWithTeam<T extends { envDependencies?: unknown; teamShares?: unknown }>(skill: T): T & { teamShares: unknown } {
+  return { teamShares: [{ teamId: TEAM_ID, version: { envDependencies: skill.envDependencies ?? [] } }], ...skill }
+}
+
 function encryptedVersion(): Record<string, unknown> {
   return {
     credentialId: CREDENTIAL_ID,
@@ -100,14 +107,15 @@ describe('runtime environment routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockDb.teamSkillAcquisition.findFirst.mockResolvedValue(null)
     mockDb.$transaction.mockImplementation(
       async (callback: (client: typeof mockDb) => Promise<unknown>) => callback(mockDb)
     )
-    mockDb.skill.findUnique.mockResolvedValue({
+    mockDb.skill.findUnique.mockResolvedValue(skillWithTeam({
       id: SKILL_ID,
       authorId: AUTHOR_ID,
       envDependencies: [{ key: ENV_KEY, description: 'Service token', required: true }],
-    })
+    }))
     mockDb.user.findUnique.mockResolvedValue({ tokenVersion: AUTH_TOKEN_VERSION })
     mockDb.skillTeamShare.findFirst.mockResolvedValue({ skillId: SKILL_ID })
     mockDb.skillTeamShare.findMany.mockResolvedValue([{ teamId: TEAM_ID }])
@@ -129,6 +137,61 @@ describe('runtime environment routes', () => {
   afterEach(async () => {
     await app?.close()
     app = undefined
+  })
+
+  it('uses the published team declarations, not the author working version', async () => {
+    mockDb.skill.findUnique.mockResolvedValue(skillWithTeam({ id: SKILL_ID, authorId: AUTHOR_ID,
+      envDependencies: [{ key: 'UNPUBLISHED_KEY', required: true }],
+      teamShares: [{ version: { envDependencies: [{ key: ENV_KEY, required: true }] } }],
+    }))
+    app = await buildApp()
+    const response = await app.inject({ method: 'GET', url: `/api/runtime/env/options?skillId=${SKILL_ID}`, headers: { authorization: 'Bearer valid-session' } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().dependencies).toEqual([{ key: ENV_KEY, required: true }])
+  })
+
+  it('legacy runtime selects one source team and never unions declarations', async () => {
+    const otherTeam = '33333333-3333-4333-8333-333333333333'
+    mockDb.skill.findUnique.mockResolvedValue({ id: SKILL_ID, authorId: AUTHOR_ID, envDependencies: [], teamShares: [
+      { teamId: TEAM_ID, version: { envDependencies: [{ key: ENV_KEY, required: true }] } },
+      { teamId: otherTeam, version: { envDependencies: [{ key: 'OTHER_KEY', required: true }] } },
+    ] })
+    app = await buildApp()
+    for (const [suffix, keys] of [[`&teamId=${TEAM_ID}`, [ENV_KEY]], [`&teamId=${otherTeam}`, ['OTHER_KEY']], ['', []]] as const) {
+      const response = await app.inject({ method: 'GET', url: `/api/runtime/env/options?skillId=${SKILL_ID}${suffix}`, headers: { authorization: 'Bearer valid-session' } })
+      expect(response.json().dependencies.map((dep: { key: string }) => dep.key)).toEqual(keys)
+    }
+    const denied = await app.inject({ method: 'POST', url: '/api/runtime/env', headers: { authorization: 'Bearer valid-session' },
+      payload: { skillId: SKILL_ID, teamId: TEAM_ID, sources: [{ key: 'OTHER_KEY', teamId: otherTeam }] } })
+    expect(denied.statusCode).toBe(409)
+    expect(mockDb.teamCredentialVersion.findMany).not.toHaveBeenCalled()
+  })
+
+  it('keeps acquired version declarations while the member has not updated', async () => {
+    const versionId = '11111111-1111-4111-8111-111111111111'
+    mockDb.skillVersion.findFirst.mockResolvedValue({ cardSha256: 'a'.repeat(64), envDependencies: [{ key: ENV_KEY, required: true }] })
+    mockDb.cardGrant.findUnique.mockResolvedValue({ userId: USER_ID })
+    mockDb.skill.findUnique.mockResolvedValue(skillWithTeam({ id: SKILL_ID, authorId: AUTHOR_ID, envDependencies: [], teamShares: [{ version: { envDependencies: [] } }] }))
+    app = await buildApp()
+    const response = await app.inject({ method: 'GET', url: `/api/runtime/env/options?skillId=${SKILL_ID}&sourceVersionId=${versionId}`, headers: { authorization: 'Bearer valid-session' } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().dependencies).toEqual([{ key: ENV_KEY, required: true }])
+    expect(mockDb.skillVersion.findFirst).toHaveBeenCalledWith({ where: { id: versionId, skillId: SKILL_ID }, select: { cardSha256: true, envDependencies: true } })
+  })
+
+  it('honors a legacy package receipt and rejects a forged unacquired version', async () => {
+    const versionId = '11111111-1111-4111-8111-111111111111'
+    mockDb.skillVersion.findFirst.mockResolvedValue({ cardSha256: null, envDependencies: [{ key: ENV_KEY, required: true }] })
+    mockDb.teamSkillAcquisition.findFirst.mockResolvedValue({ versionId })
+    mockDb.skill.findUnique.mockResolvedValue(skillWithTeam({ id: SKILL_ID, authorId: AUTHOR_ID, envDependencies: [], teamShares: [{ version: { envDependencies: [] } }] }))
+    app = await buildApp()
+    const request = { method: 'GET' as const, url: `/api/runtime/env/options?skillId=${SKILL_ID}&sourceVersionId=${versionId}`, headers: { authorization: 'Bearer valid-session' } }
+    const acquired = await app.inject(request)
+    expect(acquired.statusCode).toBe(200)
+    expect(acquired.json().dependencies).toEqual([{ key: ENV_KEY, required: true }])
+    mockDb.teamSkillAcquisition.findFirst.mockResolvedValue(null)
+    const forged = await app.inject(request)
+    expect(forged.json().dependencies).toEqual([])
   })
 
   it('requires account authentication before reading source metadata', async () => {
@@ -191,11 +254,11 @@ describe('runtime environment routes', () => {
     const ALIAS_KEY = 'SERVICE_TOKEN'
 
     beforeEach(() => {
-      mockDb.skill.findUnique.mockResolvedValue({
+      mockDb.skill.findUnique.mockResolvedValue(skillWithTeam({
         id: SKILL_ID,
         authorId: AUTHOR_ID,
         envDependencies: [{ key: ALIAS_KEY, required: true }],
-      })
+      }))
       mockDb.teamCredential.findMany.mockResolvedValue([{
         id: CREDENTIAL_ID,
         envKey: ENV_KEY,
@@ -247,11 +310,11 @@ describe('runtime environment routes', () => {
     })
 
     it('serves nothing to a Skill that declares neither the main name nor an alias', async () => {
-      mockDb.skill.findUnique.mockResolvedValue({
+      mockDb.skill.findUnique.mockResolvedValue(skillWithTeam({
         id: SKILL_ID,
         authorId: AUTHOR_ID,
         envDependencies: [{ key: 'UNRELATED_KEY', required: true }],
-      })
+      }))
       mockDb.teamCredential.findMany.mockResolvedValue([])
       app = await buildApp()
       const options = await app.inject({

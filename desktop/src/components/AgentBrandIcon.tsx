@@ -6,7 +6,7 @@ import workbuddyLogo from '../assets/agents/workbuddy.png'
 import doubaoLogo from '../assets/agents/doubao.png'
 import traeLogo from '../assets/agents/trae.png'
 
-const productLogos: Record<string, string> = { claude: claudeLogo, codex: chatgptLogo, workbuddy: workbuddyLogo, doubao: doubaoLogo, trae: traeLogo }
+const productLogos: Record<string, string> = { claude: claudeLogo, codex: chatgptLogo, workbuddy: workbuddyLogo, 'workbuddy-ai': workbuddyLogo, doubao: doubaoLogo, trae: traeLogo }
 
 type AgentIdentity = Pick<AgentInfo, 'key' | 'name'>
 

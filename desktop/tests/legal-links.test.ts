@@ -50,7 +50,7 @@ test('openLegalLink reports opener failures without throwing', async () => {
 })
 
 test('Settings About version row keeps name/version left and the two legal buttons right, in order', () => {
-  const about = settings.indexOf('<p className="settings-label">帮助与关于</p>')
+  const about = settings.indexOf('id="settings-help" data-settings-section>帮助与关于</p>')
   assert.ok(about >= 0)
   const firstRow = settings.indexOf('<div className="settings-row settings-about-row">', about)
   const info = settings.indexOf('<b>一探 SkillHub</b><span>v{appVersion} · 内部正式版</span>', firstRow)

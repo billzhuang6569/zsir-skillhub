@@ -29,6 +29,24 @@ import { createAiRequestGuard } from '../utils/ai-request-guard.js'
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-18T23:59:00Z')); state.rows.clear(); state.lock.mockReset() })
 afterEach(() => { vi.useRealTimers() })
 describe('persistent UTC AI budget through the shared guard', () => {
+  it.each(['selfhost', 'yitan-official'])('%s reserves at most half for background and preserves personal quota', async profile => {
+    const guard = (): ReturnType<typeof createAiRequestGuard> => createAiRequestGuard({ perMinute: 60, globalDaily: 5, maxConcurrent: 2,
+      ...(profile === 'selfhost' ? { budget: () => aiBudget } : {}) })
+    const official = guard()
+    const next = (): ReturnType<typeof createAiRequestGuard> => profile === 'selfhost' ? guard() : official
+    for (let index = 0; index < 2; index += 1) await next().run('one', async () => 'ok', 'background')
+    await expect(next().run('two', async () => 'bad', 'background')).rejects.toMatchObject({ code: 'AI_INSTANCE_DAILY_LIMIT' })
+    if (profile === 'selfhost') expect(await aiBudget.available('one')).toEqual({ instance: 3, user: 3 })
+    for (let index = 0; index < 3; index += 1) await next().run('one', async () => 'ok')
+    await expect(next().run('two', async () => 'bad')).rejects.toMatchObject({ code: 'AI_INSTANCE_DAILY_LIMIT' })
+  })
+  it('does not use a personal reservation to bypass the background share', async () => {
+    const reservation = await aiBudget.reserve('one', 3)
+    const guard = createAiRequestGuard({ perMinute: 60, globalDaily: 999, maxConcurrent: 2, budget: () => aiBudget })
+    await guard.run('one', async () => 'ok', 'background', reservation)
+    expect(reservation.remaining).toBe(3)
+    expect(state.rows.get(`${reservation.day}/*background*`)).toBe(1)
+  })
   it('casts the shared transaction lock result to text for both reservations and refunds', async () => {
     const reservation = await aiBudget.reserve('one', 1)
     await aiBudget.release(reservation)

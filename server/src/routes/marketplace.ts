@@ -26,7 +26,7 @@ import { queueCloudAvatar } from '../lib/skill-avatars.js'
 import { variantsMode, listingAvatar, readOwnerSelection, selectionAvatar, selectionDisplaySelect } from '../lib/avatar-selection.js'
 
 const MarketplaceAgentSchema = z.enum([
-  'claude', 'codex', 'agent-skills', 'workbuddy', 'doubao', 'opencode', 'openclaw', 'gemini', 'trae',
+  'claude', 'codex', 'agent-skills', 'workbuddy', 'workbuddy-ai', 'doubao', 'opencode', 'openclaw', 'gemini', 'trae',
 ])
 
 export const MARKETPLACE_ABUSE_LIMITS = {

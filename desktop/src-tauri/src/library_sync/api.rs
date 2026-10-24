@@ -384,7 +384,11 @@ pub(crate) trait LibraryApi {
         base_revision: u64,
         device: &str,
     ) -> Result<RemoteEntry, ApiError>;
-    async fn author_asset(&self, id: &str) -> Result<AuthorAsset, ApiError>;
+    async fn author_asset(
+        &self,
+        id: &str,
+        inherit_from: Option<&str>,
+    ) -> Result<AuthorAsset, ApiError>;
     async fn own_skills(&self) -> Result<Vec<OwnSkill>, ApiError>;
 }
 
@@ -938,13 +942,27 @@ impl LibraryApi for HttpLibraryApi {
         .await
     }
 
-    async fn author_asset(&self, id: &str) -> Result<AuthorAsset, ApiError> {
+    async fn author_asset(
+        &self,
+        id: &str,
+        inherit_from: Option<&str>,
+    ) -> Result<AuthorAsset, ApiError> {
         #[derive(Deserialize)]
         struct Raw {
             skill: AuthorAssetSkill,
             entry: RawEntry,
         }
-        let body = serde_json::json!({ "device": device_label() });
+        let mut body = serde_json::json!({ "device": device_label() });
+        if let Some(source) = inherit_from {
+            if self
+                .capabilities()
+                .await?
+                .iter()
+                .any(|c| c == "library.author-asset-inherit.v1")
+            {
+                body["inheritFrom"] = serde_json::json!({ "serverSkillId": source });
+            }
+        }
         let raw: Raw = self
             .json(
                 Method::POST,

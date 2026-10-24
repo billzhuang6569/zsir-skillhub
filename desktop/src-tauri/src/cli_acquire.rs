@@ -28,15 +28,15 @@ use std::os::unix::fs::OpenOptionsExt as _;
 
 pub(crate) const MARKETPLACE_ACQUIRE_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub marketplace updates --json\n",
-    "  skillhub marketplace install <server-skill-id> --preflight --json\n",
-    "  skillhub marketplace install <server-skill-id> --apply --plan-digest <digest> --json"
+    "  skillhub marketplace updates [--json]\n",
+    "  skillhub marketplace install <server-skill-id> --preflight [--json]\n",
+    "  skillhub marketplace install <server-skill-id> --apply --plan-digest <digest> [--json]"
 );
 pub(crate) const TEAM_ACQUIRE_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub team updates --json\n",
-    "  skillhub team install <server-skill-id> --preflight --json\n",
-    "  skillhub team install <server-skill-id> --apply --plan-digest <digest> --json"
+    "  skillhub team updates [--json]\n",
+    "  skillhub team install <server-skill-id> --preflight [--json]\n",
+    "  skillhub team install <server-skill-id> --apply --plan-digest <digest> [--json]"
 );
 
 const MARKETPLACE_INSTALL_COMMAND: &str = "marketplace install";
@@ -100,6 +100,8 @@ enum AcquireMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AcquireArgs {
+    team_id: Option<String>,
+    team_modifications: Option<String>,
     source: AcquireSource,
     server_skill_id: String,
     mode: AcquireMode,
@@ -279,6 +281,7 @@ struct LocalPlanState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AcquirePlan {
+    team_modifications: Option<String>,
     schema_version: u8,
     source: AcquireSource,
     account_user_id: Option<String>,
@@ -311,6 +314,7 @@ struct ExistingAsset {
 
 #[derive(Clone, Debug)]
 struct UpdateCandidate {
+    source_version_id: Option<String>,
     local_skill_id: String,
     server_skill_id: String,
     display_name: String,
@@ -371,12 +375,31 @@ fn parse_args(args: &[String]) -> Result<AcquireArgs, ()> {
         .map_err(|_| ())?;
 
     let mut preflight = false;
+    let mut team_id = None;
+    let mut team_modifications = None;
     let mut apply = false;
     let mut plan_digest = None;
     let mut json_requested = false;
     let mut index = 3;
     while index < args.len() {
         match args[index].as_str() {
+            "--team-id" if source == AcquireSource::Team && team_id.is_none() => {
+                team_id = Some(normalized_uuid(args.get(index + 1).ok_or(())?).ok_or(())?);
+                index += 2;
+            }
+            "--preserve-local" | "--overwrite-local"
+                if source == AcquireSource::Team && team_modifications.is_none() =>
+            {
+                team_modifications = Some(
+                    if args[index] == "--preserve-local" {
+                        "preserve"
+                    } else {
+                        "overwrite"
+                    }
+                    .to_string(),
+                );
+                index += 1;
+            }
             "--preflight" if !preflight => {
                 preflight = true;
                 index += 1;
@@ -397,7 +420,7 @@ fn parse_args(args: &[String]) -> Result<AcquireArgs, ()> {
             _ => return Err(()),
         }
     }
-    if !json_requested || preflight == apply {
+    if preflight == apply {
         return Err(());
     }
     let mode = if preflight {
@@ -411,6 +434,8 @@ fn parse_args(args: &[String]) -> Result<AcquireArgs, ()> {
         }
     };
     Ok(AcquireArgs {
+        team_id,
+        team_modifications,
         source,
         server_skill_id,
         mode,
@@ -1093,13 +1118,34 @@ fn normalized_profile_acquired_by(profile: &SkillHubProfile) -> Option<String> {
         .and_then(normalized_uuid)
 }
 
-fn team_profile_metadata_sha256(profile: &SkillHubProfile) -> Option<String> {
+fn team_update_account_matches(profile: &SkillHubProfile, account_user_id: &str) -> bool {
+    let library_account_id = profile
+        .library_account_id
+        .as_deref()
+        .and_then(normalized_uuid);
+    match library_account_id {
+        Some(library_account_id) => library_account_id == account_user_id,
+        None => normalized_profile_acquired_by(profile).as_deref() == Some(account_user_id),
+    }
+}
+
+fn team_profile_metadata_sha256(
+    profile: &SkillHubProfile,
+    account_user_id: &str,
+) -> Option<String> {
     let server_owner_id = profile
         .server_owner_id
         .as_deref()
         .and_then(normalized_uuid)?;
     let team_ids = normalized_profile_team_ids(profile)?;
-    let acquired_by_user_id = normalized_profile_acquired_by(profile)?;
+    let acquired_by_user_id = profile
+        .library_account_id
+        .as_deref()
+        .or(profile.acquired_by_user_id.as_deref())
+        .and_then(normalized_uuid)?;
+    if acquired_by_user_id != account_user_id {
+        return None;
+    }
     let name = profile.name.as_ref()?;
     let display_name = profile.display_name.as_ref()?;
     let is_own = profile.is_own?;
@@ -1228,12 +1274,19 @@ fn update_candidates(
             .ok_or(())?;
         let package_sha256 = profile_package_sha256(&profile);
         let server_owner_id = profile.server_owner_id.as_deref().and_then(normalized_uuid);
-        let team_ids = normalized_profile_team_ids(&profile);
+        let mut team_ids = normalized_profile_team_ids(&profile);
+        if let (Some(ids), Some(origin)) = (&mut team_ids, profile.team_shared_from.as_ref()) {
+            if let Some(index) = ids.iter().position(|id| id == origin) {
+                ids.swap(0, index);
+            }
+        }
         let acquired_by_user_id = normalized_profile_acquired_by(&profile);
         let account_matches = source == AcquireSource::Marketplace
-            || acquired_by_user_id.as_deref() == account_user_id.as_deref();
+            || account_user_id
+                .as_deref()
+                .is_some_and(|account| team_update_account_matches(&profile, account));
         let team_metadata_sha256 = (source == AcquireSource::Team)
-            .then(|| team_profile_metadata_sha256(&profile))
+            .then(|| team_profile_metadata_sha256(&profile, account_user_id.as_deref()?))
             .flatten();
         let display_name = profile
             .display_name
@@ -1241,8 +1294,10 @@ fn update_candidates(
             .filter(|value| valid_text(value, 256, false))
             .unwrap_or(&local_skill_id)
             .to_string();
-        let (_, working_copy_dirty) = git_state(&entry.path());
+        let working_copy_dirty =
+            crate::commands::source_edits::replacement_blocked(&entry.path(), &profile);
         candidates.push(UpdateCandidate {
+            source_version_id: profile.source_version_id.clone(),
             local_skill_id,
             server_skill_id,
             display_name,
@@ -1276,8 +1331,76 @@ fn unavailable_update_item(candidate: UpdateCandidate, status: &'static str) -> 
     }
 }
 
+fn separate_unverified_candidates(
+    candidates: Vec<UpdateCandidate>,
+    unverified: &std::collections::HashSet<String>,
+    source: AcquireSource,
+) -> (Vec<UpdateItem>, Vec<UpdateCandidate>) {
+    if source == AcquireSource::Team {
+        return (Vec::new(), candidates);
+    }
+    let mut items = Vec::new();
+    let remaining = candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            if unverified.contains(&candidate.local_skill_id)
+                && (candidate.working_copy_dirty
+                    || candidate.version.is_empty()
+                    || (source == AcquireSource::Team && candidate.team_metadata_sha256.is_none()))
+            {
+                let status = if candidate.working_copy_dirty {
+                    "local_modified"
+                } else {
+                    "local_metadata_incomplete"
+                };
+                items.push(unavailable_update_item(candidate, status));
+                None
+            } else {
+                Some(candidate)
+            }
+        })
+        .collect();
+    (items, remaining)
+}
+
+fn team_update_state(
+    account_matches: bool,
+    available: bool,
+    same_version: bool,
+    local_modified: bool,
+) -> &'static str {
+    if !account_matches {
+        "account_mismatch"
+    } else if !available {
+        "access_revoked"
+    } else if same_version {
+        "up_to_date"
+    } else if local_modified {
+        "local_modified"
+    } else {
+        "update_available"
+    }
+}
+
+#[test]
+fn team_update_contract_matches_gui() {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/team-update-states.json")).unwrap();
+    for row in cases.as_array().unwrap() {
+        assert_eq!(
+            team_update_state(
+                row["accountMatches"].as_bool().unwrap(),
+                row["available"].as_bool().unwrap(),
+                row["sameVersion"].as_bool().unwrap(),
+                row["localModified"].as_bool().unwrap()
+            ),
+            row["status"].as_str().unwrap()
+        );
+    }
+}
+
 fn compared_update_item(candidate: UpdateCandidate, remote: RemoteSkill) -> UpdateItem {
-    let local_metadata_complete = candidate.package_sha256.is_some()
+    let local_metadata_complete = !candidate.version.is_empty()
         && (remote.source != AcquireSource::Team || candidate.team_metadata_sha256.is_some());
     let source_metadata_matches = candidate.server_owner_id.as_deref()
         == Some(remote.server_owner_id.as_str())
@@ -1300,7 +1423,19 @@ fn compared_update_item(candidate: UpdateCandidate, remote: RemoteSkill) -> Upda
     let same_fixed_package = candidate.version == remote.version
         && candidate.package_sha256.as_deref() == Some(remote.package_sha256.as_str())
         && source_metadata_matches;
-    let status = if !candidate.account_matches {
+    let status = if remote.source == AcquireSource::Team {
+        team_update_state(
+            candidate.account_matches,
+            true,
+            candidate
+                .source_version_id
+                .as_deref()
+                .map_or(candidate.version == remote.version, |id| {
+                    id == remote.remote_version_id
+                }),
+            candidate.working_copy_dirty,
+        )
+    } else if !candidate.account_matches {
         "account_mismatch"
     } else if candidate.working_copy_dirty {
         "local_modified"
@@ -1311,7 +1446,8 @@ fn compared_update_item(candidate: UpdateCandidate, remote: RemoteSkill) -> Upda
     } else {
         "update_available"
     };
-    let can_update = status == "update_available";
+    let can_update = status == "update_available"
+        || (remote.source == AcquireSource::Team && status == "local_modified");
     let source_label = match remote.source {
         AcquireSource::Marketplace => "marketplace",
         AcquireSource::Team => "team",
@@ -1355,7 +1491,7 @@ fn updates_failure(
 
 async fn execute_updates(source: AcquireSource) -> CliCommandOutput {
     let (guard, account) = if source == AcquireSource::Team {
-        let guard = match CliAuthGuard::capture() {
+        let guard = match CliAuthGuard::capture_for_server() {
             Ok(guard) => guard,
             Err(error) => return auth_guard_failure(TEAM_UPDATES_COMMAND, error),
         };
@@ -1368,7 +1504,7 @@ async fn execute_updates(source: AcquireSource) -> CliCommandOutput {
         (None, public_account())
     };
     let candidate_account_user_id = guard.as_ref().map(|guard| guard.user_id().to_string());
-    let candidates = match tauri::async_runtime::spawn_blocking(move || {
+    let mut candidates = match tauri::async_runtime::spawn_blocking(move || {
         update_candidates(source, candidate_account_user_id.as_deref())
     })
     .await
@@ -1384,6 +1520,26 @@ async fn execute_updates(source: AcquireSource) -> CliCommandOutput {
             )
         }
     };
+    let mut unverified = std::collections::HashSet::new();
+    for candidate in &mut candidates {
+        let path = crate::skills_dir().join(&candidate.local_skill_id);
+        let profile = crate::commands::library_read_profile_readonly(&path);
+        if profile
+            .as_ref()
+            .is_ok_and(|p| crate::commands::source_edits::changed_files(&path, p).is_err())
+        {
+            if crate::commands::source_edits::ensure_acquisition(&candidate.local_skill_id)
+                .await
+                .is_err()
+            {
+                unverified.insert(candidate.local_skill_id.clone());
+            }
+            if let Ok(profile) = profile {
+                candidate.working_copy_dirty =
+                    crate::commands::source_edits::replacement_blocked(&path, &profile);
+            }
+        }
+    }
     let client = match acquire_client(guard.as_ref()) {
         Ok(client) => client,
         Err(_) => {
@@ -1396,9 +1552,9 @@ async fn execute_updates(source: AcquireSource) -> CliCommandOutput {
             )
         }
     };
-    let mut items = Vec::with_capacity(candidates.len());
+    let (mut items, candidates) = separate_unverified_candidates(candidates, &unverified, source);
     for candidate in candidates {
-        let url = match api_url(
+        let mut url = match api_url(
             guard.as_ref(),
             &source.metadata_path(&candidate.server_skill_id),
         ) {
@@ -1413,6 +1569,11 @@ async fn execute_updates(source: AcquireSource) -> CliCommandOutput {
                 )
             }
         };
+        if source == AcquireSource::Team {
+            if let Some(team_id) = candidate.team_ids.as_ref().and_then(|ids| ids.first()) {
+                url.query_pairs_mut().append_pair("teamId", team_id);
+            }
+        }
         if source == AcquireSource::Team && !candidate.account_matches {
             items.push(unavailable_update_item(candidate, "account_mismatch"));
             if let Some(guard) = guard.as_ref() {
@@ -1522,6 +1683,7 @@ async fn execute_updates(source: AcquireSource) -> CliCommandOutput {
             return auth_guard_failure(TEAM_UPDATES_COMMAND, error);
         }
     }
+    items.sort_by(|left, right| left.local_skill_id.cmp(&right.local_skill_id));
     let available_count = items.iter().filter(|item| item.can_update).count();
     let attention_count = items
         .iter()
@@ -1570,6 +1732,8 @@ fn load_existing_asset(
 ) -> Result<ExistingAsset, ()> {
     let content_sha256 = skill_content_fingerprint(root)?;
     let (git_head, working_copy_dirty) = git_state(root);
+    let working_copy_dirty = working_copy_dirty
+        || crate::commands::source_edits::replacement_blocked(root, &snapshot.profile);
     Ok(ExistingAsset {
         local_skill_id,
         profile: snapshot.profile,
@@ -1624,16 +1788,15 @@ fn action_for_existing(
             if !account_matches {
                 return AcquireAction::BlockedAccountMismatch;
             }
-            let metadata_matches = team_profile_metadata_sha256(&existing.profile).as_deref()
-                == account_user_id
-                    .and_then(|account_user_id| {
-                        team_remote_metadata_sha256(remote, account_user_id)
-                    })
-                    .as_deref();
-            if existing.profile.version == remote.version
-                && package_sha256.as_deref() == Some(remote.package_sha256.as_str())
-                && metadata_matches
-            {
+            if existing.profile.source_version_id.as_deref().map_or(
+                existing
+                    .profile
+                    .acquisition_version
+                    .as_deref()
+                    .unwrap_or(&existing.profile.version)
+                    == remote.version,
+                |id| id == remote.remote_version_id,
+            ) {
                 AcquireAction::AlreadyPresent
             } else if existing.working_copy_dirty || existing.git_head.is_none() {
                 AcquireAction::BlockedMarketplaceLocalChanges
@@ -1825,6 +1988,7 @@ fn local_plan_for(remote: RemoteSkill, account_user_id: Option<String>) -> Resul
         )
     };
     Ok(AcquirePlan {
+        team_modifications: None,
         schema_version: PLAN_SCHEMA_VERSION,
         source: remote.source,
         account_user_id,
@@ -1850,8 +2014,9 @@ fn preflight_output(account: CliAccount, plan: &AcquirePlan) -> CliCommandOutput
     };
     let mut warnings = Vec::new();
     match plan.action {
-        AcquireAction::AlreadyPresent if plan.local.working_copy_dirty => warnings
-            .push("同源版本已经存在，但本地托管源包含未版本化修改；本次不会覆盖这些修改".into()),
+        AcquireAction::AlreadyPresent if plan.local.working_copy_dirty => {
+            warnings.push("同源版本已经存在，但本地托管源包含本机修改；本次不会覆盖这些修改".into())
+        }
         AcquireAction::ReplaceMarketplaceSource => {
             warnings.push("执行后将通过可恢复备份事务替换同源 Marketplace 托管版本".into())
         }
@@ -1878,13 +2043,17 @@ fn preflight_output(account: CliAccount, plan: &AcquirePlan) -> CliCommandOutput
                 plan.local.local_skill_id
             )],
             _ => vec![format!(
-                "确认后执行 skillhub {} install {} --apply --plan-digest {} --json",
+                "确认后执行 skillhub {} install {} --apply --plan-digest {}{} --json",
                 match plan.source {
                     AcquireSource::Marketplace => "marketplace",
                     AcquireSource::Team => "team",
                 },
                 plan.remote.server_skill_id,
-                digest
+                digest,
+                if plan.source == AcquireSource::Team {
+                    format!("{}{}", plan.remote.team_ids.first().map(|id| format!(" --team-id {id}")).unwrap_or_default(),
+                        plan.team_modifications.as_deref().map(|choice| if choice == "preserve" { " --preserve-local" } else { " --overwrite-local" }).unwrap_or_default())
+                } else { String::new() }
             )],
         }
     } else {
@@ -2146,6 +2315,8 @@ fn import_input(
         })
         .collect::<Vec<_>>();
     ImportSkillPackageInput {
+        source_version_id: Some(plan.remote.remote_version_id.clone()),
+        team_modifications: plan.team_modifications.clone(),
         catalog_origin: (plan.remote.source == AcquireSource::Marketplace)
             .then(|| crate::catalog::origin().expect("compiled catalog origin")),
         skill_id: plan.local.local_skill_id.clone(),
@@ -2201,10 +2372,14 @@ fn apply_success(
             "replacementBackupCreated": backup_created,
         }),
         Vec::new(),
-        vec![format!(
+        if plan.action == AcquireAction::ReplaceTeamSource {
+            vec!["已更新团队托管源并自动刷新已安装的 Agent 投影".into()]
+        } else {
+            vec![format!(
             "使用 skillhub skill install preflight --skill-id {} --agent <agent-key> --json 检查并确认 Agent 投影；本次获取没有代替该步骤",
             plan.local.local_skill_id
-        )],
+        )]
+        },
     )
 }
 
@@ -2253,7 +2428,8 @@ async fn import_plan(
     {
         return Err(());
     }
-    Ok(imported.marketplace_replacement_recovery_id.is_some())
+    Ok(imported.marketplace_replacement_recovery_id.is_some()
+        || plan.source == AcquireSource::Team && plan.action.replaces_existing_source())
 }
 
 async fn fetch_marketplace_remote(
@@ -2377,8 +2553,9 @@ async fn fetch_team_remote(
     guard: &CliAuthGuard,
     account: CliAccount,
     server_skill_id: &str,
+    team_id: Option<&str>,
 ) -> Result<RemoteSkill, CliCommandOutput> {
-    let url = match api_url(
+    let mut url = match api_url(
         Some(guard),
         &AcquireSource::Team.metadata_path(server_skill_id),
     ) {
@@ -2397,6 +2574,9 @@ async fn fetch_team_remote(
             ));
         }
     };
+    if let Some(team_id) = team_id {
+        url.query_pairs_mut().append_pair("teamId", team_id);
+    }
     let token = guard
         .token_for_request()
         .map_err(|error| auth_guard_failure(TEAM_INSTALL_COMMAND, error))?;
@@ -2427,8 +2607,16 @@ async fn fetch_team_remote(
     Ok(remote)
 }
 
-async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
-    let guard = match CliAuthGuard::capture() {
+fn with_team_choice(mut plan: AcquirePlan, choice: Option<String>) -> AcquirePlan {
+    if choice.is_some() && plan.action == AcquireAction::BlockedMarketplaceLocalChanges {
+        plan.action = AcquireAction::ReplaceTeamSource;
+    }
+    plan.team_modifications = choice;
+    plan
+}
+
+async fn team_acquire(mut parsed: AcquireArgs) -> CliCommandOutput {
+    let guard = match CliAuthGuard::capture_for_server() {
         Ok(guard) => guard,
         Err(error) => return auth_guard_failure(TEAM_INSTALL_COMMAND, error),
     };
@@ -2452,11 +2640,28 @@ async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
             );
         }
     };
-    let remote =
-        match fetch_team_remote(&client, &guard, account.clone(), &parsed.server_skill_id).await {
-            Ok(remote) => remote,
-            Err(output) => return output,
-        };
+    if parsed.team_id.is_none() {
+        parsed.team_id = update_candidates(AcquireSource::Team, Some(guard.user_id()))
+            .ok()
+            .and_then(|candidates| {
+                candidates.into_iter().find(|candidate| {
+                    candidate.server_skill_id == parsed.server_skill_id && candidate.account_matches
+                })
+            })
+            .and_then(|candidate| candidate.team_ids.and_then(|ids| ids.into_iter().next()));
+    }
+    let remote = match fetch_team_remote(
+        &client,
+        &guard,
+        account.clone(),
+        &parsed.server_skill_id,
+        parsed.team_id.as_deref(),
+    )
+    .await
+    {
+        Ok(remote) => remote,
+        Err(output) => return output,
+    };
     let plan = match build_plan(remote, Some(guard.user_id().to_string())).await {
         Ok(plan) => plan,
         Err(()) => {
@@ -2466,6 +2671,7 @@ async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
             return local_state_failure(AcquireSource::Team, account);
         }
     };
+    let plan = with_team_choice(plan, parsed.team_modifications.clone());
     let AcquireMode::Apply { plan_digest } = parsed.mode else {
         if let Err(error) = guard.verify_current() {
             return auth_guard_failure(TEAM_INSTALL_COMMAND, error);
@@ -2499,7 +2705,7 @@ async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
         }
         return apply_success(account, &plan, false, false);
     }
-    let package_url = match api_url(
+    let mut package_url = match api_url(
         Some(&guard),
         &AcquireSource::Team.package_path(&parsed.server_skill_id),
     ) {
@@ -2518,6 +2724,9 @@ async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
             );
         }
     };
+    if let Some(team_id) = plan.remote.team_ids.first() {
+        package_url.query_pairs_mut().append_pair("teamId", team_id);
+    }
     let token = match guard.token_for_request() {
         Ok(token) => token,
         Err(error) => return auth_guard_failure(TEAM_INSTALL_COMMAND, error),
@@ -2547,11 +2756,18 @@ async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
     // The package response proves access only at download time. Re-read Team
     // metadata before touching disk so revoked membership/share state fails
     // closed and so the digest binds the latest authorized Team scope.
-    let confirmed_remote =
-        match fetch_team_remote(&client, &guard, account.clone(), &parsed.server_skill_id).await {
-            Ok(remote) => remote,
-            Err(output) => return output,
-        };
+    let confirmed_remote = match fetch_team_remote(
+        &client,
+        &guard,
+        account.clone(),
+        &parsed.server_skill_id,
+        parsed.team_id.as_deref(),
+    )
+    .await
+    {
+        Ok(remote) => remote,
+        Err(output) => return output,
+    };
     let confirmed_plan = match build_plan(confirmed_remote, Some(guard.user_id().to_string())).await
     {
         Ok(confirmed_plan) => confirmed_plan,
@@ -2562,6 +2778,7 @@ async fn team_acquire(parsed: AcquireArgs) -> CliCommandOutput {
             return local_state_failure(AcquireSource::Team, account);
         }
     };
+    let confirmed_plan = with_team_choice(confirmed_plan, parsed.team_modifications.clone());
     if confirmed_plan.digest().ok().as_deref() != Some(plan_digest.as_str()) {
         if let Err(error) = guard.verify_current() {
             return auth_guard_failure(TEAM_INSTALL_COMMAND, error);
@@ -2617,7 +2834,7 @@ pub(crate) async fn execute_acquire_cli(args: &[String]) -> Option<CliCommandOut
     };
     if args.get(1).map(String::as_str) == Some("updates") {
         return Some(
-            if args.len() == 3 && args.get(2).map(String::as_str) == Some("--json") {
+            if args.len() == 2 || (args.len() == 3 && args[2] == "--json") {
                 execute_updates(source).await
             } else {
                 updates_usage_failure(source)
@@ -2641,10 +2858,12 @@ pub(crate) async fn execute_acquire_cli(args: &[String]) -> Option<CliCommandOut
 mod tests {
     use super::{
         action_for_existing, compared_update_item, execute_acquire_cli, parse_args,
-        remote_managed_skill_id, team_remote_metadata_sha256, verify_package, AcquireAction,
-        AcquireArgs, AcquireMode, AcquirePlan, AcquireSource, ExistingAsset, HttpResponse,
-        LocalPlanState, RemoteEnvDependency, RemoteSkill, UpdateCandidate, PLAN_SCHEMA_VERSION,
+        remote_managed_skill_id, team_remote_metadata_sha256, team_update_account_matches,
+        verify_package, AcquireAction, AcquireArgs, AcquireMode, AcquirePlan, AcquireSource,
+        ExistingAsset, HttpResponse, LocalPlanState, RemoteEnvDependency, RemoteSkill,
+        UpdateCandidate, PLAN_SCHEMA_VERSION,
     };
+    use crate::{AcquisitionSource, SkillHubProfile};
     use reqwest::StatusCode;
     use sha2::{Digest as _, Sha256};
 
@@ -2769,6 +2988,79 @@ mod tests {
     }
 
     #[test]
+    fn saved_source_edits_or_missing_acquisition_block_acquire_apply() {
+        let root =
+            std::env::temp_dir().join(format!("acquire-saved-edits-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("SKILL.md"), "# Saved member edits\n").unwrap();
+        let repo = git2::Repository::init(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("SKILL.md")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("fixture", "fixture@local").unwrap();
+        let initial = repo
+            .commit(Some("HEAD"), &sig, &sig, "acquired", &tree, &[])
+            .unwrap();
+        let parent = repo.find_commit(initial).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "finish-edit", &tree, &[&parent])
+            .unwrap();
+        drop(parent);
+        let mut remote = team_remote();
+        remote.version = "v1.3.0".into();
+        let profile = team_existing(Some(account_a()), &[]).profile;
+        let loaded = super::load_existing_asset(
+            &root,
+            "team".into(),
+            super::ProfileSnapshot {
+                profile,
+                profile_sha256: "e".repeat(64),
+            },
+        )
+        .unwrap();
+        assert!(
+            loaded.working_copy_dirty,
+            "missing acquired baseline must also block replacement"
+        );
+        let action = action_for_existing(&remote, &loaded, Some(account_a()));
+        assert_eq!(action, AcquireAction::BlockedMarketplaceLocalChanges);
+        assert!(!action.can_apply());
+        let original = repo.blob(b"# Original team content\n").unwrap();
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder.insert("SKILL.md", original, 0o100644).unwrap();
+        let original_tree = builder.write().unwrap();
+        repo.reference(
+            &format!("refs/skillhub/acquired/{}", "c".repeat(64)),
+            original_tree,
+            true,
+            "acquired",
+        )
+        .unwrap();
+        drop(builder);
+        assert_eq!(
+            crate::commands::source_edits::changed_files(&root, &loaded.profile).unwrap(),
+            1
+        );
+        let loaded = super::load_existing_asset(
+            &root,
+            "team".into(),
+            super::ProfileSnapshot {
+                profile: loaded.profile,
+                profile_sha256: "e".repeat(64),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            action_for_existing(&remote, &loaded, Some(account_a())),
+            AcquireAction::BlockedMarketplaceLocalChanges
+        );
+        drop(tree);
+        drop(index);
+        drop(repo);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn parser_requires_exact_two_phase_json_contract() {
         assert_eq!(
             parse_args(&strings(&[
@@ -2779,6 +3071,8 @@ mod tests {
                 "--json",
             ])),
             Ok(AcquireArgs {
+                team_id: None,
+                team_modifications: None,
                 source: AcquireSource::Marketplace,
                 server_skill_id: server_id().into(),
                 mode: AcquireMode::Preflight,
@@ -2795,6 +3089,8 @@ mod tests {
                 "--apply",
             ])),
             Ok(AcquireArgs {
+                team_id: None,
+                team_modifications: None,
                 source: AcquireSource::Team,
                 server_skill_id: server_id().into(),
                 mode: AcquireMode::Apply {
@@ -2803,7 +3099,6 @@ mod tests {
             })
         );
         for rejected in [
-            strings(&["marketplace", "install", server_id(), "--preflight"]),
             strings(&[
                 "marketplace",
                 "install",
@@ -2838,6 +3133,7 @@ mod tests {
     #[test]
     fn plan_digest_is_stable_and_binds_remote_and_local_state() {
         let plan = AcquirePlan {
+            team_modifications: None,
             schema_version: PLAN_SCHEMA_VERSION,
             source: AcquireSource::Marketplace,
             account_user_id: None,
@@ -2864,6 +3160,7 @@ mod tests {
     #[test]
     fn team_plan_digest_binds_the_acquiring_account() {
         let plan = AcquirePlan {
+            team_modifications: None,
             schema_version: PLAN_SCHEMA_VERSION,
             source: AcquireSource::Team,
             account_user_id: Some(account_a().into()),
@@ -2903,7 +3200,7 @@ mod tests {
     }
 
     #[test]
-    fn team_metadata_change_replaces_even_when_version_and_package_match() {
+    fn team_metadata_change_does_not_replace_the_published_version() {
         let remote = team_remote();
         let other_team = "44444444-4444-4444-8444-444444444444";
         assert_eq!(
@@ -2912,19 +3209,19 @@ mod tests {
                 &team_existing(Some(account_a()), &[other_team]),
                 Some(account_a())
             ),
-            AcquireAction::ReplaceTeamSource
+            AcquireAction::AlreadyPresent
         );
         let mut owner_changed = team_existing(Some(account_a()), &[team_id()]);
         owner_changed.profile.server_owner_id = Some("55555555-5555-4555-8555-555555555555".into());
         assert_eq!(
             action_for_existing(&remote, &owner_changed, Some(account_a())),
-            AcquireAction::ReplaceTeamSource
+            AcquireAction::AlreadyPresent
         );
         let mut description_changed = team_existing(Some(account_a()), &[team_id()]);
         description_changed.profile.description = Some("Updated description".into());
         assert_eq!(
             action_for_existing(&remote, &description_changed, Some(account_a())),
-            AcquireAction::ReplaceTeamSource
+            AcquireAction::AlreadyPresent
         );
     }
 
@@ -2972,6 +3269,7 @@ mod tests {
     #[test]
     fn catalog_import_keeps_origin_and_scoped_folder_identity() {
         let plan = AcquirePlan {
+            team_modifications: None,
             schema_version: PLAN_SCHEMA_VERSION,
             source: AcquireSource::Marketplace,
             account_user_id: None,
@@ -3023,6 +3321,7 @@ mod tests {
     #[test]
     fn update_comparison_requires_a_clean_verified_fixed_package() {
         let candidate = UpdateCandidate {
+            source_version_id: None,
             local_skill_id: "hollywood-writer--aaaaaaaaaaaa".into(),
             server_skill_id: server_id().into(),
             display_name: "Hollywood Writer".into(),
@@ -3045,6 +3344,32 @@ mod tests {
         let available = compared_update_item(candidate.clone(), newer.clone());
         assert_eq!(available.status, "update_available");
         assert!(available.can_update);
+        let mut unavailable = candidate.clone();
+        unavailable.local_skill_id = "unavailable".into();
+        unavailable.version.clear();
+        let mut modified = candidate.clone();
+        modified.local_skill_id = "modified".into();
+        modified.working_copy_dirty = true;
+        let (mut items, remaining) = super::separate_unverified_candidates(
+            vec![unavailable, candidate.clone(), modified],
+            &std::collections::HashSet::from([
+                "unavailable".into(),
+                "modified".into(),
+                candidate.local_skill_id.clone(),
+            ]),
+            AcquireSource::Marketplace,
+        );
+        assert_eq!(items[0].status, "local_metadata_incomplete");
+        assert_eq!(items[1].status, "local_modified");
+        assert_eq!(remaining.len(), 1);
+        items.push(compared_update_item(
+            remaining.into_iter().next().unwrap(),
+            newer.clone(),
+        ));
+        assert!(
+            items[2].can_update,
+            "one unavailable card must not skip healthy candidates"
+        );
         assert!(available
             .preflight_command
             .as_deref()
@@ -3058,15 +3383,20 @@ mod tests {
 
         let mut legacy = candidate;
         legacy.package_sha256 = None;
+        let clean = compared_update_item(legacy.clone(), newer.clone());
+        assert_eq!(clean.status, "update_available");
+        assert!(clean.can_update);
+        legacy.version.clear();
         let incomplete = compared_update_item(legacy, newer);
         assert_eq!(incomplete.status, "local_metadata_incomplete");
         assert!(!incomplete.can_update);
     }
 
     #[test]
-    fn team_update_comparison_includes_account_owner_and_team_metadata() {
+    fn team_update_comparison_uses_version_identity_and_account() {
         let remote = team_remote();
         let candidate = UpdateCandidate {
+            source_version_id: None,
             local_skill_id: "hollywood-writer--aaaaaaaaaaaa".into(),
             server_skill_id: server_id().into(),
             display_name: "Hollywood Writer".into(),
@@ -3087,14 +3417,14 @@ mod tests {
         let mut changed_team = candidate.clone();
         changed_team.team_ids = Some(vec!["44444444-4444-4444-8444-444444444444".into()]);
         let changed = compared_update_item(changed_team, remote.clone());
-        assert_eq!(changed.status, "update_available");
-        assert!(changed.can_update);
+        assert_eq!(changed.status, "up_to_date");
+        assert!(!changed.can_update);
 
         let mut changed_description = remote.clone();
         changed_description.description = Some("Updated description".into());
         let changed = compared_update_item(candidate.clone(), changed_description);
-        assert_eq!(changed.status, "update_available");
-        assert!(changed.can_update);
+        assert_eq!(changed.status, "up_to_date");
+        assert!(!changed.can_update);
 
         let mut mismatched = candidate;
         mismatched.account_matches = false;
@@ -3102,6 +3432,22 @@ mod tests {
         let blocked = compared_update_item(mismatched, remote);
         assert_eq!(blocked.status, "account_mismatch");
         assert!(!blocked.can_update);
+    }
+
+    #[test]
+    fn team_update_account_matching_uses_library_binding_and_fails_closed_for_other_accounts() {
+        let mut profile = SkillHubProfile {
+            acquisition_source: Some(AcquisitionSource::Team),
+            library_account_id: Some(account_a().into()),
+            ..SkillHubProfile::default()
+        };
+        assert!(team_update_account_matches(&profile, account_a()));
+        assert!(!team_update_account_matches(&profile, account_b()));
+        profile.acquired_by_user_id = Some(account_b().into());
+        assert!(team_update_account_matches(&profile, account_a()));
+        assert!(!team_update_account_matches(&profile, account_b()));
+        profile.library_account_id = None;
+        assert!(team_update_account_matches(&profile, account_b()));
     }
 
     #[test]
@@ -3158,5 +3504,47 @@ mod tests {
             &remote,
         )
         .is_err());
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &[
+                "team",
+                "install",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--preflight",
+            ],
+            &[
+                "team",
+                "install",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--apply",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "marketplace",
+                "install",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--preflight",
+            ],
+            &[
+                "marketplace",
+                "install",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--apply",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_args(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_args(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_args(&args).is_err(), "{case:?}");
+        }
     }
 }

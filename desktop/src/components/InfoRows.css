@@ -1,0 +1,4 @@
+.info-rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) var(--space-5); margin: 0; }
+.info-rows > div { display: flex; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.info-rows dt { color: var(--color-muted); font-size: var(--font-size-caption); font-weight: var(--font-weight-caption); }
+.info-rows dd { margin: 0; color: var(--color-ink); font-size: var(--font-size-body); font-variant-numeric: tabular-nums; text-align: right; }

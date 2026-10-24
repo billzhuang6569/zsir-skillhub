@@ -16,10 +16,11 @@ use tokio::sync::watch;
 const MAX_RESPONSE_BYTES: usize = 20 * 1024 * 1024;
 const STALE_SPACE: &str = "SkillHub 空间或账号已切换，本次请求结果已丢弃";
 const CANCELLED: &str = "SkillHub 请求已取消";
-const RESPONSE_HEADERS: [&str; 5] = [
+const RESPONSE_HEADERS: [&str; 6] = [
     "retry-after",
     "x-checksum-sha256",
     "x-skill-version",
+    "x-skill-version-id",
     "content-type",
     "x-request-id",
 ];

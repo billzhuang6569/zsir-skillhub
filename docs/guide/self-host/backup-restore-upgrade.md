@@ -4,6 +4,8 @@ description: 分开保管数据与恢复材料，并在空环境恢复完整实�
 sidebar: { order: 9 }
 ---
 
+升级到包含后台 Skill 分析的版本后，启动入口会自动迁移任务表，并补扫未分析、无图片的作者 Skill。无需增加环境变量；配置 AI 或 fal 后才执行对应任务。已继承分析资料或头像的副本保持原状。升级前仍须按下文备份；已有手动编辑痕迹的历史资料会保留。
+
 ## 备份
 
 在 `deploy/selfhost` 目录运行：
@@ -88,6 +90,8 @@ cd deploy/selfhost
 已有 `.env` 或任一项目数据卷会被拒绝，工具不删除它们；换全新主机。写入后失败时保留现场与日志，另建空环境重试。Postgres 主版本必须匹配，不能直接用新大版本挂旧卷。
 
 ## 升级
+
+macOS 的 WorkBuddy AI.app 使用新的兼容 Agent 标识 `workbuddy-ai`；`workbuddy` 在 Mac/Windows 都表示 WorkBuddy。使用新版 APP 时，请同步升级 Server，再保存包含新标识的 Skill 资料；旧 Server 会拒绝未知标识。本机安装仍可使用，历史 AI 目录安装自动归属 WorkBuddy AI，链接与内容保持不变，见 [Agent 能力列表](../reference/agent-capabilities.md)。
 
 在**原安装仓库**原地更新，不另 clone 新目录，否则 `.env` 与默认备份仍留在旧目录。若当前在 `deploy/selfhost`，先用 `cd ../..` 返回原仓库根目录；确认没有待保留的源码修改，再替换 `<新 tag>` 为所需发布标签并执行：
 

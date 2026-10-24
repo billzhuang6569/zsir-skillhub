@@ -4,6 +4,7 @@ import { emptyAgentStates } from './agents.ts'
 import { detachStaleServerBinding } from './ui-helpers.ts'
 import { normalizeStoreBadges } from './store-home.ts'
 import { OFFICIAL_ENDPOINTS } from './official-endpoints.ts'
+import { teamUpdateAccountMatches, teamUpdateState } from './team-update-state.ts'
 
 export type TeamSkillSource = {
   teamId: string
@@ -99,6 +100,7 @@ export function hydrateDownloadedSkill(remote: LocalSkill, imported: LocalSkill)
     id: imported.id,
     displayName: remote.displayName,
     serverAnalysisStatus: remote.serverAnalysisStatus,
+    enrichmentPending: remote.enrichmentPending,
     description: remote.description,
     // The listing / shared version is authoritative; a remote without the
     // field (older Server) keeps what the installed package recorded.
@@ -156,6 +158,7 @@ export function mergeApiSkill(
     name: apiSkill.name,
     displayName: apiSkill.displayName,
     serverAnalysisStatus: apiSkill.analysisStatus,
+    enrichmentPending: apiSkill.enrichmentPending,
     description: apiSkill.description,
     // Older Servers omit the field: keep the local sidecar's value then.
     sourceUrl: apiSkill.sourceUrl !== undefined ? apiSkill.sourceUrl : local?.sourceUrl,
@@ -172,6 +175,21 @@ export function mergeApiSkill(
     formalVersionId: local?.formalVersionId,
     formalLabel: local?.formalLabel,
     latestVersion: apiSkill.currentVersion,
+    sourceVersionId: local?.sourceVersionId,
+    acquiredByUserId: local?.acquiredByUserId,
+    teamVersionId: teamId ? apiSkill.teamVersionId : undefined,
+    teamUnshared: false,
+    teamChangelog: apiSkill.changelog,
+    teamEnvDeps: teamId ? mergeEnvDependencies(apiSkill) : undefined,
+    teamUpdateStatus: teamId && local?.localPath ? teamUpdateState({
+      accountMatches: teamUpdateAccountMatches({
+        accountUserId, acquiredByUserId: local.acquiredByUserId, libraryAccountId: local.libraryAccountId,
+      }),
+      available: true, localModified: Boolean(local.sourceLocalModified),
+      sameVersion: apiSkill.teamVersionId && local.sourceVersionId
+        ? apiSkill.teamVersionId === local.sourceVersionId
+        : apiSkill.currentVersion === (local.acquisitionVersion ?? local.version),
+    }) : undefined,
     installCount: apiSkill.installCount,
     sources: local?.sources ?? (teamId ? ['团队共享'] : ['服务端资产库']),
     agents: local?.agents ?? emptyAgentStates(),
@@ -186,9 +204,9 @@ export function mergeApiSkill(
     // An owned response must clear an obsolete team-source marker. A team
     // response always carries the exact team that granted access.
     teamSharedFrom: teamId,
-    envDeps: mergeEnvDependencies(apiSkill, local),
+    envDeps: teamId && local?.localPath ? local.envDeps : mergeEnvDependencies(apiSkill, local),
     sharedTo: apiSkill.teamShares?.reduce<Record<string, { version: string; envShared: boolean }>>((result, share) => {
-      result[share.teamId] = { version: apiSkill.currentVersion, envShared: false }
+      result[share.teamId] = { version: share.version?.version ?? apiSkill.currentVersion, envShared: false }
       return result
     }, {}) ?? local?.sharedTo ?? {},
     versions: local?.versions ?? [],
@@ -198,6 +216,10 @@ export function mergeApiSkill(
     compatibleAgents: apiSkill.compatibleAgents ?? local?.compatibleAgents ?? [],
     isOrphan: false,
     hasWorkingCopy: local?.hasWorkingCopy ?? false,
+    sourceModifiedFiles: local?.sourceModifiedFiles,
+    sourceLocalModified: local?.sourceLocalModified,
+    sourcePackageReady: local?.sourcePackageReady,
+    copiedFromSource: local?.copiedFromSource,
     workingCopyChanges: local?.workingCopyChanges ?? 0,
     workingCopyHash: local?.workingCopyHash,
     createdAt: apiSkill.createdAt,
@@ -400,6 +422,10 @@ export function replaceSkillAcrossSources(
       envDeps: runtime.envDeps,
       versions: runtime.versions.length > 0 ? runtime.versions : item.versions,
       hasWorkingCopy: runtime.hasWorkingCopy,
+      sourceModifiedFiles: runtime.sourceModifiedFiles,
+      sourceLocalModified: runtime.sourceLocalModified,
+      sourcePackageReady: runtime.sourcePackageReady,
+      copiedFromSource: runtime.copiedFromSource,
       versionProblem: runtime.versionProblem,
       workingCopyChanges: runtime.workingCopyChanges,
       workingCopyHash: runtime.workingCopyHash,
@@ -427,6 +453,7 @@ function findTeamBinding(
   // The same server Skill may be shared through several teams. The selected
   // team owns the current discussion and credential scope; a historical
   // sidecar source is only the fallback when that team does not expose it.
+  if (!context.activeTeamId && localTeamId) return matching.find(binding => binding.teamId === localTeamId) ?? null
   return matching.find((binding) => binding.teamId === context.activeTeamId)
     ?? matching.find((binding) => binding.teamId === localTeamId)
     ?? matching[0]
@@ -470,6 +497,7 @@ export function mergeSkillSources(
     if (ownedSkills !== null && local.isOwn && !local.teamSharedFrom) {
       return detachStaleServerBinding(local)
     }
+    if (fullyValidated && local.acquisitionSource === 'team') return { ...local, teamUnshared: true, teamUpdateStatus: 'access_revoked', latestVersion: local.acquisitionVersion ?? local.version }
     if (fullyValidated) return detachStaleServerBinding(local)
     return local
   })

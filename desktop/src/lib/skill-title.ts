@@ -1,5 +1,12 @@
 export type SkillTitlePreference = 'skill-name' | 'ai-title'
 
+export const UNANALYSED_SKILL_NAME = '尚未分析技能名'
+
+export function truncateSkillName(name: string): string {
+  const characters = Array.from(name)
+  return characters.length > 25 ? `${characters.slice(0, 25).join('')}…` : name
+}
+
 type SkillTitleSource = {
   name: string
   displayName: string

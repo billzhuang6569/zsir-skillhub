@@ -110,15 +110,15 @@ export function createAiRequestGuard(options: AiRequestGuardOptions) {
       if (budget) {
         const userId = key.startsWith('avatar:') || key.startsWith('topic:') ? key.split(':')[1] : key.split(':')[0]
         const day = new Date(timestamp).toISOString().slice(0, 10)
-        if (reservation) {
+        if (reservation && !background) {
           if (reservation.day !== day || reservation.userId !== userId || reservation.remaining < 1) {
             throw new AiRequestGuardError('AI reservation expired', 1, 'daily')
           }
           reservation.remaining -= 1
         } else {
-          const allocated = await budget.reserve(userId, 1)
+          const allocated = await budget.reserve(userId, 1, priority)
           if (!allocated.remaining) {
-            const available = await budget.available(userId)
+            const available = background ? { instance: 0 } : await budget.available(userId)
             throw new AiRequestGuardError('AI daily quota exhausted', Math.ceil((Date.parse(`${day}T00:00:00Z`) + dayMs - timestamp) / 1000), available.instance === 0 ? 'daily' : 'user_daily')
           }
         }

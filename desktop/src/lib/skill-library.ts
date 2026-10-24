@@ -1,4 +1,18 @@
 import type { LocalSkill } from '../store/index.js'
+
+export function sourceUpdateBlockReason(skill: Pick<LocalSkill, 'sourceLocalModified' | 'sourceModifiedFiles' | 'hasWorkingCopy'>, checking: boolean): string | null {
+  if (checking) return '正在核验取得时的内容…'
+  if (skill.sourceLocalModified || (skill.sourceModifiedFiles ?? 0) > 0 || skill.hasWorkingCopy) return '有本机修改，请先另存为自己的 Skill 或放弃修改，再更新。'
+  return null
+}
+
+export function sourceModificationLabel(skill: Pick<LocalSkill, 'acquisitionSource' | 'catalogOrigin' | 'sourceModifiedFiles'>): string | null {
+  if (skill.sourceModifiedFiles == null && (skill.acquisitionSource === 'team' || skill.acquisitionSource === 'marketplace' || skill.catalogOrigin)) return '来源内容待核验'
+  if (!skill.sourceModifiedFiles) return null
+  if (skill.acquisitionSource === 'team') return '团队共享后修改'
+  if (skill.acquisitionSource === 'marketplace' || skill.catalogOrigin) return '商店获取后修改'
+  return null
+}
 import { agentDisplayName, orderedAgentEntries } from './agents.ts'
 import type { LastRunRecord } from './tauri.js'
 import { KEY_COPY, needsValueLabel } from './skill-keys.ts'
@@ -24,6 +38,14 @@ export function locallyManagedSkillNames(skills: LocalSkill[]): Set<string> {
   return new Set(skills.filter((skill) => skill.localPath.trim().length > 0).map((skill) => skill.name))
 }
 
+export function unmanagedLocalSkills<T extends { localPath: string; managedSkillId?: string; joinLocalId?: string }>(skills: T[], managedPaths: Set<string>): T[] {
+  return skills.filter(skill => Boolean(skill.joinLocalId) || (!skill.managedSkillId && !managedPaths.has(skill.localPath)))
+}
+
+export function isGenericLocalSkill(skill: { sources: { agentKey: string }[]; joinLocalId?: string }): boolean {
+  return Boolean(skill.joinLocalId) || skill.sources.length === 0 || skill.sources.some(source => source.agentKey === 'agent-skills')
+}
+
 export function matchesAgentInstallation(skill: Pick<LocalSkill, 'agents'>, agentKey: string): boolean {
   return skill.agents[agentKey] === 'on' || skill.agents[agentKey] === 'broken'
 }
@@ -38,21 +60,21 @@ export function reconcileAgentFilter(
 
 const skillNameCollator = new Intl.Collator('en', { sensitivity: 'base', numeric: true })
 
-export function orderSkillsByName<T extends { id: string; name: string }>(skills: readonly T[]): T[] {
+export function orderSkillsByName<T extends { id: string; name: string }>(skills: readonly T[], direction: 'asc' | 'desc' = 'asc'): T[] {
   return [...skills].sort((left, right) =>
-    skillNameCollator.compare(left.name, right.name) || left.id.localeCompare(right.id, 'en'))
+    (direction === 'asc' ? 1 : -1) * skillNameCollator.compare(left.name, right.name) || left.id.localeCompare(right.id, 'en'))
 }
 
-/** 我的 Skills ordering (#361): by name (default) or newest first. Kept on this computer. */
-export type SkillSortPreference = 'name' | 'time'
+/** Legacy values retain their default direction; reverse directions share the same storage key. */
+export type SkillSortPreference = 'name' | 'time' | 'name-desc' | 'time-asc'
 
 /**
- * Newest first by the Server's `updatedAt`, falling back to `createdAt` (local
+ * By the Server's `updatedAt` (newest first by default), falling back to `createdAt` (local
  * edits do not move a synced Skill until the Server stamp changes; local-only
  * Skills have no stamp and keep their name order after the dated ones). Name
  * order is the tie-breaker, so the result is deterministic.
  */
-export function orderSkillsByTime<T extends { id: string; name: string; createdAt?: string; updatedAt?: string }>(skills: readonly T[]): T[] {
+export function orderSkillsByTime<T extends { id: string; name: string; createdAt?: string; updatedAt?: string }>(skills: readonly T[], direction: 'asc' | 'desc' = 'desc'): T[] {
   const stamp = (skill: T): number => {
     const raw = skill.updatedAt ?? skill.createdAt
     const time = raw ? Date.parse(raw) : Number.NaN
@@ -61,12 +83,17 @@ export function orderSkillsByTime<T extends { id: string; name: string; createdA
   return orderSkillsByName(skills).sort((left, right) => {
     const a = stamp(left)
     const b = stamp(right)
-    return a === b ? 0 : b > a ? 1 : -1
+    if (a === b) return 0
+    if (a === Number.NEGATIVE_INFINITY) return 1
+    if (b === Number.NEGATIVE_INFINITY) return -1
+    return (direction === 'desc' ? 1 : -1) * (b > a ? 1 : -1)
   })
 }
 
 export function orderSkills<T extends { id: string; name: string; createdAt?: string; updatedAt?: string }>(skills: readonly T[], preference: SkillSortPreference): T[] {
-  return preference === 'time' ? orderSkillsByTime(skills) : orderSkillsByName(skills)
+  return preference === 'time' || preference === 'time-asc'
+    ? orderSkillsByTime(skills, preference === 'time' ? 'desc' : 'asc')
+    : orderSkillsByName(skills, preference === 'name' ? 'asc' : 'desc')
 }
 
 export function isSystemManagerSkill(skill: Pick<LocalSkill, 'id' | 'name' | 'isSystem'>): boolean {
@@ -161,8 +188,10 @@ export function isNewerSkillVersion(candidate: string | null | undefined, curren
 }
 
 /** A team Skill on this machine whose shared version is newer than the local copy. */
-export function teamSkillHasUpdate(skill: Pick<TeamSharedSkill, 'version' | 'latestVersion' | 'localPath'>): boolean {
-  return Boolean(skill.localPath) && isNewerSkillVersion(skill.latestVersion, skill.version)
+export function teamSkillHasUpdate(skill: Pick<TeamSharedSkill, 'version' | 'latestVersion' | 'localPath'> & { teamUpdateStatus?: string; teamUnshared?: boolean }): boolean {
+  if (!skill.localPath || skill.teamUnshared) return false
+  if (skill.teamUpdateStatus) return ['update_available', 'local_modified'].includes(skill.teamUpdateStatus)
+  return isNewerSkillVersion(skill.latestVersion, skill.version)
 }
 
 function matchesTeamAvailability(skill: TeamSharedSkill, availability: TeamSkillAvailability): boolean {

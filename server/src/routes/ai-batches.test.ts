@@ -32,6 +32,13 @@ beforeEach(async () => {
 afterEach(async () => { await app.close() })
 const payload = { skillIds: ids, confirm: true, aiAnalysisConsent: true }
 describe('batch analysis', () => {
+  it.each([true, false])('preserves manual profile fields and respects manual labels=%s', async labelsManuallyEdited => {
+    mock.skills.mockResolvedValue([{ id: ids[0], authorId: 'owner', name: 'skill', sourceContent: 'source', updatedAt: new Date(),
+      profileManuallyEdited: true, labelsManuallyEdited, labels: ['manual'] }])
+    expect((await app.inject({ method: 'POST', url: '/batches', payload: { ...payload, skillIds: [ids[0]] } })).statusCode).toBe(202)
+    await vi.waitFor(() => expect(mock.release).toHaveBeenCalled())
+    expect(mock.update.mock.calls[0][0].data).toEqual({ labels: labelsManuallyEdited ? ['manual'] : profile.labels, analysisStatus: 'completed' })
+  })
   it('previews coverage, requires confirmation, queues only reserved work and preserves manual tags', async () => {
     expect((await app.inject({ method: 'POST', url: '/batches/preview', payload: { skillIds: ids } })).json()).toMatchObject({ total: 2, coverable: 1, mayIncurCost: true })
     expect((await app.inject({ method: 'POST', url: '/batches', payload: { skillIds: ids } })).statusCode).toBe(400)

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
 import { db } from '../db.js'
 import { variantsMode, projectSkillAvatar, projectSkillAvatars } from '../lib/avatar-selection.js'
-import { reviewSkillPackageEnv, validateSkillPackage, type SkillPackageEnvReview } from '../lib/skill-package.js'
+import { describeSkillPackage, reviewSkillPackageEnv, validateSkillPackage, type SkillPackageEnvReview } from '../lib/skill-package.js'
 import { EnvDeclarationError, EnvObtainSchema, parseEnvDeclarations, type EnvDeclaration } from '../lib/skill-env-declaration.js'
 import type { EnvSuggestion } from '../lib/env-detect.js'
 import { redactSensitiveContent } from '../lib/sensitive-content.js'
@@ -30,12 +30,14 @@ import { aiBudget, type AiReservation } from '../lib/ai-budget.js'
 import { AiRequestGuardError, createAiRequestGuard, type AiRequestPriority } from '../utils/ai-request-guard.js'
 import { readAiProviderHttpError } from '../utils/retry-after.js'
 import { LocalAvatarId } from '../lib/skill-avatar-input.js'
-import { queueCloudAvatar } from '../lib/skill-avatars.js'
+import { continueCloudAvatar } from '../lib/skill-avatars.js'
+import { avatarGenerationEnabled } from '../lib/avatar-generation.js'
 import { grantCard, loadVersionPackage, prepareCard, registerCard, requireCardAuthorship, type PreparedCard } from '../lib/skill-cards.js'
-import { allocateVersion, exactFormalRetry, formalVersionDto, requireVersion, skillHighWater, VersionPolicyError } from '../lib/version-policy.js'
+import { allocateVersion, exactFormalRetry, formalVersionDto, requireVersion, sameCardContent, skillHighWater, versionOrdinal, VersionPolicyError } from '../lib/version-policy.js'
 import { recordTeamActivities, recordTeamActivity } from '../lib/team-activity.js'
 import { SkillSourceUrlSchema } from '../lib/skill-source.js'
 import { aiBatchRoutes } from './ai-batches.js'
+import { acquiredTeamRecipients, resolveTeamVersion } from '../lib/team-skill-version.js'
 
 export const SkillNameSchema = z.string()
   .trim()
@@ -67,7 +69,7 @@ export const EnvDependenciesSchema = z.array(EnvDependencySchema).max(100).super
 })
 
 const CompatibleAgentSchema = z.enum([
-  'claude', 'codex', 'agent-skills', 'workbuddy', 'doubao', 'opencode', 'openclaw', 'gemini', 'trae',
+  'claude', 'codex', 'agent-skills', 'workbuddy', 'workbuddy-ai', 'doubao', 'opencode', 'openclaw', 'gemini', 'trae',
 ])
 export const ImportCompatibleAgentsSchema = z.array(CompatibleAgentSchema)
 type CompatibleAgent = z.infer<typeof CompatibleAgentSchema>
@@ -315,6 +317,15 @@ export function skillPackageContentDisposition(skillName: string): string {
 }
 
 type PackageFields = { packageData?: Buffer; packageSha256?: string; packageSize?: number }
+
+function versionContentIdentity(version: { card?: { contentHash: string; executablePaths: Prisma.JsonValue } | null; packageData: Uint8Array | null }): { contentHash: string; executablePaths: Prisma.JsonValue } | null {
+  if (version.card) return { contentHash: version.card.contentHash, executablePaths: version.card.executablePaths }
+  if (!version.packageData) return null
+  try {
+    const described = describeSkillPackage(Buffer.from(version.packageData))
+    return { contentHash: described.contentHash, executablePaths: described.executablePaths }
+  } catch { return null }
+}
 
 export function decodePackage(
   packageBase64?: string,
@@ -605,9 +616,23 @@ function withoutPrivateSkillFields<T extends object>(
   skill: T
 ): Omit<T, 'sourceContent' | 'ossPackageKey' | 'deletedAt'> {
   const dto = { ...skill } as Record<string, unknown>
+  const enrichment = dto.enrichment as { phase: string } | null | undefined
+  if ('enrichment' in dto) {
+    const analysisEnabled = aiStatus().configured && config.AI_MAX_CONCURRENT >= 2
+    const avatarsEnabled = avatarGenerationEnabled()
+    dto.enrichmentPending = enrichment?.phase === 'analysis' ? analysisEnabled || avatarsEnabled
+      : enrichment?.phase === 'avatar' ? avatarsEnabled
+      : enrichment?.phase === 'failed' || enrichment?.phase === 'parked' ? false
+      : enrichment?.phase === 'done' ? avatarsEnabled && dto.avatarStatus === 'pending'
+      : dto.analysisStatus === 'unanalysed' && !dto.avatarUrl && (analysisEnabled || avatarsEnabled)
+  }
+  if (enrichment?.phase === 'avatar' && avatarGenerationEnabled() && !dto.avatarUrl
+    && (!dto.avatarStatus || dto.avatarStatus === 'none')) dto.avatarStatus = 'pending'
+  delete dto.enrichment
   delete dto.sourceContent
   delete dto.ossPackageKey
   delete dto.deletedAt
+  delete dto.profileManuallyEdited
   return dto as Omit<T, 'sourceContent' | 'ossPackageKey' | 'deletedAt'>
 }
 
@@ -937,12 +962,13 @@ function parseAiProfile(raw: string): SkillProfile | null {
   }
 }
 
-/** Skill import / re-analysis: a user-priority AI request (exported for the #238 slot test). */
+/** Manual analysis defaults to user priority; enrichment explicitly uses the shared background allowance. */
 export async function analyzeSkillWithAI(
   skillName: string,
   skillMd: string,
   guardKey: string,
   reservation?: AiReservation,
+  priority: AiRequestPriority = 'user',
 ): Promise<SkillAnalysis> {
   const sanitized = redactSensitiveContent(skillMd)
   const settings = await resolveAiConfig()
@@ -973,7 +999,7 @@ SKILL.md内容：
 ${sanitized.content.slice(0, 3000)}`
 
   try {
-    const raw = await aiRequestGuard.run(guardKey, async () => configuredCompletion(settings, systemPrompt, userPrompt), 'user', reservation)
+    const raw = await aiRequestGuard.run(guardKey, async () => configuredCompletion(settings, systemPrompt, userPrompt), priority, reservation)
     if (!raw) {
       return unavailable()
     }
@@ -1083,6 +1109,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           sharedById: true,
           createdAt: true,
+          version: { select: { id: true, version: true, envDependencies: true, sourceContent: true, sourceUrl: true, changelog: true } },
           skill: {
             select: {
               ...skillDtoSelect,
@@ -1109,6 +1136,9 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         return {
           ...withoutPrivateSkillFields(displayed.get(share.skill.id)!),
           sourceUrl: sharedSources.get(share.skill.id) ?? null,
+          ...(share.version ? { currentVersion: share.version.version, teamVersionId: share.version.id,
+            envDependencies: share.version.envDependencies, sourceContent: share.version.sourceContent,
+            sourceUrl: share.version.sourceUrl, changelog: share.version.changelog } : {}),
           sharedBy: sharer
             ? { id: sharer.id, displayName: sharer.displayName, avatarUrl: sharer.avatarUrl }
             : null,
@@ -1121,7 +1151,8 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       where: { authorId: userId, deletedAt: null },
       select: {
         ...skillDtoSelect,
-        teamShares: { select: { teamId: true } },
+        enrichment: { select: { phase: true } },
+        teamShares: { select: { teamId: true, versionId: true, version: { select: { version: true, packageSha256: true } } } },
       },
       orderBy: { updatedAt: 'desc' },
     })
@@ -1157,11 +1188,12 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
           if (await skillRecordLimitReached(req.user.id, transaction)) {
             throw new SkillQuotaError('Skill recycle bin limit reached', 409)
           }
-          return transaction.skill.create({ data: { ...body.data, authorId: req.user.id } })
+          return transaction.skill.create({ data: { ...body.data, authorId: req.user.id,
+            labelsManuallyEdited: Object.prototype.hasOwnProperty.call(req.body, 'labels') } })
         })
       })
-      await queueCloudAvatar(req.user.id, skill.id).catch(() => { req.log.warn('Skill avatar enqueue deferred') })
-      return reply.code(201).send(await toSkillDto(skill))
+      return reply.code(201).send({ ...await toSkillDto(skill),
+        enrichmentPending: (aiStatus().configured && config.AI_MAX_CONCURRENT >= 2) || avatarGenerationEnabled() })
     } catch (error: unknown) {
       if (error instanceof SkillQuotaError) {
         return reply.code(error.statusCode).send({ error: error.message })
@@ -1226,7 +1258,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     const existing = checked.existing
     if (existing) {
       if (checked.recovered) {
-        await queueCloudAvatar(req.user.id, existing.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar enqueue deferred') })
+        await continueCloudAvatar(req.user.id, existing.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar binding deferred') })
         return reply.code(200).send(await recoveredImportResult(existing))
       }
       return reply.code(409).send({ error: 'Existing import cannot be verified', code: existing.importVersionId ? 'VERSION_REQUEST_CONFLICT' : 'IMPORT_RECOVERY_UNVERIFIABLE' })
@@ -1249,19 +1281,10 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(413).send({ error: 'Skill storage quota exceeded' })
     }
 
-    let analysis: SkillAnalysis
-    try {
-      analysis = await analyzeSkillWithAI(
-        body.data.name,
-        body.data.skillMd,
-        `${req.user.id}:${req.ip}`
-      )
-    } catch (error: unknown) {
-      if (!(error instanceof AiRequestGuardError)) throw error
-      reply.header('Retry-After', String(error.retryAfterSeconds))
-      return reply.code(429).send({ error: error.message, code: error.code })
-    }
-    const sourceContent = redactSensitiveContent(body.data.skillMd).content
+    const sanitized = redactSensitiveContent(body.data.skillMd)
+    const analysis: SkillAnalysis = { profile: unanalysedProfile(body.data.name, sanitized.content),
+      source: 'unanalysed', redactedSecrets: sanitized.redactedSecrets }
+    const sourceContent = sanitized.content
     const importCard = await prepareUploadedCard(packageFields.packageData, req.log)
 
     let commitResult:
@@ -1273,7 +1296,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       commitResult = await withAssetWriteLock(req.user.id, async () => {
         return db.$transaction(async (transaction) => {
           await lockUserMutation(transaction, req.user.id)
-          // The initial auth check predates the external AI request. Share the
+          // The initial auth check predates package preparation. Share the
           // User lock with logout/password changes and fail closed before any
           // final duplicate/quota read or asset creation.
           const lockedUser = await transaction.user.findUnique({
@@ -1373,7 +1396,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
           return current && isExactImportRecovery(current, importInput, packageFields.packageSha256) ? current : null
         })
         if (collided) {
-          await queueCloudAvatar(req.user.id, collided.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar enqueue deferred') })
+          await continueCloudAvatar(req.user.id, collided.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar binding deferred') })
           return reply.code(200).send(await recoveredImportResult(collided))
         }
         return reply.conflict('Skill already exists in the asset library')
@@ -1385,24 +1408,25 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
     if (commitResult.outcome === 'recovered') {
-      await queueCloudAvatar(req.user.id, commitResult.skill.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar enqueue deferred') })
+      await continueCloudAvatar(req.user.id, commitResult.skill.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar binding deferred') })
       return reply.code(200).send(await recoveredImportResult(commitResult.skill))
     }
     if (commitResult.outcome === 'conflict') {
       return reply.conflict('Skill already exists in the asset library')
     }
 
-    await queueCloudAvatar(req.user.id, commitResult.skill.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar enqueue deferred') })
+    await continueCloudAvatar(req.user.id, commitResult.skill.id, body.data.localSkillId, body.data.aliasLocalIds).catch(() => { req.log.warn('Skill avatar binding deferred') })
     return reply.code(201).send({
-      skill: await toSkillDto(commitResult.skill),
-      analysis: analysisResult(analysis),
+      skill: { ...await toSkillDto(commitResult.skill),
+        enrichmentPending: (aiStatus().configured && config.AI_MAX_CONCURRENT >= 2) || avatarGenerationEnabled() },
+      analysis: { ...analysisResult(analysis), queued: aiStatus().configured && config.AI_MAX_CONCURRENT >= 2 },
       // Author-only: keys the Server's package re-check found but nothing declares (#251).
       detectedUndeclared: detectedUndeclared ?? [],
     })
   })
 
   // GET /api/skills/:id
-  fastify.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
+  fastify.get<{ Params: { id: string }; Querystring: { teamId?: string } }>('/:id', async (req, reply) => {
     const skill = await db.skill.findUnique({
       where: { id: req.params.id },
       select: {
@@ -1425,7 +1449,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       },
     })
     if (!skill || skill.deletedAt) return reply.notFound()
-    if (skill.authorId !== req.user.id) {
+    if (skill.authorId !== req.user.id || req.query.teamId) {
       const memberships = await db.teamMember.findMany({
         where: {
           userId: req.user.id,
@@ -1436,11 +1460,18 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       })
       if (memberships.length === 0) return reply.forbidden()
       const allowedTeamIds = new Set(memberships.map((membership) => membership.teamId))
-      const sharedVersion = await db.skillVersion.findUnique({ where: { skillId_version: { skillId: skill.id, version: skill.currentVersion } }, select: { sourceUrl: true } })
+      const selected = await resolveTeamVersion(req.user.id, skill.id, req.query.teamId)
+      if (!selected) return reply.notFound('Skill is no longer shared to this team')
+      const sharedVersion = selected.version
       return withoutPrivateSkillFields({
         ...await projectSkillAvatar(skill),
         sourceUrl: sharedVersion?.sourceUrl ?? null,
-        teamShares: skill.teamShares.filter((share) => allowedTeamIds.has(share.team.id)),
+        currentVersion: sharedVersion.version,
+        teamVersionId: sharedVersion.id,
+        envDependencies: sharedVersion.envDependencies,
+        sourceContent: sharedVersion.sourceContent,
+        versions: [formalVersionDto(sharedVersion)],
+        teamShares: skill.teamShares.filter((share) => allowedTeamIds.has(share.team.id) && share.teamId === selected.teamId),
       })
     }
     return withoutPrivateSkillFields(await projectSkillAvatar(skill))
@@ -1448,7 +1479,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/skills/:id/source — redacted SKILL.md for an owner or a member
   // of a team to which this Skill is actively shared.
-  fastify.get<{ Params: { id: string } }>('/:id/source', async (req, reply) => {
+  fastify.get<{ Params: { id: string }; Querystring: { teamId?: string } }>('/:id/source', async (req, reply) => {
     const skill = await db.skill.findUnique({
       where: { id: req.params.id },
       select: {
@@ -1459,12 +1490,15 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       },
     })
     if (!skill || skill.deletedAt) return reply.notFound('Skill not found')
-    if (skill.authorId !== req.user.id) {
+    if (skill.authorId !== req.user.id || req.query.teamId) {
       const allowed = await hasActiveTeamAccess(
         req.user.id,
         skill.teamShares.map((share) => share.teamId)
       )
       if (!allowed) return reply.forbidden()
+      const selected = await resolveTeamVersion(req.user.id, req.params.id, req.query.teamId)
+      if (!selected?.version.sourceContent) return reply.notFound('Shared source is unavailable')
+      return reply.send({ skillMd: selected.version.sourceContent })
     }
     if (!skill.sourceContent) {
       return reply.notFound('SKILL.md source is unavailable for this legacy asset; upload a new version first')
@@ -1486,6 +1520,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       if (skill.authorId !== req.user.id) return { outcome: 'forbidden' } as const
       const updated = await transaction.skill.update({ where: { id: req.params.id }, data: {
         ...body.data, ...(body.data.labels !== undefined ? { labelsManuallyEdited: true } : {}),
+        ...(['displayName', 'description', 'category', 'triggerScenarios'].some(key => key in body.data) ? { profileManuallyEdited: true } : {}),
       } })
       return { outcome: 'updated', skill: updated } as const
     })
@@ -1613,7 +1648,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   })
 
   // GET /api/skills/:id/versions
-  fastify.get<{ Params: { id: string } }>('/:id/versions', async (req, reply) => {
+  fastify.get<{ Params: { id: string }; Querystring: { teamId?: string } }>('/:id/versions', async (req, reply) => {
     const skill = await db.skill.findUnique({
       where: { id: req.params.id },
       include: { teamShares: { select: { teamId: true } } },
@@ -1627,17 +1662,23 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!allowed) return reply.forbidden()
     }
     const isAuthor = skill.authorId === req.user.id
+    if (!isAuthor || req.query.teamId) {
+      const selected = await resolveTeamVersion(req.user.id, skill.id, req.query.teamId)
+      if (!selected) return reply.notFound()
+      return reply.send([formalVersionDto(selected.version)])
+    }
     return db.$transaction(async (tx) => (await tx.skillVersion.findMany({
-      where: { skillId: req.params.id }, include: { aliases: true }, orderBy: { createdAt: 'desc' },
+      where: { skillId: req.params.id }, include: { aliases: true, card: true }, orderBy: { createdAt: 'desc' },
     })).map((version) => ({
       ...formalVersionDto(version),
+      contentIdentity: versionContentIdentity(version),
       // Author-only re-check result (#251); team members never see it.
       ...(isAuthor ? { detectedUndeclared: stringArray(version.detectedUndeclared) } : {}),
     })), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead })
   })
 
   // GET /api/skills/:id/package — the exact current-version package for the owner or a team member
-  fastify.get<{ Params: { id: string } }>('/:id/package', async (req, reply) => {
+  fastify.get<{ Params: { id: string }; Querystring: { teamId?: string } }>('/:id/package', async (req, reply) => {
     const retryAfter = consumePackageRead(req.user.id)
     if (retryAfter !== null) {
       reply.header('Retry-After', String(retryAfter))
@@ -1655,10 +1696,13 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       )
       if (!allowed) return reply.forbidden()
     }
+    const selected = skill.authorId !== req.user.id || req.query.teamId
+      ? await resolveTeamVersion(req.user.id, skill.id, req.query.teamId) : null
+    if ((skill.authorId !== req.user.id || req.query.teamId) && !selected) return reply.forbidden()
     const version = await db.skillVersion.findFirst({
       where: {
         skillId: skill.id,
-        version: skill.currentVersion,
+        ...(selected ? { id: selected.version.id } : { version: skill.currentVersion }),
         OR: [{ packageData: { not: null } }, { cardSha256: { not: null } }],
       },
       select: { id: true, version: true, packageData: true, packageSha256: true, cardSha256: true },
@@ -1696,11 +1740,24 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
     packageSha256 ??= createHash('sha256').update(packageData).digest('hex')
+    if (selected && skill.authorId !== req.user.id) {
+      const recorded = await db.$transaction(async transaction => {
+        await lockSkillTeamMutation(transaction, skill.id, selected.teamId)
+        const current = await resolveTeamVersion(req.user.id, skill.id, selected.teamId, transaction)
+        if (current?.version.id !== version.id) return false
+        const acquisition = { skillId: skill.id, teamId: selected.teamId, userId: req.user.id, versionId: version.id }
+        await transaction.teamSkillAcquisition.upsert({ where: { skillId_teamId_userId_versionId: acquisition }, create: acquisition, update: {} })
+        if (version.cardSha256) await grantCard(transaction, req.user.id, version.cardSha256, 'team', `version:${version.id}`)
+        return true
+      })
+      if (!recorded) return reply.conflict('Team version or access changed; refresh before downloading')
+    }
     await db.skill.update({ where: { id: skill.id }, data: { installCount: { increment: 1 } } })
     reply
       .header('Content-Type', 'application/zip')
       .header('Content-Disposition', skillPackageContentDisposition(skill.name))
       .header('X-Skill-Version', version.version)
+      .header('X-Skill-Version-Id', version.id)
       .header('X-Checksum-Sha256', packageSha256)
     return reply.send(packageData)
   })
@@ -1808,10 +1865,12 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
               return { outcome: 'existing', version: racedVersion } as const
             }
             const highWater = await skillHighWater(transaction, req.params.id)
+            if (versionCard) await registerCard(transaction, versionCard, req.user.id)
             const reserved = libraryVersionReceiptId ? await transaction.libraryEntryVersion.findUnique({ where: { id: libraryVersionReceiptId }, include: { entry: true } }) : null
             if (libraryVersionReceiptId) {
               if (!reserved || reserved.entry.userId !== req.user.id || reserved.entry.authorSkillId !== req.params.id
-                || reserved.entry.deletedAt || reserved.formalVersionId || reserved.label !== body.data.version || reserved.cardSha256 !== versionCard?.sha256) {
+                || reserved.entry.deletedAt || reserved.formalVersionId || reserved.label !== body.data.version || !versionCard
+                || !await sameCardContent(transaction, reserved.cardSha256, versionCard.sha256)) {
                 throw new VersionPolicyError('VERSION_LABEL_CONFLICT', 'Reserved version does not match this publication')
               }
             } else allocateVersion(highWater, body.data.version, 'manual')
@@ -1831,7 +1890,6 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
             })
             if (!lockedEnv.ok) throw new SkillQuotaError(lockedEnv.message, 400)
             const envDependencies = lockedEnv.envDependencies
-            if (versionCard) await registerCard(transaction, versionCard, req.user.id)
             const version = await transaction.skillVersion.create({
               data: {
                 skillId: req.params.id,
@@ -1859,8 +1917,11 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
               await grantCard(transaction, req.user.id, versionCard.sha256, 'authored', `version:${version.id}`)
             }
             if (reserved) {
-              await transaction.libraryEntryVersion.update({ where: { id: reserved.id }, data: { formalVersionId: version.id } })
-              await transaction.libraryEntry.update({ where: { id: reserved.entryId }, data: { revision: { increment: 1 } } })
+              await transaction.libraryEntryVersion.update({ where: { id: reserved.id }, data: { formalVersionId: version.id, cardSha256: versionCard!.sha256 } })
+              await transaction.libraryEntry.update({ where: { id: reserved.entryId }, data: {
+                revision: { increment: 1 },
+                ...(reserved.entry.currentVersionReceiptId === reserved.id ? { cardSha256: versionCard!.sha256 } : {}),
+              } })
             }
             await transaction.skill.update({
               where: { id: req.params.id },
@@ -1871,43 +1932,6 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
                 ...(envDependencies ? { envDependencies } : {}),
               },
             })
-            const recipients = await transaction.teamMember.findMany({
-              where: {
-                userId: { not: req.user.id },
-                team: {
-                  dissolvedAt: null,
-                  skillShares: { some: { skillId: req.params.id } },
-                },
-              },
-              distinct: ['userId'],
-              select: { userId: true },
-            })
-            const sharedTeams = await transaction.skillTeamShare.findMany({
-              where: { skillId: req.params.id, team: { dissolvedAt: null } },
-              select: { teamId: true },
-            })
-            await recordTeamActivities(transaction, sharedTeams.map((share) => share.teamId), {
-              actorId: req.user.id,
-              type: 'skill_version_published',
-              payload: {
-                skillId: req.params.id,
-                skillName: lockedSkill.displayName,
-                version: body.data.version,
-              },
-            })
-            if (recipients.length > 0) {
-              await transaction.notification.createMany({
-                data: recipients.map((recipient) => ({
-                  userId: recipient.userId,
-                  type: 'skill_update',
-                  payload: {
-                    skillId: req.params.id,
-                    skillName: lockedSkill.displayName,
-                    version: body.data.version,
-                  },
-                })),
-              })
-            }
             return { outcome: 'created', version } as const
           })
         })
@@ -1969,7 +1993,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         const share = await transaction.skillTeamShare.upsert({
           where: { skillId_teamId: { skillId: req.params.id, teamId } },
           update: {},
-          create: { skillId: req.params.id, teamId, sharedById: req.user.id },
+          create: { skillId: req.params.id, teamId, sharedById: req.user.id, versionId: installableVersion.id },
           select: { skillId: true, teamId: true, sharedById: true, createdAt: true },
         })
         if (!existingShare) {
@@ -2002,6 +2026,65 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   )
 
+  fastify.get<{ Params: { id: string; teamId: string } }>('/:id/shares/:teamId', async (req, reply): Promise<FastifyReply> => {
+    const skill = await db.skill.findUnique({ where: { id: req.params.id } })
+    if (!skill || skill.deletedAt) return reply.notFound()
+    if (skill.authorId !== req.user.id) return reply.forbidden()
+    const selected = await resolveTeamVersion(req.user.id, skill.id, req.params.teamId)
+    if (!selected) return reply.notFound()
+    const recipients = await acquiredTeamRecipients(db, skill.id, req.params.teamId, req.user.id)
+    const card = selected.version.cardSha256 ? await db.skillCard.findUnique({ where: { sha256: selected.version.cardSha256 } }) : null
+    return reply.send({ versionId: selected.pinnedVersionId, version: selected.version.version,
+      contentIdentity: versionContentIdentity({ ...selected.version, card }),
+      packageSha256: selected.version.packageSha256, recipientCount: recipients.length })
+  })
+
+  fastify.put<{ Params: { id: string; teamId: string }; Body: { versionId: string; expectedVersionId: string | null } }>(
+    '/:id/shares/:teamId', async (req, reply): Promise<FastifyReply> => {
+      const body = z.object({ versionId: z.string().uuid(), expectedVersionId: z.string().uuid().nullable() }).safeParse(req.body)
+      if (!body.success) return reply.badRequest(body.error.message)
+      const { id: skillId, teamId } = req.params
+      const owner = await db.skill.findUnique({ where: { id: skillId }, select: { authorId: true, deletedAt: true } })
+      if (!owner || owner.deletedAt) return reply.notFound()
+      if (owner.authorId !== req.user.id) return reply.forbidden()
+      const prepared = await db.skillVersion.findFirst({ where: { id: body.data.versionId, skillId },
+        select: { id: true, version: true, packageData: true, cardSha256: true, packageSha256: true } })
+      if (!prepared) return reply.badRequest('Version does not belong to this Skill')
+      try {
+        const bytes = await loadVersionPackage(prepared)
+        if (!bytes) throw new Error('Package unavailable')
+        validateSkillPackage(bytes)
+        if (prepared.packageSha256 && createHash('sha256').update(bytes).digest('hex') !== prepared.packageSha256) throw new Error('Checksum mismatch')
+      } catch { return reply.code(409).send({ code: 'TEAM_VERSION_PACKAGE_INVALID', error: 'Team version package failed validation' }) }
+      const result = await db.$transaction(async transaction => {
+        await lockUserMutation(transaction, req.user.id)
+        await lockSkillTeamMutation(transaction, skillId, teamId)
+        const skill = await transaction.skill.findUnique({ where: { id: skillId } })
+        if (!skill || skill.deletedAt) return { status: 404 } as const
+        if (skill.authorId !== req.user.id) return { status: 403 } as const
+        const share = await transaction.skillTeamShare.findFirst({ where: { skillId, teamId,
+          team: { dissolvedAt: null, members: { some: { userId: req.user.id } } } },
+          select: { versionId: true, version: { select: { version: true } } } })
+        if (!share) return { status: 404 } as const
+        const currentVersion = { versionId: share.versionId ?? null, version: share.version?.version ?? skill.currentVersion }
+        if (currentVersion.versionId !== body.data.expectedVersionId) return { status: 409, code: 'TEAM_VERSION_CHANGED', currentVersion } as const
+        const version = await transaction.skillVersion.findFirst({ where: { id: prepared.id, skillId },
+          select: { id: true, version: true, packageSha256: true, cardSha256: true } })
+        if (!version || version.packageSha256 !== prepared.packageSha256 || version.cardSha256 !== prepared.cardSha256 || version.version !== prepared.version) return { status: 409, code: 'TEAM_VERSION_PACKAGE_CHANGED' } as const
+        const ordinal = versionOrdinal(version.version)
+        const currentOrdinal = versionOrdinal(currentVersion.version)
+        // A legacy null pin already follows currentVersion; fixing that exact version is not a rollback.
+        if (ordinal === null || currentOrdinal === null || ordinal < currentOrdinal || (share.versionId !== null && share.versionId !== undefined && ordinal === currentOrdinal)) return { status: 409, code: 'TEAM_VERSION_NOT_NEWER', currentVersion } as const
+        const recipients = await acquiredTeamRecipients(transaction, skillId, teamId, req.user.id)
+        await transaction.skillTeamShare.update({ where: { skillId_teamId: { skillId, teamId } }, data: { versionId: version.id } })
+        const payload = { skillId, teamId, skillName: skill.displayName, version: version.version }
+        await recordTeamActivity(transaction, { teamId, actorId: req.user.id, type: 'skill_version_published', payload })
+        if (recipients.length) await transaction.notification.createMany({ data: recipients.map(userId => ({ userId, type: 'skill_update', payload })) })
+        return { status: 200, versionId: version.id, version: version.version, recipientCount: recipients.length } as const
+      })
+      return reply.code(result.status).send(result.status === 200 ? result : { ...result, error: 'Unable to publish this team version' })
+    })
+
   // DELETE /api/skills/:id/shares/:teamId
   fastify.delete<{ Params: { id: string; teamId: string } }>(
     '/:id/shares/:teamId',
@@ -2023,6 +2106,10 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
           where: { skillId: req.params.id, teamId: req.params.teamId },
         })
         if (removed.count > 0) {
+          const recipients = await acquiredTeamRecipients(transaction, skill.id, req.params.teamId, req.user.id)
+          if (recipients.length) await transaction.notification.createMany({ data: recipients.map(userId => ({
+            userId, type: 'skill_unshared', payload: { skillId: skill.id, teamId: req.params.teamId, skillName: skill.displayName },
+          })) })
           await recordTeamActivity(transaction, {
             teamId: req.params.teamId,
             actorId: req.user.id,
@@ -2105,7 +2192,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
             description: analysis.profile.description,
             category: analysis.profile.category,
             labels: config.SKILLHUB_PROFILE === 'selfhost' && current.labelsManuallyEdited ? jsonArrayInput(current.labels) : analysis.profile.labels,
-            ...(config.SKILLHUB_PROFILE === 'selfhost' ? { analysisStatus: 'completed' } : {}),
+            analysisStatus: 'completed',
             triggerScenarios: analysis.profile.triggerScenarios,
             sourceContent,
           },

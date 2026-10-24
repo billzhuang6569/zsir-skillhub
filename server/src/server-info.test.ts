@@ -28,6 +28,19 @@ const originalConfig = {
 afterEach(() => { Object.assign(config, originalConfig) })
 
 describe('public server information', () => {
+  it.each(['selfhost', 'yitan-official'] as const)('%s public health and readiness never publish instance bases', (profile) => {
+    Object.assign(config, {
+      SKILLHUB_PROFILE: profile,
+      PUBLIC_BASE_URL: 'https://public.example/SkillHub',
+      INSTANCE_ADDITIONAL_BASE_URLS: ['https://tailnet.example/SkillHub', 'https://192.0.2.20/SkillHub'],
+      HOST: '127.0.0.9', PORT: 3999,
+    })
+    for (const status of ['ok', 'ready', 'unavailable'] as const) {
+      const info = publicServiceInfo(status)
+      expect(info).not.toHaveProperty('baseUrls')
+      expect(JSON.stringify(info)).not.toMatch(/tailnet\.example|192\.0\.2\.20|127\.0\.0\.9/)
+    }
+  })
   it.each(['selfhost', 'yitan-official'] as const)('describes %s authentication, media and optional minimum version', (profile) => {
     Object.assign(config, {
       SKILLHUB_PROFILE: profile, AUTH_MODE: 'yitan', LOCAL_REGISTRATION_ENABLED: true,
@@ -111,7 +124,7 @@ describe('public server information', () => {
   it('uses the checked-in server package version in public status payloads', () => {
     const now = new Date('2026-08-03T00:00:00.000Z')
 
-    expect(SERVER_VERSION).toBe('0.32.1')
+    expect(SERVER_VERSION).toBe('0.33.0')
     expect(publicServiceInfo('ready', now, releaseMetadata)).toEqual({
       profile: 'yitan-official',
       auth: { password: true, yitanOidc: false, registration: 'open' },
@@ -119,7 +132,7 @@ describe('public server information', () => {
       features: { marketplace: true, ai: false, avatars: false },
       minClientVersion: null,
       status: 'ready',
-      version: '0.32.1',
+      version: '0.33.0',
       buildId: releaseMetadata.buildId,
       migrationMarker: releaseMetadata.migrationMarker,
       capabilities: [
@@ -128,6 +141,7 @@ describe('public server information', () => {
         'auth.yitan-backchannel-logout.v1',
         'teams.management.v1',
         'teams.owner-invites.v1',
+        'teams.skill-links.v1',
         'skills.packages.v1',
         'skills.source-url.v1',
         'skills.version-mutation-digest.v1',
@@ -143,6 +157,7 @@ describe('public server information', () => {
         'media.picem.v1',
         'skills.avatars.v1',
         'skills.library-sync.v1',
+        'library.author-asset-inherit.v1',
         'skills.library-organizer.v1',
         'skills.version-policy.v1',
         'app-updates.manifest.v1',
@@ -159,8 +174,8 @@ describe('public server information', () => {
     expect(SERVER_CAPABILITIES).not.toContain('credentials.native-consent.v1')
   })
 
-  it('uses the catalog token migration as the current readiness marker', () => {
-    expect(SERVER_MIGRATION_MARKER).toBe('20261021130000_catalog_tokens')
+  it('uses the enrichment migration as the current readiness marker', () => {
+    expect(SERVER_MIGRATION_MARKER).toBe('20261024160000_skill_enrichment')
   })
 
   it('rejects malformed or unrelated package manifests', () => {

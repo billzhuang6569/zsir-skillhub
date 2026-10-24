@@ -6,7 +6,7 @@ import {
   resolveRemoteSkillBinding,
 } from '../src/lib/ui-helpers.ts'
 import {
-  findLocalSkillByManagedId, hydrateDownloadedSkill, mergeMarketplaceSkill, mergeSkillSources,
+  findLocalSkillByManagedId, hydrateDownloadedSkill, mergeMarketplaceSkill, mergeSkillSources, mergeApiSkill,
   remoteManagedSkillId,
 } from '../src/lib/skills.ts'
 import { deleteScopeFor, syncedToAccount } from '../src/lib/library-sync.ts'
@@ -42,6 +42,35 @@ function localSkill() {
     serverId: 'old-account-skill-id',
   }
 }
+
+test('team update keeps installed keys and compares immutable IDs, including local edits', () => {
+  const local = { ...localSkill(), acquisitionSource: 'team' as const, acquiredByUserId: 'member', sourceVersionId: 'old', sourceLocalModified: true,
+    envDeps: [{ key: 'OLD_KEY', required: true, configured: true, sharePolicy: 'none' as const, sharedTeams: [] }],
+  }
+  const remote = { id: local.serverId, name: local.name, displayName: local.displayName, labels: [], triggerScenarios: [], compatibleAgents: [],
+    currentVersion: '0.1.1', teamVersionId: 'new', authorId: 'author', installCount: 1, visibility: 'team', marketplaceStatus: 'none', createdAt: '', updatedAt: '',
+    envDependencies: [{ key: 'NEW_KEY', required: true }],
+  }
+  const merged = mergeApiSkill(remote, local, 'team-a', 'member')
+  assert.deepEqual(merged.envDeps, local.envDeps)
+  assert.equal(merged.teamEnvDeps?.[0].key, 'NEW_KEY')
+  assert.equal(merged.teamUpdateStatus, 'local_modified')
+  assert.equal(mergeApiSkill({ ...remote, teamVersionId: 'old' }, local, 'team-a', 'member').teamUpdateStatus, 'up_to_date')
+  assert.equal(mergeApiSkill(remote, local, 'team-a', 'other').teamUpdateStatus, 'account_mismatch')
+  const syncedTeamLocal = { ...local, acquiredByUserId: undefined, libraryAccountId: 'member' }
+  assert.equal(mergeApiSkill(remote, syncedTeamLocal, 'team-a', 'member').teamUpdateStatus, 'local_modified')
+  assert.equal(mergeApiSkill(remote, { ...syncedTeamLocal, libraryAccountId: 'other' }, 'team-a', 'member').teamUpdateStatus, 'account_mismatch')
+  assert.equal(mergeApiSkill(remote, undefined, 'team-a', 'member').teamUpdateStatus, undefined)
+})
+
+test('withdrawn source keeps local content and does not switch to another team implicitly', () => {
+  const local = { ...localSkill(), isOwn: false, acquisitionSource: 'team' as const, teamSharedFrom: 'team-a' }
+  const [merged] = mergeSkillSources([local], [], { accountUserId: 'member', activeTeamId: null, membershipsValidated: true, teamSources: [] })
+  assert.equal(merged.teamUnshared, true)
+  assert.equal(merged.serverId, local.serverId)
+  assert.equal(merged.localPath, local.localPath)
+  assert.equal(merged.teamUpdateStatus, 'access_revoked')
+})
 
 test('remote assets with the same name receive distinct deterministic local ids', () => {
   const first = remoteManagedSkillId('shared-skill', '019f9d24-3624-7be0-917f-a9b197c2cde7')

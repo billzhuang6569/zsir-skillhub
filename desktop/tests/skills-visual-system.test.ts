@@ -120,7 +120,7 @@ test('SkillRow (#289, v0.29 type sizes): 44px ringed avatar, name line, 友好�
   assert.match(list, /className=\{AVATAR_CLASS\}\n\s*avatarUrl=\{skill\.avatarUrl\}\n\s*status=\{skill\.avatarStatus\}\n\s*size=\{44\}/)
   const order = ['skill-library-name-row', 'skill-library-text', 'skill-library-subtitle', 'skill-library-desc', 'skill-library-side'].map((name) => list.indexOf(name))
   assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > (order[position - 1] ?? 0))), `row order ${order}`)
-  assert.match(list, /\{title\.secondary && <span className=\{`skill-library-subtitle/)
+  assert.match(list, /<span className=\{`skill-library-subtitle/)
   // #289: the description is always shown; a version problem lives in the warning tooltip instead.
   assert.match(list, /\{skill\.description && <span className="skill-library-desc" title=\{skill\.description\}>\{skill\.description\}<\/span>\}/)
   // #323: line 2 shows the private tag chips instead of the AI category text.
@@ -141,10 +141,13 @@ test('SkillRow (#289, v0.29 type sizes): 44px ringed avatar, name line, 友好�
   assert.match(row, /contain-intrinsic-size: auto 70px;/)
   assert.match(row, /min-height: 64px;/)
   assert.match(row, /transition-duration: var\(--motion-base\);/)
-  // Wide list: badges in a trailing column; narrow Skill browser: badges lead line 2.
-  assert.match(row, /grid-template-areas:\n\s*"avatar name name chevron"\n\s*"avatar text side chevron"\n\s*"avatar desc desc chevron";/)
+  // The fixed trailing column spans all copy rows so an update button cannot change their heights.
+  assert.match(row, /grid-template-columns: var\(--skill-library-avatar-size\) minmax\(0, 1fr\) 220px 14px;/)
+  assert.match(row, /grid-template-areas:\n\s*"avatar name side chevron"\n\s*"avatar text side chevron"\n\s*"avatar desc side chevron";/)
+  assert.match(rule(listCss, '.skill-library-side'), /width: 220px; align-self: center;/)
+  assert.match(listCss, /@container skill-library \(max-width: 560px\) \{[^}]*grid-template-columns: var\(--skill-library-avatar-size\) minmax\(0, 1fr\) 112px 14px;/)
   assert.match(listCss, /container: skill-library \/ inline-size;/)
-  assert.match(listCss, /@container skill-library \(max-width: 560px\) \{[^@]*\.skill-library-row \{ padding-inline: var\(--space-3\); \}/)
+  assert.match(listCss, /@container skill-library \(max-width: 560px\) \{[^@]*\.skill-library-row \{[^}]*padding-inline: var\(--space-3\); \}/)
   assert.match(rule(listCss, '.skill-library-copy'), /display: contents;/)
   assert.match(rule(listCss, '.skill-library-row:hover'), /transform: translateY\(-2px\); box-shadow: var\(--shadow-card\);/)
   assert.match(listCss, /@media \(prefers-reduced-motion: reduce\) \{\n\s*\.skill-library-row \{ transition: none; \}\n\s*\.skill-library-row:hover \{ transform: none; box-shadow: none; \}/)
@@ -155,13 +158,13 @@ test('SkillRow (#289, v0.29 type sizes): 44px ringed avatar, name line, 友好�
   assert.match(rule(listCss, '.skill-library-subtitle'), /color: var\(--color-ink\);[^]*font-size: 11px;[^]*font-weight: 650;/)
   assert.match(rule(listCss, '.skill-library-desc'), /color: var\(--color-muted\);[^]*font-size: 11px;/)
   assert.match(rule(listCss, '.skill-library-row:focus-visible'), /outline: 2px solid var\(--color-brand\);/)
-  // Team-share ring keeps its animation and the static reduced-motion variant, now from brand tokens.
-  assert.match(rule(listCss, '.skill-library-avatar-wrap.team-shared::before'), /conic-gradient\(from 0deg, var\(--color-brand-tint\), var\(--color-brand\)/)
-  assert.match(listCss, /@media \(prefers-reduced-motion: reduce\) \{\n\s*\.skill-library-avatar-wrap\.team-shared::before \{ animation: none; background: linear-gradient\(135deg, var\(--color-brand-tint\), var\(--color-brand\)\); \}/)
+  // The shared state uses the same static brand ring in both motion preferences.
+  assert.match(rule(listCss, '.skill-library-avatar-wrap.team-shared'), /box-shadow: inset 0 0 0 2px var\(--color-brand\);/)
+  assert.doesNotMatch(rule(listCss, '.skill-library-avatar-wrap.team-shared'), /animation|transform|transition/)
 })
 
 test('row badges: muted mono version text, 待确认/已修改 pills, system brand tag, Agent installed / broken dots, 未安装 fallback', () => {
-  assert.match(list, /<span className="skill-library-version-text mono">\{versionDisplay\.label\}<\/span>/)
+  assert.match(list, /<span className="skill-library-version-text mono">\{context === 'team' \? `团队版本 \$\{skill.latestVersion \?\? skill.version\}` : versionDisplay\.label\}<\/span>/)
   assert.match(rule(listCss, '.skill-library-version-text'), /color: var\(--color-muted\);/)
   assert.match(list, /\{skill\.versionStatus === 'pending' && <span className="skill-library-version">待确认<\/span>\}/)
   assert.match(list, /\{skill\.hasWorkingCopy && <span className="skill-library-version">已修改<\/span>\}/)
@@ -187,7 +190,7 @@ test('SkillCard: 48px ringed avatar, radius-lg, shadow-sm at rest, 2px hover lif
 })
 
 test('unmanaged cards share the dense row geometry and keep the lasso selection indicator room', () => {
-  assert.match(unmanaged, /<CategoryIcon size=\{44\} \/>/)
+  assert.match(unmanaged, /<SkillAvatarIcon avatarUrl=\{avatarUrl\} size=\{44\} \/>/)
   assert.match(unmanaged, /local-library-subtitle/)
   const body = rule(cardCss, '.local-library-card')
   assert.match(body, /grid-template-columns: 44px minmax\(0, 1fr\) auto 14px;/)
@@ -195,6 +198,17 @@ test('unmanaged cards share the dense row geometry and keep the lasso selection 
   assert.match(body, /contain-intrinsic-size: auto 72px;/)
   assert.match(body, /content-visibility: auto;/)
   assert.match(read('src/components/LocalSkillPreviewPanel.tsx'), /<CategoryIcon size=\{112\} \/>/)
+})
+
+test('local list typography matches cloud names and leaves room for longer version labels', () => {
+  for (const property of ['font-size', 'font-weight', 'line-height']) {
+    const value = (body: string): string | undefined => body.match(new RegExp(`${property}: ([^;]+);`))?.[1]
+    assert.equal(value(rule(cardCss, '.local-library-name-row strong')), value(rule(listCss, '.skill-library-name-row strong')))
+  }
+  assert.match(rule(cardCss, '.local-library-name-row'), /flex-wrap: nowrap;/)
+  assert.match(rule(cardCss, '.local-library-name-row .skill-library-version'), /flex: none;[^]*font-size: 10px;[^]*white-space: nowrap;/)
+  assert.match(rule(cardCss, '.local-library-subtitle'), /font-size: 11px;[^]*font-weight: 650;[^]*line-height: 16px;/)
+  assert.match(rule(cardCss, '.local-library-meta'), /font-size: 11px; line-height: 16px;/)
 })
 
 test('detail sheet shell: 64px header avatar for every Skill, label tabs with a brand underline, no gradients', () => {

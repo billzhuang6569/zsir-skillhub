@@ -93,6 +93,10 @@ pub struct LocalSkill {
     pub integrity_status: Option<String>,
     pub acquisition_source: AcquisitionSource,
     pub acquisition_package_sha256: Option<String>,
+    pub source_modified_files: Option<u32>,
+    pub source_local_modified: bool,
+    pub source_package_ready: bool,
+    pub copied_from_source: bool,
     /// Transient recovery id returned only by a successful Marketplace replacement.
     /// It is never persisted in `.skillhub.json` and lets the UI roll back if a
     /// later Agent installation step fails.
@@ -119,6 +123,8 @@ pub struct LocalSkill {
     pub server_id: Option<String>,
     pub catalog_origin: Option<String>,
     pub acquisition_version: Option<String>,
+    pub source_version_id: Option<String>,
+    pub acquired_by_user_id: Option<String>,
     pub server_owner_id: Option<String>,
     /// Account library binding (cloud sync); see `SkillHubProfile`.
     pub library_account_id: Option<String>,
@@ -314,6 +320,25 @@ pub struct DiffLine {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillPackageDiffLine {
+    pub kind: String,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillPackageFileDiff {
+    pub path: String,
+    pub status: String,
+    pub binary: bool,
+    pub too_large: bool,
+    pub lines: Vec<SkillPackageDiffLine>,
+}
+
 // ── SkillHub root directory ─────────────────────────────────────────────────
 
 pub(crate) fn user_home_dir() -> Option<PathBuf> {
@@ -372,6 +397,8 @@ pub struct SkillHubJson {
 #[serde(rename_all = "camelCase")]
 pub struct SkillHubProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog_origin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acquisition_version: Option<String>,
@@ -388,6 +415,8 @@ pub struct SkillHubProfile {
     pub is_system: bool,
     pub system_version: Option<String>,
     pub upstream: Option<SkillUpstream>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_origin: Option<SkillUpstream>,
     pub acquisition_source: Option<AcquisitionSource>,
     pub acquisition_package_sha256: Option<String>,
     /// Account that acquired a Team-distributed asset. This is intentionally
@@ -510,6 +539,8 @@ pub struct SkillPackage {
     pub base64: String,
     pub sha256: String,
     pub size: usize,
+    pub content_hash: String,
+    pub executable_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -604,6 +635,10 @@ pub(crate) fn sanitize_source_url(value: Option<&str>) -> Option<String> {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportSkillPackageInput {
+    #[serde(default)]
+    pub source_version_id: Option<String>,
+    #[serde(default)]
+    pub team_modifications: Option<String>,
     #[serde(default)]
     pub catalog_origin: Option<String>,
     pub skill_id: String,
@@ -820,7 +855,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         name: "WorkBuddy",
         executables: &[],
         skill_root_override: None,
-        macos: supported_agent_platform(".workbuddy-ai/skills", &["WorkBuddy AI.app"]),
+        macos: supported_agent_platform(".workbuddy/skills", &["WorkBuddy.app"]),
         // The verified per-user install is
         // `%LOCALAPPDATA%/Programs/WorkBuddy/WorkBuddy.exe`. A custom install
         // location is found through the Uninstall/App Paths registration of
@@ -830,6 +865,17 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
             &["Programs/WorkBuddy/WorkBuddy.exe"],
         )
         .with_installed_app_executables(&["WorkBuddy.exe"]),
+        other: UNSUPPORTED_AGENT_PLATFORM,
+    },
+    AgentDefinition {
+        // Before #548 macOS used `workbuddy` for this directory. Installation
+        // states are derived from links, so existing links now belong to this key.
+        key: "workbuddy-ai",
+        name: "WorkBuddy AI",
+        executables: &[],
+        skill_root_override: None,
+        macos: supported_agent_platform(".workbuddy-ai/skills", &["WorkBuddy AI.app"]),
+        windows: UNSUPPORTED_AGENT_PLATFORM,
         other: UNSUPPORTED_AGENT_PLATFORM,
     },
     AgentDefinition {
@@ -1555,6 +1601,9 @@ pub fn run() {
             spaces::observe_session(app.handle().clone());
             app_links::setup(app)?;
             ensure_skillhub_dirs()?;
+            if commands::source_edits::cleanup_team_previews().is_err() {
+                eprintln!("SkillHub: temporary team preview cleanup deferred until next startup");
+            }
             // Older builds aggregated every Skill secret into one shell file.
             // Retire only files that carry SkillHub's marker; values continue
             // to live per Skill and are injected into an explicit CLI session.
@@ -1650,6 +1699,11 @@ pub fn run() {
             commands::get_skill_tree,
             commands::update_skill_profile,
             commands::ensure_skill_avatar_identity,
+            commands::source_edits::get_skill_source_diff,
+            commands::source_edits::get_skill_package_diff,
+            commands::source_edits::get_skill_package_file_diffs,
+            commands::source_edits::save_skill_as_personal,
+            commands::source_edits::discard_skill_source_changes,
             commands::cache_skill_avatar,
             commands::read_avatar_parking,
             commands::write_avatar_parking,
@@ -1694,6 +1748,8 @@ pub fn run() {
             team_keys::set_team_key_aliases,
             team_keys::team_key_usage,
             runtime_env::get_runtime_cli_status,
+            runtime_env::get_runtime_cli_storage,
+            runtime_env::cleanup_runtime_cli,
             runtime_env::recheck_runtime_cli,
             library_sync::library_sync_run,
             library_sync::library_sync_status,
@@ -1728,7 +1784,7 @@ pub fn run() {
     });
 }
 
-const CLI_USAGE: &str = "用法：\n  skillhub --version\n  skillhub server show [--json]\n  skillhub server use <url|official|local>\n  skillhub status --json\n  skillhub doctor --json\n  skillhub auth status [--refresh] --json\n  skillhub app open --json\n  skillhub update check --json\n  skillhub agent list --json\n  skillhub skill --help\n  skillhub marketplace --help\n  skillhub team --help\n  skillhub feedback --help\n  skillhub env --help\n  skillhub sync --help\n  skillhub run <skill-id> -- <program> [args...]";
+const CLI_USAGE: &str = "用法：\n  skillhub --version\n  skillhub server show [--json]\n  skillhub server use <url|official|local> [--json]\n  skillhub status [--json]\n  skillhub doctor [--json]\n  skillhub auth status [--refresh] [--json]\n  skillhub app open [--json]\n  skillhub update check [--json]\n  skillhub agent list [--json]\n  skillhub skill --help\n  skillhub marketplace --help\n  skillhub team --help\n  skillhub feedback --help\n  skillhub env --help\n  skillhub sync --help\n  skillhub run <skill-id> -- <program> [args...]";
 
 fn cli_help(args: &[String]) -> Option<String> {
     let root_help = matches!(
@@ -1745,14 +1801,14 @@ fn cli_help(args: &[String]) -> Option<String> {
 
     match args.first().map(String::as_str) {
         Some("--help" | "-h" | "help") => Some(CLI_USAGE.to_string()),
-        Some("status") => Some("用法：skillhub status --json".to_string()),
-        Some("doctor") => Some("用法：skillhub doctor --json".to_string()),
-        Some("auth") => Some("用法：skillhub auth status [--refresh] --json".to_string()),
+        Some("status") => Some("用法：skillhub status [--json]".to_string()),
+        Some("doctor") => Some("用法：skillhub doctor [--json]".to_string()),
+        Some("auth") => Some("用法：skillhub auth status [--refresh] [--json]".to_string()),
         Some("server") => Some(
-            "用法：skillhub server show [--json] | skillhub server use <url|official|local>"
+            "用法：skillhub server show [--json] | skillhub server use <url|official|local> [--json]"
                 .to_string(),
         ),
-        Some("agent") => Some("用法：skillhub agent list --json".to_string()),
+        Some("agent") => Some("用法：skillhub agent list [--json]".to_string()),
         Some("app") => Some(cli_app::APP_USAGE.to_string()),
         Some("update") => Some(cli_app::UPDATE_USAGE.to_string()),
         Some("skill") => Some(format!(
@@ -1782,6 +1838,7 @@ fn cli_help(args: &[String]) -> Option<String> {
 pub fn run_cli(args: &[String]) -> i32 {
     if let Some(help) = cli_help(args) {
         println!("{help}");
+        println!("控制面命令默认输出 JSON；--json 可省略。--help 与 --version 输出纯文本。");
         return 0;
     }
     if matches!(args.first().map(String::as_str), Some("--version" | "-V")) {
@@ -1789,8 +1846,27 @@ pub fn run_cli(args: &[String]) -> i32 {
         return 0;
     }
     if let Err(error) = spaces::recover_cli_startup(&skillhub_dir()) {
-        eprintln!("{error}");
-        return cli::EXIT_CONFLICT;
+        if args.first().map(String::as_str) == Some("run") {
+            eprintln!("{error}");
+            return cli::EXIT_CONFLICT;
+        }
+        return cli::CliCommandOutput::failure(
+            match args.first().map(String::as_str) {
+                Some("server") => match args.get(1).map(String::as_str) {
+                    Some("show") => "server show",
+                    Some("use") => "server use",
+                    _ => "server",
+                },
+                Some(command) => command,
+                None => "unknown",
+            },
+            cli::CliAccount::state(cli::CliAccountState::Unknown),
+            cli::CliErrorCode::Conflict,
+            error.clone(),
+            cli::EXIT_CONFLICT,
+            vec![error],
+        )
+        .write_to_stdout();
     }
     if args.first().map(String::as_str) == Some("server") {
         return cli_server::run(args);
@@ -1813,8 +1889,15 @@ pub fn run_cli(args: &[String]) -> i32 {
                 | "sync"
         )
     ) {
-        eprintln!("{CLI_USAGE}");
-        return 2;
+        return cli::CliCommandOutput::failure(
+            "unknown",
+            cli::CliAccount::state(cli::CliAccountState::Unknown),
+            cli::CliErrorCode::ValidationFailed,
+            CLI_USAGE,
+            cli::EXIT_USAGE,
+            Vec::new(),
+        )
+        .write_to_stdout();
     }
     if cli_mutation::is_mutation_command(args) {
         let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -1823,8 +1906,15 @@ pub fn run_cli(args: &[String]) -> i32 {
         {
             Ok(runtime) => runtime,
             Err(error) => {
-                eprintln!("无法启动 SkillHub CLI: {error}");
-                return 1;
+                return cli::CliCommandOutput::failure(
+                    "unknown",
+                    cli::CliAccount::state(cli::CliAccountState::Unknown),
+                    cli::CliErrorCode::InternalError,
+                    format!("无法启动 SkillHub CLI: {error}"),
+                    cli::EXIT_INTERNAL,
+                    Vec::new(),
+                )
+                .write_to_stdout();
             }
         };
         return runtime
@@ -1839,8 +1929,15 @@ pub fn run_cli(args: &[String]) -> i32 {
         {
             Ok(runtime) => runtime,
             Err(error) => {
-                eprintln!("无法启动 SkillHub CLI: {error}");
-                return 1;
+                return cli::CliCommandOutput::failure(
+                    "unknown",
+                    cli::CliAccount::state(cli::CliAccountState::Unknown),
+                    cli::CliErrorCode::InternalError,
+                    format!("无法启动 SkillHub CLI: {error}"),
+                    cli::EXIT_INTERNAL,
+                    Vec::new(),
+                )
+                .write_to_stdout();
             }
         };
         return runtime
@@ -1855,8 +1952,15 @@ pub fn run_cli(args: &[String]) -> i32 {
         {
             Ok(runtime) => runtime,
             Err(error) => {
-                eprintln!("无法启动 SkillHub CLI: {error}");
-                return 1;
+                return cli::CliCommandOutput::failure(
+                    "unknown",
+                    cli::CliAccount::state(cli::CliAccountState::Unknown),
+                    cli::CliErrorCode::InternalError,
+                    format!("无法启动 SkillHub CLI: {error}"),
+                    cli::EXIT_INTERNAL,
+                    Vec::new(),
+                )
+                .write_to_stdout();
             }
         };
         return runtime
@@ -1876,8 +1980,19 @@ pub fn run_cli(args: &[String]) -> i32 {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("无法启动 SkillHub CLI: {error}");
-            return 1;
+            if args.first().map(String::as_str) == Some("run") {
+                eprintln!("无法启动 SkillHub CLI: {error}");
+                return cli::EXIT_INTERNAL;
+            }
+            return cli::CliCommandOutput::failure(
+                "unknown",
+                cli::CliAccount::state(cli::CliAccountState::Unknown),
+                cli::CliErrorCode::InternalError,
+                format!("无法启动 SkillHub CLI: {error}"),
+                cli::EXIT_INTERNAL,
+                Vec::new(),
+            )
+            .write_to_stdout();
         }
     };
     if args.first().map(String::as_str) == Some("auth") {
@@ -1929,7 +2044,7 @@ mod cli_exit_tests {
         assert_eq!(run_cli(&["--help".into()]), 0);
         assert_eq!(run_cli(&["--version".into()]), 0);
         assert_eq!(run_cli(&["invalid".into()]), 2);
-        assert_eq!(run_cli(&["auth".into(), "status".into()]), 2);
+        assert_ne!(run_cli(&["auth".into(), "status".into()]), 2);
         assert_eq!(run_cli(&["run".into(), "sample".into(), "env".into()]), 2);
         assert_eq!(
             run_cli(&["run".into(), "sample".into(), "--".into(), "env".into(),]),
@@ -1947,6 +2062,9 @@ mod cli_exit_tests {
             &["doctor"],
             &["auth", "status"],
             &["server", "show"],
+            &["server", "use"],
+            &["sync"],
+            &["sync", "status"],
             &["app", "open"],
             &["update", "check"],
             &["agent", "list"],
@@ -2008,6 +2126,16 @@ mod cli_exit_tests {
                 "unexpected help for {command:?}"
             );
             assert!(!help.contains("\"account\""));
+            assert!(
+                !help.contains(" --json"),
+                "required JSON flag in {command:?}"
+            );
+            if command[0] != "run" {
+                assert!(
+                    help.contains("[--json]"),
+                    "missing optional JSON flag in {command:?}"
+                );
+            }
             assert_eq!(run_cli(&args), 0, "leaf help failed: {command:?}");
         }
     }
@@ -2268,7 +2396,7 @@ mod agent_detection_tests {
         );
         let workbuddy = detected
             .iter()
-            .find(|agent| agent.key == "workbuddy")
+            .find(|agent| agent.key == "workbuddy-ai")
             .expect("find WorkBuddy");
         assert!(workbuddy.detected);
         assert_eq!(
@@ -2287,6 +2415,74 @@ mod agent_detection_tests {
         assert_eq!(doubao.skills_status, AgentSkillsStatus::Missing);
         assert_eq!(doubao.dir, "~/.agents/skills");
         fs::remove_dir_all(home).expect("remove app-only fixture");
+    }
+
+    #[test]
+    fn macos_workbuddy_apps_have_independent_evidence_and_directories() {
+        let temporary_home =
+            std::env::temp_dir().join(format!("skillhub-workbuddy-{}", uuid::Uuid::new_v4()));
+        let home = temporary_home.as_path();
+        let apps = home.join("Applications");
+        for relative in [".workbuddy/skills", ".workbuddy-ai/skills"] {
+            fs::create_dir_all(home.join(relative)).expect("create residual Skill root");
+        }
+        for (standard, ai) in [(false, false), (true, false), (false, true), (true, true)] {
+            for (bundle, installed) in [("WorkBuddy.app", standard), ("WorkBuddy AI.app", ai)] {
+                let path = apps.join(bundle);
+                if path.exists() {
+                    fs::remove_dir_all(&path).expect("remove fixture APP");
+                }
+                if installed {
+                    let executable = path.join("Contents/MacOS/Electron");
+                    fs::create_dir_all(executable.parent().unwrap()).expect("create APP");
+                    fs::write(&executable, "fixture").expect("write executable");
+                    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+                        .expect("make executable");
+                }
+            }
+            let detected = detect_agents_with_context(
+                home,
+                &[],
+                std::slice::from_ref(&apps),
+                &[],
+                AgentPlatform::Macos,
+            );
+            for (key, installed, dir, name) in [
+                ("workbuddy", standard, "~/.workbuddy/skills", "WorkBuddy"),
+                ("workbuddy-ai", ai, "~/.workbuddy-ai/skills", "WorkBuddy AI"),
+            ] {
+                let agent = detected.iter().find(|agent| agent.key == key).unwrap();
+                assert_eq!(
+                    agent.detected, installed,
+                    "{key}: standard={standard}, ai={ai}"
+                );
+                assert_eq!(agent.dir, dir);
+                assert_eq!(agent.name, name);
+                assert_eq!(agent.skills_status, AgentSkillsStatus::Ready);
+                assert_eq!(
+                    agent.detection_source,
+                    if installed {
+                        AgentDetectionSource::Application
+                    } else {
+                        AgentDetectionSource::None
+                    }
+                );
+            }
+        }
+        for platform in [AgentPlatform::Windows, AgentPlatform::Other] {
+            assert!(!known_agents_for_platform(platform)
+                .iter()
+                .any(|(key, _, _)| *key == "workbuddy-ai"));
+        }
+        assert_eq!(
+            known_agents_for_platform(AgentPlatform::Windows)
+                .iter()
+                .find(|(key, _, _)| *key == "workbuddy")
+                .unwrap()
+                .1,
+            "WorkBuddy"
+        );
+        fs::remove_dir_all(home).expect("remove fixture home");
     }
 
     #[test]

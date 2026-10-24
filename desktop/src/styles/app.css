@@ -35,10 +35,17 @@ html, body, #root { background: transparent; }
 }
 
 .app-workspace.skill-browser-open .app-main {
-  flex: 0 0 clamp(360px, 34vw, 460px);
+  flex: 0 0 clamp(320px, 38vw, 490px);
+  scrollbar-gutter: stable;
   border-right: 1px solid var(--color-line);
   background: var(--color-surface-sunken);
 }
+
+.skill-detail-placeholder { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--color-muted); background: var(--color-bg); }
+.local-agent-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.local-agent-filters button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-muted); cursor: pointer; }
+.local-agent-filters button[aria-pressed="true"] { background: var(--color-brand-tint); border-color: var(--color-brand); color: var(--color-brand); }
+.local-agent-filters button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 
 /* ---- Sidebar ---- */
 .sidebar {

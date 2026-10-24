@@ -14,8 +14,8 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-pub(crate) const MARKETPLACE_USAGE: &str = "用法：\n  skillhub marketplace search [--query <text>] [--category <category>] [--label <label>] [--agent <agent>] [--sort latest|downloads] [--page <n>] [--page-size <n>] --json\n  skillhub marketplace show <skill-id> --json";
-pub(crate) const TEAM_USAGE: &str = "用法：\n  skillhub team list --json\n  skillhub team skills <team-id> --json\n  skillhub team show <skill-id> --json";
+pub(crate) const MARKETPLACE_USAGE: &str = "用法：\n  skillhub marketplace search [--query <text>] [--category <category>] [--label <label>] [--agent <agent>] [--sort latest|downloads] [--page <n>] [--page-size <n>] [--json]\n  skillhub marketplace show <skill-id> [--json]";
+pub(crate) const TEAM_USAGE: &str = "用法：\n  skillhub team list [--json]\n  skillhub team skills <team-id> [--json]\n  skillhub team show <skill-id> [--json]";
 
 const MARKETPLACE_SEARCH_COMMAND: &str = "marketplace search";
 const MARKETPLACE_SHOW_COMMAND: &str = "marketplace show";
@@ -31,6 +31,7 @@ const MARKETPLACE_AGENTS: &[&str] = &[
     "codex",
     "agent-skills",
     "workbuddy",
+    "workbuddy-ai",
     "doubao",
     "opencode",
     "openclaw",
@@ -305,9 +306,6 @@ fn parse_marketplace_search(args: &[String]) -> Result<MarketplaceSearchArgs, ()
             _ => return Err(()),
         }
         index += 2;
-    }
-    if !json_requested {
-        return Err(());
     }
     Ok(parsed)
 }
@@ -720,7 +718,7 @@ fn authenticated_http_failure(
 }
 
 async fn authenticated_get(command: &'static str, url: Url) -> CliCommandOutput {
-    let guard = match CliAuthGuard::capture() {
+    let guard = match CliAuthGuard::capture_for_server() {
         Ok(guard) => guard,
         Err(error) => return auth_guard_failure(command, error),
     };
@@ -850,8 +848,7 @@ pub(crate) async fn execute_cloud_cli(args: &[String]) -> Option<CliCommandOutpu
                 return Some(public_get(MARKETPLACE_SEARCH_COMMAND, url).await);
             }
             if args.get(1).map(String::as_str) == Some("show")
-                && args.len() == 4
-                && args[3] == "--json"
+                && (args.len() == 3 || (args.len() == 4 && args[3] == "--json"))
             {
                 let skill_id = match parse_uuid(&args[2]) {
                     Ok(skill_id) => skill_id,
@@ -880,7 +877,7 @@ pub(crate) async fn execute_cloud_cli(args: &[String]) -> Option<CliCommandOutpu
             ))
         }
         Some("team") => {
-            if args == ["team", "list", "--json"] {
+            if args == ["team", "list"] || args == ["team", "list", "--json"] {
                 let url = match api_url("teams") {
                     Ok(url) => url,
                     Err(message) => {
@@ -896,7 +893,8 @@ pub(crate) async fn execute_cloud_cli(args: &[String]) -> Option<CliCommandOutpu
                 };
                 return Some(authenticated_get(TEAM_LIST_COMMAND, url).await);
             }
-            if args.len() == 4 && args[1] == "skills" && args[3] == "--json" {
+            if (args.len() == 3 || (args.len() == 4 && args[3] == "--json")) && args[1] == "skills"
+            {
                 let team_id = match parse_uuid(&args[2]) {
                     Ok(team_id) => team_id,
                     Err(()) => return Some(usage_failure(TEAM_SKILLS_COMMAND, TEAM_USAGE)),
@@ -919,7 +917,7 @@ pub(crate) async fn execute_cloud_cli(args: &[String]) -> Option<CliCommandOutpu
                     .append_pair("teamId", &team_id);
                 return Some(authenticated_get(TEAM_SKILLS_COMMAND, url).await);
             }
-            if args.len() == 4 && args[1] == "show" && args[3] == "--json" {
+            if (args.len() == 3 || (args.len() == 4 && args[3] == "--json")) && args[1] == "show" {
                 let skill_id = match parse_uuid(&args[2]) {
                     Ok(skill_id) => skill_id,
                     Err(()) => return Some(usage_failure(TEAM_SHOW_COMMAND, TEAM_USAGE)),
@@ -1047,7 +1045,7 @@ mod tests {
     }
 
     #[test]
-    fn marketplace_search_parser_is_bounded_and_requires_json() {
+    fn marketplace_search_parser_is_bounded_with_optional_json() {
         assert_eq!(
             parse_marketplace_search(&strings(&[
                 "marketplace",
@@ -1073,7 +1071,7 @@ mod tests {
             "--query",
             "writer"
         ]))
-        .is_err());
+        .is_ok());
         assert!(parse_marketplace_search(&strings(&[
             "marketplace",
             "search",
@@ -1097,6 +1095,14 @@ mod tests {
             "workbuddy",
             "--page",
             "200",
+            "--json"
+        ]))
+        .is_ok());
+        assert!(parse_marketplace_search(&strings(&[
+            "marketplace",
+            "search",
+            "--agent",
+            "workbuddy-ai",
             "--json"
         ]))
         .is_ok());
@@ -1244,5 +1250,21 @@ mod tests {
         let detail_encoded = serde_json::to_string(&detail_output).expect("skill output");
         assert!(!detail_encoded.contains("never-output"));
         assert_eq!(detail_output["teamShares"][0]["teamId"], TEAM_ID);
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &["marketplace", "search"],
+            &["marketplace", "search", "--query", "writer"],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_marketplace_search(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_marketplace_search(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_marketplace_search(&args).is_err(), "{case:?}");
+        }
     }
 }

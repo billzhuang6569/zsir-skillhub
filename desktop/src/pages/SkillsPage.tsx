@@ -20,7 +20,7 @@ import FocusTrapDialog from '../components/FocusTrapDialog.js'
 import UnmanagedSkillCard from '../components/UnmanagedSkillCard.js'
 import { emptyStateActions } from '../lib/onboarding.js'
 import AgentBrandIcon from '../components/AgentBrandIcon.js'
-import { cloudLibrarySkills, managedOutsideAccount } from '../lib/cloud-library.js'
+import { cloudEnrichmentProgress, cloudLibrarySkills, hasPendingCloudEnrichment, managedOutsideAccount, startCloudSkillRefresh } from '../lib/cloud-library.js'
 import { startLibraryWatch } from '../lib/library-watch.js'
 import { createRefreshCoalescer } from '../lib/refresh-coalescer.js'
 import type { ApiSkill } from '../lib/api.js'
@@ -51,10 +51,10 @@ import {
   libraryListEntries, librarySyncStatus,
   listLastRunFailures,
 } from '../lib/tauri.js'
-import { apiGetMySkills, apiImportSkill } from '../lib/api.js'
+import { apiGetMySkills, apiImportSkill, apiGetTeams, apiGetTeamSkills } from '../lib/api.js'
 import { mergeSkillSources } from '../lib/skills.js'
 import {
-  isTeamSharedSkill, sameEnvKeySummary, summarizeRequiredEnvRows, type EnvKeySummary, locallyManagedSkillNames, mapSettledWithConcurrency, matchesAgentInstallation, orderSkills, orderSkillsByName, reconcileAgentFilter, type SkillSortPreference,
+  isTeamSharedSkill, sameEnvKeySummary, summarizeRequiredEnvRows, type EnvKeySummary, locallyManagedSkillNames, unmanagedLocalSkills, isGenericLocalSkill, mapSettledWithConcurrency, matchesAgentInstallation, orderSkills, orderSkillsByName, reconcileAgentFilter, type SkillSortPreference,
   selectedVisibleLocalSkills,
 } from '../lib/skill-library.js'
 import { nextRovingIndex } from '../lib/ui-helpers.js'
@@ -216,6 +216,7 @@ export default function SkillsPage() {
   // One in-flight owned-Skills request per account: a native refresh started
   // while the previous cloud answer is still pending reuses it instead of
   // issuing another request; its own generation decides whether to publish it.
+  const teamSourcesRef = useRef<{ userId: string; space: SpaceHandle | null; expires: number; request: Promise<{ teamId: string; skills: ApiSkill[] | null }[]> } | null>(null)
   const ownedInFlightRef = useRef<{ userId: string; request: Promise<ApiSkill[]> } | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [importStep, setImportStep] = useState<ImportStep>('select')
@@ -274,16 +275,27 @@ export default function SkillsPage() {
       && (useStore.getState().currentUser?.id ?? null) === expectedUserId
     if (!silent) setLoadingSkills(true)
     setLoadError(null)
-    const ownedRequest = expectedUserId ? (): Promise<ApiSkill[]> => {
-      const inFlight = ownedInFlightRef.current
-      if (inFlight && inFlight.userId === expectedUserId) return inFlight.request
-      const request = apiGetMySkills().finally(() => {
-        if (ownedInFlightRef.current?.request === request) ownedInFlightRef.current = null
-      })
-      ownedInFlightRef.current = { userId: expectedUserId, request }
-      return request
+    const ownedRequest = expectedUserId ? async (): Promise<ApiSkill[]> => {
+      let catalog = teamSourcesRef.current
+      if (!catalog || catalog.userId !== expectedUserId || catalog.space !== expectedSpace || catalog.expires < Date.now() || !silent) {
+        catalog = { userId: expectedUserId, space: expectedSpace, expires: Date.now() + 30_000,
+          request: apiGetTeams(expectedSpace ?? undefined).then(teams => Promise.all(teams.map(async team => ({
+            teamId: team.id, skills: await apiGetTeamSkills(team.id, expectedSpace ?? undefined).catch(() => null),
+          })))) }
+        teamSourcesRef.current = catalog
+      }
+      let request = ownedInFlightRef.current?.userId === expectedUserId ? ownedInFlightRef.current.request : null
+      if (!request) {
+        request = apiGetMySkills(expectedSpace ?? undefined).finally(() => {
+          if (ownedInFlightRef.current?.request === request) ownedInFlightRef.current = null
+        })
+        ownedInFlightRef.current = { userId: expectedUserId, request }
+      }
+      const [owned, sources] = await Promise.all([request, catalog.request.catch(() => null)])
+      if (sources) { mergeContext.teamSources = sources; mergeContext.membershipsValidated = true }
+      return owned
     } : null
-    const mergeContext = { accountUserId: currentUser?.id, selfhost: capabilities.profile === 'selfhost', activeTeamId: null, membershipsValidated: false, teamSources: [] as never[] }
+    const mergeContext = { accountUserId: currentUser?.id, selfhost: capabilities.profile === 'selfhost', activeTeamId: null, membershipsValidated: false, teamSources: [] as { teamId: string; skills: ApiSkill[] | null }[] }
     const publishMerged = (merged: LocalSkill[]): void => {
       const state = useStore.getState()
       if (state.sheet?.kind === 'skill' && state.sheet.skillId.startsWith('library:')) {
@@ -373,9 +385,11 @@ export default function SkillsPage() {
   useEffect(() => {
     void loadSkills()
     const refresh = (): void => { void loadSkills(true) }
+    const refreshTeam = (): void => { teamSourcesRef.current = null; void loadSkills(true) }
     window.addEventListener('skillhub-local-changed', refresh)
     window.addEventListener(LIBRARY_ENTRIES_CHANGED_EVENT, refresh)
-    return () => { loadGenerationRef.current += 1; loadCoalescer.cancel(); window.removeEventListener('skillhub-local-changed', refresh); window.removeEventListener(LIBRARY_ENTRIES_CHANGED_EVENT, refresh) }
+    window.addEventListener('skillhub:refresh-team-shares', refreshTeam)
+    return () => { loadGenerationRef.current += 1; loadCoalescer.cancel(); window.removeEventListener('skillhub-local-changed', refresh); window.removeEventListener(LIBRARY_ENTRIES_CHANGED_EVENT, refresh); window.removeEventListener('skillhub:refresh-team-shares', refreshTeam) }
   }, [loadSkills, loadCoalescer])
 
   const rawManagedSkills = useMemo(
@@ -385,6 +399,7 @@ export default function SkillsPage() {
   const libraryEntries = useStore(state => state.libraryEntries)
   const libraryTransfers = useStore(state => state.libraryTransfers)
   const managedSkills = useMemo(() => cloudLibrarySkills(skills, libraryEntries, currentUser?.id ?? null, libraryTransfers), [skills, libraryEntries, currentUser?.id, libraryTransfers])
+  const managedNames = useMemo(() => locallyManagedSkillNames(rawManagedSkills), [rawManagedSkills])
   const unmanagedSkills = useMemo(() => {
     const managedLocal = managedOutsideAccount(rawManagedSkills, currentUser?.id ?? null).map(skill => ({
       id: `managed:${skill.id}`, managedSkillId: skill.id, name: skill.name, displayName: skill.displayName,
@@ -392,8 +407,13 @@ export default function SkillsPage() {
       localPath: skill.localPath, sources: [{ agentKey: 'skillhub', agentName: 'SkillHub', entryName: skill.id }],
       joinLocalId: !skill.libraryAccountId ? keptLocal.find(item => item.skillId === skill.id)?.localId : undefined,
     }))
-    return [...managedLocal, ...agentLocalSkills.filter(skill => !managedLocal.some(local => local.localPath === skill.localPath))]
+    return unmanagedLocalSkills([...managedLocal, ...agentLocalSkills], new Set(rawManagedSkills.map(skill => skill.localPath)))
   }, [rawManagedSkills, currentUser?.id, keptLocal, agentLocalSkills])
+  const [localAgentFilter, setLocalAgentFilter] = useState('')
+  const hasGenericSkills = unmanagedSkills.some(isGenericLocalSkill)
+  useEffect(() => {
+    if (localAgentFilter === 'generic' ? !hasGenericSkills : localAgentFilter && !detectedAgents.some(agent => agent.key === localAgentFilter)) setLocalAgentFilter('')
+  }, [detectedAgents, hasGenericSkills, localAgentFilter])
   const personalManagedSkillCount = managedSkills.length
   const teamIds = useMemo(() => new Set(teams.map((team) => team.id)), [teams])
 
@@ -529,11 +549,22 @@ export default function SkillsPage() {
     }
   }, [authStatus, envAccountUserId, setLastRunFailures, lastRunSkillIds])
 
+  const enrichmentPending = hasPendingCloudEnrichment(skills)
   useEffect(() => {
-    const refreshOnReturn = (): void => { void loadSkills(true) }
+    const polling = startCloudSkillRefresh(Boolean(currentUser) && authStatus === 'authenticated' && enrichmentPending,
+      () => { void loadSkills(true) }, () => document.visibilityState === 'visible',
+      () => cloudEnrichmentProgress(useStore.getState().skills))
+    const refreshOnReturn = (): void => { polling.resume(); void loadSkills(true) }
     window.addEventListener('focus', refreshOnReturn)
-    return () => window.removeEventListener('focus', refreshOnReturn)
-  }, [loadSkills])
+    window.addEventListener('pointerdown', polling.resume)
+    window.addEventListener('keydown', polling.resume)
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn)
+      window.removeEventListener('pointerdown', polling.resume)
+      window.removeEventListener('keydown', polling.resume)
+      polling.stop()
+    }
+  }, [loadSkills, currentUser, authStatus, enrichmentPending])
 
   // Picks up Skills that Agents or the terminal add, edit or remove while
   // SkillHub stays visible, without waiting for the window to regain focus.
@@ -630,10 +661,9 @@ export default function SkillsPage() {
     // 本地 Skills carry no timestamps, so 排序 (#361) applies to the account list only.
     return orderSkillsByName(unmanagedSkills.filter((skill) =>
       (!query || skill.displayName.toLowerCase().includes(query) || skill.name.toLowerCase().includes(query)) &&
-      (categoryFilter === '全部' || skill.sources.some((source) => source.agentName === categoryFilter))
+      (!localAgentFilter || (localAgentFilter === 'generic' ? isGenericLocalSkill(skill) : skill.sources.some(source => source.agentKey === localAgentFilter)))
     ))
-  }, [categoryFilter, searchQuery, unmanagedSkills])
-  const managedNames = useMemo(() => locallyManagedSkillNames(rawManagedSkills), [rawManagedSkills])
+  }, [localAgentFilter, searchQuery, unmanagedSkills])
   const visibleLocalIds = useMemo(
     () => filteredUnmanaged.map((skill) => skill.id),
     [filteredUnmanaged],
@@ -663,7 +693,7 @@ export default function SkillsPage() {
       return
     }
     const alreadyManaged = managedNames.has(selected.name)
-    if (localSkillPreview?.id === selected.id && localSkillPreview.alreadyManaged === alreadyManaged) return
+    if (localSkillPreview?.id === selected.id && localSkillPreview.alreadyManaged === alreadyManaged && localSkillPreview.joinLocalId === selected.joinLocalId) return
     setLocalSkillPreview({ ...selected, alreadyManaged })
   }, [filteredUnmanaged, localSkillPreview, managedNames, setLocalSkillPreview, skillTab])
 
@@ -987,11 +1017,14 @@ export default function SkillsPage() {
       >
         <div className="toolbar skills-filter-row" {...blankDragRegion()}>
           <label className="search-bar"><Icon name="search" size={14} /><input placeholder="告诉 SkillHub 你想找什么" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /></label>
-          <div className="category-scroll" aria-label={skillTab === 'local' ? 'Agent 工具' : 'Skill 分类'}>
+          {skillTab === 'local' ? <div className="local-agent-filters" aria-label="Agent 工具">
+            {detectedAgents.map(agent => <button type="button" key={agent.key} aria-label={agent.name} title={agent.name} aria-pressed={localAgentFilter === agent.key} onClick={() => setLocalAgentFilter(current => current === agent.key ? '' : agent.key)}><AgentBrandIcon agent={agent} size={20} /></button>)}
+            {hasGenericSkills && <button type="button" aria-label="通用" title="通用" aria-pressed={localAgentFilter === 'generic'} onClick={() => setLocalAgentFilter(current => current === 'generic' ? '' : 'generic')}><Icon name="skills" size={20} /></button>}
+          </div> : <div className="category-scroll" aria-label="Skill 分类">
             {categories.map((category) => (
               <button key={category} className={`filter-btn${categoryFilter === category ? ' active' : ''}`} onClick={() => setCategoryFilter(category)}>{category}</button>
             ))}
-          </div>
+          </div>}
           {skillTab === 'local' && selectedLocalSkills.length > 0 && (
             <div className="local-selection-toolbar" aria-live="polite">
               <span>已选 {selectedLocalSkills.length} 个</span>
@@ -1228,15 +1261,22 @@ function AgentFilterControl({ agents, selectedKey, onSelect }: { agents: AgentIn
   </div>
 }
 
-const SORT_OPTIONS: { value: SkillSortPreference; label: string; icon: 'clock' | 'type' }[] = [
-  { value: 'time', label: '按时间', icon: 'clock' },
-  { value: 'name', label: '按名称', icon: 'type' },
+const SORT_OPTIONS: { value: SkillSortPreference; reverse: SkillSortPreference; label: string; icon: 'clock' | 'type'; defaultText: string; reverseText: string; defaultArrow: string; reverseArrow: string }[] = [
+  { value: 'time', reverse: 'time-asc', label: '按时间', icon: 'clock', defaultText: '最新在前', reverseText: '最早在前', defaultArrow: '↓', reverseArrow: '↑' },
+  { value: 'name', reverse: 'name-desc', label: '按名称', icon: 'type', defaultText: 'A→Z', reverseText: 'Z→A', defaultArrow: '↑', reverseArrow: '↓' },
 ]
 
 /** 排序 (#361): the choice persists on this computer. */
 function SkillSortControl({ value, onChange }: { value: SkillSortPreference; onChange: (preference: SkillSortPreference) => void }) {
   return <div className="skills-sort-control" role="group" aria-label="排序">
-    {SORT_OPTIONS.map((option) => <button key={option.value} type="button" className="skills-sort-button" aria-pressed={value === option.value} aria-label={option.label} title={option.label} onClick={() => onChange(option.value)}><Icon name={option.icon} size={15} /><span>{option.label}</span></button>)}
+    {SORT_OPTIONS.map((option) => {
+      const selected = value === option.value || value === option.reverse
+      const reversed = value === option.reverse
+      const description = selected
+        ? `${option.label}：${reversed ? option.reverseText : option.defaultText}，再次点击切换为${reversed ? option.defaultText : option.reverseText}`
+        : `${option.label}：点击切换为${option.defaultText}`
+      return <button key={option.value} type="button" className="skills-sort-button" aria-pressed={selected} aria-label={description} title={description} onClick={() => onChange(selected && !reversed ? option.reverse : option.value)}><Icon name={option.icon} size={15} /><span>{option.label}</span>{selected && <span aria-hidden="true">{reversed ? option.reverseArrow : option.defaultArrow}</span>}</button>
+    })}
   </div>
 }
 

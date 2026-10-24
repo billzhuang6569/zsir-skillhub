@@ -88,6 +88,8 @@ skillhub skill uninstall apply --skill-id "<local-skill-id>" --plan-digest "<64-
 
 `enable` 只针对一个 Agent；若预检明确列出冲突，只有用户确认覆盖后才能在 apply 加 `--replace-conflicts`。`disable` 只移除指定 Agent 的受管投影；`uninstall` 移除该 Skill 的所有受管投影，不删除 SkillHub 托管源。执行后用 `skill show` 复核目标 Agent：启用/安装应为 `installed`，停用应为 `notInstalled`，卸载后所有 Agent 都应为 `notInstalled`；再用 `agent list` 独立复核 Agent 检测状态。
 
+单个 Agent 的启用/停用是低风险操作。用户已明确要求时，预检 `ok: true`、`canApply: true` 且无冲突、无 warnings，可直接把返回的 `planDigest` 原样用于 apply，无需额外确认，执行后照常复核。出现冲突、warnings、涉及多个 Agent 或任何不确定时，先展示计划并取得明确确认。`uninstall` 不属于此例外。
+
 ## 变更流程
 
 上述导入、安装、删除和恢复都以 CLI 返回的预检为准：

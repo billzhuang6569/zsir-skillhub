@@ -33,6 +33,7 @@ const mockConfig = vi.hoisted(() => ({
   LIBRARY_CARD_UPLOADS_PER_HOUR: 10_000,
   LIBRARY_CARD_DOWNLOADS_PER_MINUTE: 10_000,
   SKILL_AVATARS_ENABLED: false,
+  SKILL_AVATAR_MODEL_READS: 'legacy',
 }))
 
 type ZipFile = { path: string; content: string; executable?: boolean; modified?: number }
@@ -115,6 +116,7 @@ describePostgres('PostgreSQL Skill card library', () => {
   let prisma: PrismaClient
 
   async function cleanup(): Promise<void> {
+    await prisma.teamSkillAcquisition.deleteMany({ where: { userId: { in: USERS } } })
     await prisma.libraryEntry.updateMany({ where: { userId: { in: USERS } }, data: { currentVersionReceiptId: null } })
     await prisma.skill.updateMany({ where: { authorId: { in: USERS } }, data: { importVersionId: null } })
     await prisma.skillVersionLabelAlias.deleteMany({ where: { version: { skill: { authorId: { in: USERS } } } } })
@@ -129,6 +131,86 @@ describePostgres('PostgreSQL Skill card library', () => {
   function as(userId: string): { 'x-test-user': string } {
     return { 'x-test-user': userId }
   }
+
+  it.each(['yitan-official', 'selfhost'])('binds an author publication with equivalent ZIP bytes atomically (%s)', async (deployment) => {
+    mockConfig.SKILLHUB_PROFILE = deployment
+    const original = skillZip('push-original')
+    const uploaded = await uploadCard(AUTHOR, original)
+    const id = randomUUID()
+    const initial = await createEntry(AUTHOR, { id, name: 'push-original', profile, source: { kind: 'card', cardSha256: uploaded.body.sha256 } })
+    const saved = await patchEntry(id, { baseRevision: initial.body.revision, versionIntent: { kind: 'save', requestId: randomUUID(), allocation: 'manual', label: '0.1.0', cardSha256: sha256(original) } })
+    const asset = await app.inject({ method: 'POST', url: `/api/library/${id}/author-asset`, headers: as(AUTHOR), payload: { baseRevision: saved.body.revision } })
+    expect(asset.statusCode, asset.body).toBe(201)
+    const skill = await prisma.skill.findFirstOrThrow({ where: { authorId: AUTHOR, name: 'push-original' } })
+    const firstVersion = await prisma.skillVersion.findFirstOrThrow({ where: { skillId: skill.id } })
+    await prisma.skillTeamShare.create({ data: { skillId: skill.id, teamId: TEAM_ID, versionId: firstVersion.id, sharedById: AUTHOR } })
+    await prisma.teamSkillAcquisition.create({ data: { skillId: skill.id, teamId: TEAM_ID, userId: MEMBER } })
+    const changed = skillZip('push-changed')
+    const repacked = zip([{ path: 'SKILL.md', content: '# push-changed\n', modified: 8 }])
+    expect(sha256(changed)).not.toBe(sha256(repacked))
+    await uploadCard(AUTHOR, changed)
+    const current = await prisma.libraryEntry.findUniqueOrThrow({ where: { id } })
+    const local = await patchEntry(id, { baseRevision: current.revision, source: { kind: 'card', cardSha256: sha256(changed) } })
+    const payload = { version: '0.1.1', skillMd: '# push-changed\n', packageBase64: repacked.toString('base64'), packageSha256: sha256(repacked) }
+    const created = await app.inject({ method: 'POST', url: `/api/skills/${skill.id}/versions`, headers: as(AUTHOR), payload })
+    expect(created.statusCode, created.body).toBe(201)
+    const intent = { kind: 'formal', versionId: created.json().id }
+    const bound = await patchEntry(id, { baseRevision: local.body.revision, versionIntent: intent })
+    expect(bound.status, JSON.stringify(bound.body)).toBe(200)
+    expect(bound.body.version).toMatchObject({ label: '0.1.1', formalVersionId: created.json().id, cardSha256: sha256(repacked) })
+    expect((await prisma.libraryEntry.findUniqueOrThrow({ where: { id } })).cardSha256).toBe(sha256(repacked))
+    expect((await patchEntry(id, { baseRevision: bound.body.revision, versionIntent: intent })).body.revision).toBe(bound.body.revision)
+    const push = async (): Promise<ReturnType<typeof app.inject>> => app.inject({ method: 'PUT', url: `/api/skills/${skill.id}/shares/${TEAM_ID}`, headers: as(AUTHOR), payload: { versionId: created.json().id, expectedVersionId: firstVersion.id } })
+    expect((await push()).statusCode).toBe(200)
+    expect((await push()).statusCode).toBe(409)
+    expect((await prisma.skillTeamShare.findUniqueOrThrow({ where: { skillId_teamId: { skillId: skill.id, teamId: TEAM_ID } } })).versionId).toBe(created.json().id)
+    expect(await prisma.notification.count({ where: { userId: MEMBER, type: 'skill_update' } })).toBe(1)
+
+    // Same files with different executable semantics must not acquire the formal identity.
+    const different = zip([{ path: 'SKILL.md', content: '# push-changed\n', executable: true }])
+    await uploadCard(AUTHOR, different)
+    const otherId = randomUUID()
+    await createEntry(AUTHOR, { id: otherId, name: 'different-mode', profile, source: { kind: 'card', cardSha256: sha256(different) } })
+    const rejected = await patchEntry(otherId, { baseRevision: 1, versionIntent: intent })
+    expect(rejected.status).toBe(403)
+    expect((await prisma.libraryEntry.findUniqueOrThrow({ where: { id: otherId } })).cardSha256).toBe(sha256(different))
+    const strangerId = randomUUID()
+    await uploadCard(STRANGER, changed)
+    await createEntry(STRANGER, { id: strangerId, name: 'private-copy', profile, source: { kind: 'card', cardSha256: sha256(changed) } })
+    expect((await patchEntry(strangerId, { baseRevision: 1, versionIntent: intent }, STRANGER)).status).toBe(403)
+  })
+
+  it('publishes reserved 0.1.1 with a differently packed card and keeps the receipt and entry aligned', async () => {
+    const data = skillZip('reserved-original')
+    await uploadCard(AUTHOR, data)
+    const id = randomUUID()
+    await createEntry(AUTHOR, { id, name: 'reserved-original', profile, source: { kind: 'card', cardSha256: sha256(data) } })
+    const saved = await patchEntry(id, { baseRevision: 1, versionIntent: { kind: 'save', requestId: randomUUID(), allocation: 'manual', label: '0.1.0', cardSha256: sha256(data) } })
+    expect((await app.inject({ method: 'POST', url: `/api/library/${id}/author-asset`, headers: as(AUTHOR), payload: { baseRevision: saved.body.revision } })).statusCode).toBe(201)
+    const skill = await prisma.skill.findFirstOrThrow({ where: { authorId: AUTHOR, name: 'reserved-original' } })
+    const changed = skillZip('reserved-next')
+    const repacked = zip([{ path: 'SKILL.md', content: '# reserved-next\n', modified: 8 }])
+    await uploadCard(AUTHOR, changed)
+    const current = await prisma.libraryEntry.findUniqueOrThrow({ where: { id } })
+    const savedNext = await patchEntry(id, { baseRevision: current.revision, source: { kind: 'card', cardSha256: sha256(changed) }, versionIntent: { kind: 'save', requestId: randomUUID(), allocation: 'auto', label: '0.1.1', cardSha256: sha256(changed) } })
+    const receiptId = (savedNext.body.version as { receiptId: string }).receiptId
+    const payload = { version: '0.1.1', libraryVersionReceiptId: receiptId, packageBase64: repacked.toString('base64'), packageSha256: sha256(repacked), skillMd: '# reserved-next\n' }
+    const rejected = await app.inject({ method: 'POST', url: `/api/skills/${skill.id}/versions`, headers: as(AUTHOR), payload: {
+      ...payload, packageBase64: data.toString('base64'), packageSha256: sha256(data), skillMd: '# reserved-original\n',
+    } })
+    expect(rejected.statusCode).toBe(409)
+    expect(await prisma.skillVersion.count({ where: { skillId: skill.id } })).toBe(1)
+    expect((await prisma.libraryEntryVersion.findUniqueOrThrow({ where: { id: receiptId } }))).toMatchObject({ cardSha256: sha256(changed), formalVersionId: null })
+    const created = await app.inject({ method: 'POST', url: `/api/skills/${skill.id}/versions`, headers: as(AUTHOR), payload })
+    expect(created.statusCode, created.body).toBe(201)
+    expect((await prisma.libraryEntryVersion.findUniqueOrThrow({ where: { id: receiptId } }))).toMatchObject({ label: '0.1.1', formalVersionId: created.json().id, cardSha256: sha256(repacked) })
+    expect((await prisma.libraryEntry.findUniqueOrThrow({ where: { id } }))).toMatchObject({ cardSha256: sha256(repacked), versionHighWater: 11 })
+    expect((await app.inject({ method: 'POST', url: `/api/skills/${skill.id}/versions`, headers: as(AUTHOR), payload })).statusCode).toBe(200)
+    expect(await prisma.skillVersion.count({ where: { skillId: skill.id } })).toBe(2)
+    const versions = await app.inject({ method: 'GET', url: `/api/skills/${skill.id}/versions`, headers: as(AUTHOR) })
+    const card = await prisma.skillCard.findUniqueOrThrow({ where: { sha256: sha256(changed) } })
+    expect(versions.json().find((item: { id: string }) => item.id === created.json().id)).toMatchObject({ contentIdentity: { contentHash: card.contentHash, executablePaths: card.executablePaths } })
+  })
 
   async function patchEntry(id: string, payload: Record<string, unknown>, user = AUTHOR): Promise<{ status: number; body: Record<string, unknown> }> {
     const response = await app.inject({ method: 'PUT', url: `/api/library/${id}`, headers: as(user), payload })
@@ -542,6 +624,7 @@ describePostgres('PostgreSQL Skill card library', () => {
 
   beforeEach(async () => {
     mockConfig.SKILLHUB_PROFILE = 'yitan-official'
+    mockConfig.SKILL_AVATAR_MODEL_READS = 'legacy'
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected HTTP in library PG tests')))
     mockConfig.SKILL_CARD_STORAGE_DIR = mkdtempSync(join(tmpdir(), 'skillhub-library-pg-'))
     mockConfig.SKILL_MAX_PER_USER = 50
@@ -865,6 +948,51 @@ describePostgres('PostgreSQL Skill card library', () => {
     const second = randomUUID()
     expect((await createEntry(MEMBER, { id: second, name: 'two', profile, source: { kind: 'card', cardSha256: card.body.sha256 } })).statusCode).toBe(201)
     expect((await app.inject({ method: 'POST', url: `/api/library/${first}/restore`, headers: as(MEMBER), payload: { baseRevision: 2 } })).statusCode).toBe(409)
+  })
+
+  it.each(['selfhost', 'yitan-official'].flatMap(mode => ['author', 'team', 'marketplace', 'stranger', 'deleted', 'pending'].map(access => ({ mode, access }))))('inherits only authorized source data ($mode / $access), with no generation or quota writes', async ({ mode, access }) => {
+    mockConfig.SKILLHUB_PROFILE = mode
+    const sourceCard = await uploadCard(AUTHOR, skillZip('source-to-inherit'))
+    const sourceEntryId = randomUUID()
+    await createEntry(AUTHOR, { id: sourceEntryId, name: 'source-to-inherit', profile, source: { kind: 'card', cardSha256: sourceCard.body.sha256 } })
+    const published = await app.inject({ method: 'POST', url: `/api/library/${sourceEntryId}/author-asset`, headers: as(AUTHOR), payload: {} })
+    expect(published.statusCode, published.body).toBe(201)
+    const sourceId = published.json().skill.id as string
+    await prisma.skill.update({ where: { id: sourceId }, data: { displayName: 'Analyzed source', description: 'Existing analysis', analysisStatus: 'completed', category: 'tools', labels: ['ready'], triggerScenarios: ['work'] } })
+    await prisma.skillAvatar.create({ data: { ownerId: AUTHOR, skillId: sourceId, input: {}, inputFingerprint: 'fixture', promptVersion: 'fixture', status: 'ready', assetId: 'public-test-asset', url: 'https://images.example.test/ready.jpg' } })
+    const user = ['author', 'deleted', 'pending'].includes(access) ? AUTHOR : access === 'stranger' ? STRANGER : MEMBER
+    if (access === 'deleted') await prisma.skill.update({ where: { id: sourceId }, data: { deletedAt: new Date() } })
+    if (access === 'pending') await prisma.skill.update({ where: { id: sourceId }, data: { analysisStatus: 'pending' } })
+    if (access === 'team' || access === 'marketplace') await prisma.cardGrant.create({ data: { userId: user, cardSha256: String(sourceCard.body.sha256), reason: access } })
+    if (access === 'team') {
+      const newerCard = await uploadCard(AUTHOR, skillZip('newer-source'))
+      await prisma.skillVersion.create({ data: { skillId: sourceId, version: '0.1.1', cardSha256: String(newerCard.body.sha256) } })
+      await prisma.skill.update({ where: { id: sourceId }, data: { currentVersion: '0.1.1' } })
+    }
+    const copyCard = await uploadCard(user, skillZip('modified-copy'))
+    const copyEntryId = randomUUID()
+    await createEntry(user, { id: copyEntryId, name: 'modified-copy', profile, source: { kind: 'card', cardSha256: copyCard.body.sha256 } })
+    const beforeAttempts = await prisma.skillAvatarGenerationAttempt.count()
+    const beforeJobs = await prisma.avatarGenerationJob.count()
+    const result = await app.inject({ method: 'POST', url: `/api/library/${copyEntryId}/author-asset`, headers: as(user), payload: { inheritFrom: { serverSkillId: sourceId } } })
+    expect(result.statusCode, result.body).toBe(201)
+    const id = result.json().skill.id as string
+    const copied = await prisma.skill.findUniqueOrThrow({ where: { id }, include: { avatar: true } })
+    if (access === 'stranger' || access === 'deleted') {
+      expect(copied.analysisStatus).toBe('unanalysed'); expect(copied.avatar).toBeNull()
+    } else if (access === 'pending') {
+      expect(copied.analysisStatus).toBe('unanalysed')
+      expect(copied.labels).toEqual(profile.labels)
+    } else {
+      expect(copied).toMatchObject({ displayName: profile.displayName, analysisStatus: 'completed', labels: ['ready'], triggerScenarios: ['work'] })
+      expect(copied.description).not.toBe('Existing analysis')
+      expect(copied.avatar).toMatchObject({ source: 'custom', status: 'cancelled', customAssetId: 'public-test-asset', queuedAt: null, currentJobId: null })
+    }
+    expect(await prisma.skillAvatarGenerationAttempt.count()).toBe(beforeAttempts)
+    expect(await prisma.avatarGenerationJob.count()).toBe(beforeJobs)
+    const retry = await app.inject({ method: 'POST', url: `/api/library/${copyEntryId}/author-asset`, headers: as(user), payload: { inheritFrom: { serverSkillId: sourceId } } })
+    expect(retry.statusCode).toBe(200)
+    expect(await prisma.skillAvatar.count({ where: { skillId: id } })).toBe(access === 'stranger' || access === 'deleted' ? 0 : 1)
   })
 
   it('publishes an entry as an author asset exactly once and serves it through the legacy package route', async () => {

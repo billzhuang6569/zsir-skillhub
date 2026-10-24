@@ -19,12 +19,14 @@ vi.mock('../middleware/auth.js', () => ({
 }))
 import { skillAvatarRoutes } from './skill-avatars.js'
 import { config } from '../config.js'
+import { avatarRegistrationLimiter } from '../lib/avatar-generation.js'
 
 let app: FastifyInstance
 const originalMode = config.SKILL_AVATAR_MODEL_READS
 const originalProfile = config.SKILLHUB_PROFILE
 const headers = { authorization: 'Bearer test-owner' }
 beforeEach(async () => {
+  avatarRegistrationLimiter.clear('owner')
   vi.clearAllMocks()
   app = Fastify()
   await app.register(sensible)

@@ -43,6 +43,7 @@ export default function DeleteSkillDialog({ skill, busy, error, onCancel, onConf
         ? <div className="selection-box delete-scope-summary"><b>从我的账号删除</b><span>所有登录这个账号的设备都会把它移入回收站，可在账号回收站恢复。已经发布到商店或团队的版本不受影响。</span>{unavailable && <small className="delete-scope-reason">{unavailable}</small>}</div>
         : <div className="selection-box delete-scope-summary"><b>移入本机回收站</b><span>{decision.note}</span></div>}
       {error && <div className="banner banner-error" role="alert"><Icon name="warn" size={14} />{error}</div>}
+      {currentUserId && skill.serverOwnerId === currentUserId && Object.keys(skill.sharedTo).length > 0 && <p className="modal-copy">这个 Skill 仍共享到 {Object.keys(skill.sharedTo).length} 个团队，删除不会把它从团队移除；如需移除，请先取消共享</p>}
       <div className="modal-actions"><button className="btn btn-ghost" onClick={onCancel} disabled={busy}>取消</button><button className="btn btn-danger" onClick={() => onConfirm(decision.kind)} disabled={busy || unavailable !== null}>{busy ? '正在删除…' : decision.kind === 'account' ? '从账号删除' : '移入本机回收站'}</button></div>
     </div>
   </FocusTrapDialog>

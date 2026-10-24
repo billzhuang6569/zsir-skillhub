@@ -15,11 +15,11 @@ const SNAPSHOT_COMMAND: &str = "skill snapshot";
 
 pub(crate) const MUTATION_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub skill import preflight --path <path> [--skill-id <id>] --json\n",
-    "  skillhub skill import apply --path <path> [--skill-id <id>] --plan-digest <digest> [--replace-conflicts] --json\n",
-    "  skillhub skill install preflight --skill-id <id> --agent <key> [--agent <key> ...] --json\n",
-    "  skillhub skill install apply --skill-id <id> --agent <key> [--agent <key> ...] --plan-digest <digest> [--replace-conflicts] --json\n",
-    "  skillhub skill snapshot --skill-id <id> --message <text> [--version <0.1.1>] --json"
+    "  skillhub skill import preflight --path <path> [--skill-id <id>] [--json]\n",
+    "  skillhub skill import apply --path <path> [--skill-id <id>] --plan-digest <digest> [--replace-conflicts] [--json]\n",
+    "  skillhub skill install preflight --skill-id <id> --agent <key> [--agent <key> ...] [--json]\n",
+    "  skillhub skill install apply --skill-id <id> --agent <key> [--agent <key> ...] --plan-digest <digest> [--replace-conflicts] [--json]\n",
+    "  skillhub skill snapshot --skill-id <id> --message <text> [--version <0.1.1>] [--json]"
 );
 
 #[derive(Debug, PartialEq, Eq)]
@@ -248,9 +248,6 @@ fn parse_import(args: &[String]) -> Result<MutationCommand, &'static str> {
         }
     }
     let path = path.ok_or(command)?;
-    if !json_seen {
-        return Err(command);
-    }
     match action {
         Some("preflight") if plan_digest.is_none() && !replace_conflicts => {
             Ok(MutationCommand::ImportPreflight { path, skill_id })
@@ -314,7 +311,7 @@ fn parse_install(args: &[String]) -> Result<MutationCommand, &'static str> {
         }
     }
     let skill_id = skill_id.ok_or(command)?;
-    if agents.is_empty() || !json_seen {
+    if agents.is_empty() {
         return Err(command);
     }
     match action {
@@ -367,8 +364,8 @@ fn parse_snapshot(args: &[String]) -> Result<MutationCommand, &'static str> {
             _ => return Err(SNAPSHOT_COMMAND),
         }
     }
-    match (skill_id, message, json_seen) {
-        (Some(skill_id), Some(message), true) => Ok(MutationCommand::Snapshot {
+    match (skill_id, message) {
+        (Some(skill_id), Some(message)) => Ok(MutationCommand::Snapshot {
             skill_id,
             message,
             version,
@@ -640,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn import_apply_requires_json_and_plan_digest() {
+    fn import_apply_requires_plan_digest() {
         assert!(parse_command(&strings(&[
             "skill",
             "import",
@@ -824,5 +821,57 @@ mod tests {
         assert!(execute_mutation_cli(&strings(&["skill", "list", "--json"]))
             .await
             .is_none());
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &["skill", "import", "preflight", "--path", "/tmp/example"],
+            &[
+                "skill",
+                "import",
+                "apply",
+                "--path",
+                "/tmp/example",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "skill",
+                "install",
+                "preflight",
+                "--skill-id",
+                "example",
+                "--agent",
+                "claude",
+            ],
+            &[
+                "skill",
+                "install",
+                "apply",
+                "--skill-id",
+                "example",
+                "--agent",
+                "claude",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "skill",
+                "snapshot",
+                "--skill-id",
+                "example",
+                "--message",
+                "test",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_command(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_command(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_command(&args).is_err(), "{case:?}");
+        }
     }
 }

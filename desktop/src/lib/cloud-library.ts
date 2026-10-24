@@ -2,6 +2,40 @@ import type { LocalSkill } from '../store/index.js'
 import type { LibraryEntryList, LibraryTransfer } from './library-sync.js'
 import { validateSourceUrl } from './source-url.ts'
 
+/** Refresh cloud enrichment while the page is visible; React owns the account-scoped lifetime. */
+export function startCloudSkillRefresh(enabled: boolean, refresh: () => void, isVisible: () => boolean,
+  readProgress: () => string = () => ''): { stop: () => void; resume: () => void } {
+  let previous = readProgress()
+  let unchanged = 0
+  let disposed = false
+  let timer: ReturnType<typeof setInterval> | null = null
+  const tick = (): void => {
+    if (!isVisible()) return
+    const progress = readProgress()
+    unchanged = progress === previous ? unchanged + 1 : 0
+    previous = progress
+    refresh()
+    if (unchanged >= 20 && timer !== null) { clearInterval(timer); timer = null }
+  }
+  const resume = (): void => {
+    if (!enabled || disposed || timer !== null) return
+    previous = readProgress(); unchanged = 0
+    timer = setInterval(tick, 30_000)
+  }
+  resume()
+  return { resume, stop: (): void => { disposed = true; if (timer !== null) clearInterval(timer); timer = null } }
+}
+
+export function hasPendingCloudEnrichment(skills: readonly LocalSkill[]): boolean {
+  return skills.some(skill => Boolean(skill.serverId)
+    && skill.enrichmentPending === true)
+}
+
+export function cloudEnrichmentProgress(skills: readonly LocalSkill[]): string {
+  return JSON.stringify(skills.filter(skill => skill.serverId).map(skill => [skill.serverId, skill.enrichmentPending,
+    skill.serverAnalysisStatus, skill.avatarStatus, skill.avatarUrl]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+}
+
 /** The entry's 「来源」 for a not-yet-downloaded row; an invalid value is dropped. */
 function entrySourceUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -26,13 +60,14 @@ export function cloudLibrarySkills(
     const previous = remote ?? skills.find(skill => skill.id === `library:${entry.entryId}` && skill.libraryAccountId === userId)
     const transfer = transfers[entry.entryId]
     return {
-      id: `library:${entry.entryId}`, name: entry.name, displayName: entry.displayName,
+      id: `library:${entry.entryId}`, name: entry.name, displayName: remote?.displayName ?? entry.displayName,
       description: remote ? remote.description : entry.profile?.description, category: remote ? remote.category : entry.profile?.category,
       sourceUrl: entrySourceUrl(entry.profile?.sourceUrl),
       labels: remote ? remote.labels : entry.profile?.labels ?? [], compatibleAgents: entry.profile?.compatibleAgents ?? [],
       trigger: remote?.trigger, fitScenarios: remote?.fitScenarios,
       avatarUrl: previous?.avatarUrl, avatarStatus: previous?.avatarStatus,
       serverAnalysisStatus: previous?.serverAnalysisStatus,
+      enrichmentPending: previous?.enrichmentPending,
       avatarAccountUserId: previous?.avatarAccountUserId,
       version: entry.version?.label ?? '', latestVersion: '', installCount: 0, sources: [], agents: {}, installed: false,
       versionStatus: entry.version ? 'confirmed' : entry.versionPolicy === 1 ? 'unversioned' : undefined,

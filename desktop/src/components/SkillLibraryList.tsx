@@ -1,20 +1,28 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { activeAgentEntries, agentDisplayName } from '../lib/agents.js'
 import { nextRovingIndex } from '../lib/ui-helpers.js'
+import { sourceModificationLabel } from '../lib/skill-library.js'
 import { useStore, type LocalSkill, type SkillDetailTab } from '../store/index.js'
 import { useShallow } from 'zustand/react/shallow'
 import { selectSkillLibraryListState } from '../lib/store-selectors.js'
 import AgentBrandIcon from './AgentBrandIcon.js'
 import { Icon } from './Icon.js'
 import { SkillAvatarIcon } from './SkillAvatarIcon.js'
-import { skillListText } from '../lib/skill-title.js'
+import { skillListText, UNANALYSED_SKILL_NAME } from '../lib/skill-title.js'
 import { skillVersionDisplay } from '../lib/versioning.js'
 import { isRowIssueIcon, isTeamSharedSkill, issueForSkill, issueTooltipParts, skillIssueTagClass, teamSkillHasUpdate, type EnvKeySummary, type SkillRowIssue } from '../lib/skill-library.js'
 import { Tooltip } from './Tooltip.js'
 import { UserChip } from './UserChip.js'
-import { openSkillDir } from '../lib/tauri.js'
+import { openSkillDir, currentMediaSpace } from '../lib/tauri.js'
+import { apiGetTeamSkillLink, sameSpace } from '../lib/api.js'
+import { acquireTeamSkill } from '../lib/team-skill-acquisition.js'
+import { teamSkillAppLink } from '../lib/team-skill-link.js'
+import { teamSkillMenuState } from '../lib/team-skill-menu.js'
+import { requestLibrarySync } from '../lib/library-sync.js'
+import UnshareSkillDialog from './UnshareSkillDialog.js'
+import TeamSkillUpdateButton from './TeamSkillUpdateButton.js'
 import { userMessage } from '../lib/user-message.js'
-import { isServerUnanalysed } from '../lib/instance-settings.js'
+import SkillListName from './SkillListName.js'
 import { toast } from './Toast.js'
 import { libraryTransferFraction } from '../lib/library-sync.js'
 import { cloudSelectionId, emptyCloudSelection, focusCloudRow, retainCloudSelection, selectCloudRow } from '../lib/cloud-selection.js'
@@ -66,6 +74,48 @@ export default function SkillLibraryList({
   const menuRef = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ skillId: string; x: number; y: number } | null>(null)
   const contextSkill = contextMenu ? skills.find((skill) => skill.id === contextMenu.skillId) : undefined
+  const activeTeamId = useStore(state => state.activeTeamId)
+  const activeTeam = teams.find(team => team.id === activeTeamId)
+  const [unshareSkill, setUnshareSkill] = useState<LocalSkill | null>(null)
+  const [teamBusy, setTeamBusy] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
+  const teamMenu = contextSkill ? teamSkillMenuState(contextSkill, currentUser?.id ?? null, online, teamBusy) : null
+  useEffect(() => {
+    const update = (): void => setOnline(navigator.onLine)
+    window.addEventListener('online', update); window.addEventListener('offline', update)
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
+  }, [])
+  useEffect(() => { setContextMenu(null); setUnshareSkill(null) }, [activeTeamId, currentUser?.id])
+  const teamAction = async (skill: LocalSkill, action: 'acquire' | 'share'): Promise<void> => {
+    const state = useStore.getState()
+    const space = state.activeSpace
+    if (!space || !currentUser || !activeTeamId || !skill.serverId || teamBusy) return
+    setContextMenu(null); setTeamBusy(true)
+    const current = (): boolean => sameSpace(space, useStore.getState().activeSpace)
+      && currentUser.id === useStore.getState().currentUser?.id
+    try {
+      if (action === 'acquire') {
+        const local = await acquireTeamSkill(skill, currentUser.id, activeTeamId, space)
+        if (!current()) return
+        useStore.getState().replaceSkill(skill.id, local)
+        requestLibrarySync()
+        toast('已加入我的 Skills')
+      } else {
+        let link: string
+        if (state.serverInfo?.capabilities?.includes('teams.skill-links.v1')) {
+          link = (await apiGetTeamSkillLink(activeTeamId, skill.serverId, space)).landingPageUrl
+        } else {
+          const media = await currentMediaSpace()
+          if (!sameSpace(space, media.space)) return
+          link = teamSkillAppLink(activeTeamId, skill.serverId, media.serverBase.replace(/\/+$/, ''))
+        }
+        if (!current()) return
+        await navigator.clipboard.writeText(link)
+        toast('分享链接已复制，只有团队成员可以打开')
+      }
+    } catch (error: unknown) { if (current()) toast(userMessage(error), 'error') }
+    finally { setTeamBusy(false) }
+  }
 
   useEffect(() => {
     setSelection(emptyCloudSelection); setContextMenu(null); setTagPopover(null)
@@ -114,8 +164,8 @@ export default function SkillLibraryList({
   }
 
   const showContextMenu = (skill: LocalSkill, x: number, y: number): void => {
-    if (context !== 'personal') return
-    setSelection(state => selectCloudRow(state, visibleIds, cloudSelectionId(skill), { context: true }))
+    if (rowInert(skill)) return
+    if (context === 'personal') setSelection(state => selectCloudRow(state, visibleIds, cloudSelectionId(skill), { context: true }))
     setContextMenu({ skillId: skill.id, x, y })
   }
   const openTagPopover = (): void => {
@@ -202,11 +252,11 @@ export default function SkillLibraryList({
         aria-selected={selected}
         className={`skill-library-row${selected ? ' selected' : ''}${skill.isOrphan ? ' orphan' : ''}${deleteState}`}
         aria-busy={deleteState !== '' || undefined}
-        aria-label={`查看 ${title.primary}${teamShared ? '，已在团队共享' : ''}${issueIcon && issue ? `，${issue.label}` : ''}`}
+        aria-label={`查看 ${title.primary}${teamShared ? '，已共享到团队' : ''}${issueIcon && issue ? `，${issue.label}` : ''}`}
         tabIndex={focused || (!(context === 'personal' ? selection.focus : selectedSkillId) && index === 0) ? 0 : -1}
         onClick={(event) => {
           if (deleteState) return
-          if (context === 'personal' && isMac && event.ctrlKey) { const rect = event.currentTarget.getBoundingClientRect(); showContextMenu(skill, event.clientX || rect.left, event.clientY || rect.bottom); return }
+          if (isMac && event.ctrlKey) { const rect = event.currentTarget.getBoundingClientRect(); showContextMenu(skill, event.clientX || rect.left, event.clientY || rect.bottom); return }
           if (context === 'personal') setSelection(state => selectCloudRow(state, visibleIds, cloudSelectionId(skill), { range: event.shiftKey, additive: isMac ? event.metaKey : event.ctrlKey }))
           // Tooltip actions: 「去填写」 opens 钥匙, 「查看详情」 opens 概览.
           const action = (event.target as Element).closest?.('[data-issue-action]')?.getAttribute('data-issue-action')
@@ -227,6 +277,7 @@ export default function SkillLibraryList({
         onKeyDown={(event) => onKeyDown(event, index)}
       >
         <span className={`skill-library-avatar-wrap${teamShared ? ' team-shared' : ''}${transfer ? ' downloading' : ''}${transfer && fraction === null && !transfer.error ? ' indeterminate' : ''}`}
+          title={teamShared ? '已共享到团队' : undefined}
           role={transfer ? 'progressbar' : undefined} aria-label={transfer ? `${title.primary} 下载${transfer.error ? '等待重试' : '进度'}` : undefined}
           aria-valuemin={transfer ? 0 : undefined} aria-valuemax={transfer ? 100 : undefined}
           aria-valuenow={transfer && fraction !== null ? Math.round(fraction * 100) : undefined}
@@ -243,28 +294,30 @@ export default function SkillLibraryList({
             wide lists put the badges in a trailing column, the narrow Skill browser puts them before the text on line 2. */}
         <span className="skill-library-copy">
           <span className="skill-library-name-row">
-            <strong className={skillTitlePreference === 'skill-name' ? 'skill-primary-name' : undefined}>{title.primary}</strong>
+            <SkillListName name={title.primary} className={skillTitlePreference === 'skill-name' ? 'skill-primary-name' : undefined} />
             {skill.isSystem && <span className="skill-library-system">系统</span>}
-            <span className="skill-library-version-text mono">{versionDisplay.label}</span>
+            <span className="skill-library-version-text mono">{context === 'team' ? `团队版本 ${skill.latestVersion ?? skill.version}` : versionDisplay.label}</span>
             {skill.versionStatus === 'pending' && <span className="skill-library-version">待确认</span>}
             {skill.hasWorkingCopy && <span className="skill-library-version">已修改</span>}
-            {context === 'team' && teamSkillHasUpdate(skill) && <span className="skill-library-update">有更新</span>}
+            {skill.teamUnshared && <span className="skill-library-update">团队已停止共享 · 本机副本保留</span>}
+            {skill.teamUpdateStatus === 'account_mismatch' && <span className="skill-library-update">获取账号不匹配，不能更新</span>}
             {issue && issueIcon && <SkillIssueIcon issue={issue} />}
           </span>
           {/* Line 2: 友好名 + private tag chips (#323; the AI category moved out, it still drives the
               top filter) — team: 友好名 · 共享人 — with the Agent icons after it; line 3: the description. */}
           {context !== 'team'
             ? <span className="skill-library-text">
-              {title.secondary && <span className={`skill-library-subtitle${skillTitlePreference === 'ai-title' ? ' mono' : ''}`}>{title.secondary}</span>}
+              <span className={`skill-library-subtitle${!title.secondary ? ' placeholder' : skillTitlePreference === 'ai-title' ? ' mono' : ''}`} title={title.secondary || undefined}>{title.secondary || UNANALYSED_SKILL_NAME}</span>
               <SkillTagChips names={tagsForSkill(organizer, skillOrganizerKey(skill, currentUser?.id ?? null))} limit={ROW_TAG_LIMIT} />
             </span>
             : <span className="skill-library-text skill-library-team-line">
-              <span className="skill-library-subtitle">{title.secondary || (skill.category ?? '其他')}</span>
+              <span className={`skill-library-subtitle${!title.secondary ? ' placeholder' : ''}`} title={title.secondary || undefined}>{title.secondary || UNANALYSED_SKILL_NAME}</span>
               {teamSharer && <span className="skill-library-sharer"><span aria-hidden="true">·</span><UserChip name={teamSharer.name} me={teamSharer.me} avatarUrl={teamSharer.avatarUrl} />共享</span>}
             </span>}
-          {isServerUnanalysed(capabilities.profile, skill.serverAnalysisStatus) && <span className="inline-status checking">未分析</span>}
+          {sourceModificationLabel(skill) && <span className="skill-library-desc"><span className="skill-library-version">{sourceModificationLabel(skill)}</span></span>}
           {skill.description && <span className="skill-library-desc" title={skill.description}>{skill.description}</span>}
           <span className="skill-library-side">
+            <TeamSkillUpdateButton skill={skill} />
             {transfer ? <span className="skill-library-no-agent" title={transfer.error ?? undefined}>{transfer.error ? '等待重试' : null}</span> : context === 'team' && !skill.localPath
               ? <span role="button" tabIndex={-1} className="btn btn-primary skill-library-get" aria-label="获取" title="获取" data-row-action="get"><Icon name="download" size={14} /></span>
               : skill.isSystem
@@ -302,6 +355,20 @@ export default function SkillLibraryList({
         if (next !== null) { event.preventDefault(); buttons[next]?.focus() }
       }}
     >
+      {context === 'team' && teamMenu ? <>
+        <button type="button" role="menuitem" disabled={!teamMenu.openFolder} title={!teamMenu.openFolder ? '尚未加入我的 Skills' : undefined} onClick={() => {
+          setContextMenu(null)
+          void openSkillDir(contextSkill.marketplaceLocalId ?? contextSkill.id).catch((error: unknown) => toast(userMessage(error), 'error'))
+        }}><Icon name="folder" size={14} /><span>打开文件夹</span></button>
+        <button type="button" role="menuitem" disabled={!organizerReady || !teamMenu.quickAccess} title={!teamMenu.joined ? '请先加入我的 Skills' : undefined} onClick={() => { setContextMenu(null); toggleSkillQuickAccess(contextSkill) }}><Icon name="star" size={14} /><span>{skillInQuickAccess(contextSkill) ? '移出快捷访问' : '加入快捷访问'}</span></button>
+        <button type="button" role="menuitem" disabled={!teamMenu.acquire} title={!online ? '当前离线' : undefined} onClick={() => void teamAction(contextSkill, 'acquire')}><Icon name="download" size={14} /><span>{teamMenu.joined ? '已在我的 Skills' : '加入我的 Skills'}</span></button>
+        <button type="button" role="menuitem" onClick={() => {
+          setContextMenu(null)
+          void navigator.clipboard.writeText(contextSkill.name).then(() => toast('Skill 名称已复制')).catch((error: unknown) => toast(userMessage(error), 'error'))
+        }}><Icon name="doc" size={14} /><span>复制 Skill 名</span></button>
+        <button type="button" role="menuitem" disabled={!online || teamBusy} onClick={() => void teamAction(contextSkill, 'share')}><Icon name="shared-skills" size={14} /><span>分享</span></button>
+        {teamMenu.unshareVisible && <><hr role="separator" /><button type="button" role="menuitem" className="team-unshare" disabled={!teamMenu.unshareEnabled} title={!online ? '当前离线，请联网后取消共享' : undefined} onClick={() => { setUnshareSkill(contextSkill); setContextMenu(null) }}><Icon name="trash" size={14} /><span>取消共享</span></button></>}
+      </> : <>
       {selection.ids.length <= 1 && <button type="button" role="menuitem" disabled={!contextSkill.localPath || Boolean(contextSkill.cloudDownload)} onClick={() => {
         setContextMenu(null)
         void openSkillDir(contextSkill.marketplaceLocalId ?? contextSkill.id)
@@ -311,7 +378,9 @@ export default function SkillLibraryList({
       <button type="button" role="menuitem" disabled={!organizerReady} onClick={openTagPopover}><Icon name="tag" size={14} /><span>{selection.ids.length >= 2 ? `为 ${selection.ids.length} 个 Skill 加入目录…` : '加入目录…'}</span></button>
       {capabilities.teams && <button type="button" role="menuitem" disabled={!currentUser || teams.length === 0 || (selection.ids.length <= 1 && (contextSkill.isSystem || Boolean(contextSkill.cloudDownload)))} onClick={() => beginBatch('share')}><Icon name="shared-skills" size={14} /><span>{selection.ids.length >= 2 ? `将 ${selection.ids.length} 个 Skill 共享到团队` : '共享到团队'}</span></button>}
       <button type="button" role="menuitem" disabled={!currentUser || (selection.ids.length <= 1 && contextSkill.isSystem)} onClick={() => beginBatch('delete')}><Icon name="trash" size={14} /><span>{selection.ids.length >= 2 ? `将 ${selection.ids.length} 个 Skill 从账号删除` : '从账号删除'}</span></button>
+      </>}
     </div>}
+    {unshareSkill && activeTeam && <UnshareSkillDialog skill={unshareSkill} team={activeTeam} onClose={() => setUnshareSkill(null)} />}
     {tagPopover && <SkillTagPopover
       skills={tagPopover.skills}
       anchor={{ x: tagPopover.x, y: tagPopover.y }}

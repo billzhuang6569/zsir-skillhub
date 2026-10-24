@@ -197,14 +197,14 @@ export const teamCredentialsRoutes: FastifyPluginAsync = async (fastify): Promis
         }),
         db.skillTeamShare.findMany({
           where: { teamId: team.id, skill: { deletedAt: null } },
-          select: { skill: { select: { id: true, displayName: true, envDependencies: true } } },
+          select: { version: { select: { envDependencies: true } }, skill: { select: { id: true, displayName: true, envDependencies: true } } },
         }),
       ])
       const lastUsed = await lastUsedByCredential(credentials.map((credential) => credential.id))
       const declaring = shares.map((share) => ({
         id: share.skill.id,
         name: share.skill.displayName,
-        keys: new Set(declaredEnvDependencies(share.skill.envDependencies).map((dependency) => dependency.key)),
+        keys: new Set(declaredEnvDependencies(share.version?.envDependencies ?? share.skill.envDependencies).map((dependency) => dependency.key)),
       }))
       return reply.send({
         teamId: team.id,

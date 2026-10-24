@@ -125,7 +125,7 @@ test('motion tokens time hover lift, sheets and Toast; reduced motion stops ever
   // One global rule, plus the spot checks the issue names.
   assert.match(global, /@media \(prefers-reduced-motion: reduce\) \{\n\s*\*, \*::before, \*::after \{[^}]*animation-duration: \.01ms !important;[^}]*animation-iteration-count: 1 !important;[^}]*transition-duration: \.01ms !important;/)
   assert.match(global, /\.spin-icon \{ animation: none !important;/)
-  assert.match(read('src/components/SkillLibraryList.css'), /@media \(prefers-reduced-motion: reduce\) \{\n\s*\.skill-library-avatar-wrap\.team-shared::before \{ animation: none;/)
+  assert.match(read('src/components/SkillLibraryList.css'), /@media \(prefers-reduced-motion: reduce\) \{\n\s*\.skill-avatar-color-reveal, \.skill-avatar-download-track > span \{ transition: none; \}\n\s*\.skill-library-avatar-wrap\.indeterminate \.skill-avatar-download-track > span \{ animation: none;/)
   assert.match(read('src/styles/app.css'), /@media \(prefers-reduced-motion: reduce\) \{ \.sidebar-resizer::after \{ transition: none; \} \}/)
   // No hard-coded sheet curve or pop timing left.
   for (const path of sourceFiles.filter((file) => file.endsWith('.css') && !file.endsWith('design-tokens.css'))) {

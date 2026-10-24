@@ -515,12 +515,36 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
     // ── Local scan and state ────────────────────────────────────────────────
 
     fn scan(&self) -> Result<Vec<LocalSkill>, SyncError> {
-        Ok(
-            scan_managed(&self.paths.managed_root, library_read_profile)?
-                .into_iter()
-                .filter(|local| self.owns_scope(&local.sidecar))
-                .collect(),
-        )
+        let mut locals = scan_managed(&self.paths.managed_root, library_read_profile)?
+            .into_iter()
+            .filter(|local| self.owns_scope(&local.sidecar))
+            .collect::<Vec<_>>();
+        for local in &mut locals {
+            self.backfill_team_acquirer(local)?;
+        }
+        Ok(locals)
+    }
+
+    fn backfill_team_acquirer(&self, local: &mut LocalSkill) -> Result<(), SyncError> {
+        if local.sidecar.library_account_id.as_deref() != Some(self.user_id.as_str())
+            || crate::commands::library_acquisition_source(&local.sidecar)
+                != AcquisitionSource::Team
+            || local.sidecar.acquired_by_user_id.is_some()
+        {
+            return Ok(());
+        }
+        let _lock = self.lock(&local.skill_id)?;
+        let mut sidecar = library_read_profile(&self.paths.skill(&local.skill_id))?;
+        if sidecar.library_account_id.as_deref() == Some(self.user_id.as_str())
+            && crate::commands::library_acquisition_source(&sidecar) == AcquisitionSource::Team
+            && sidecar.acquired_by_user_id.is_none()
+        {
+            sidecar.acquired_by_user_id = Some(self.user_id.clone());
+            let _held = self.guard.hold()?;
+            library_write_profile(&self.paths.skill(&local.skill_id), &sidecar)?;
+            local.sidecar = sidecar;
+        }
+        Ok(())
     }
 
     fn owns_scope(&self, sidecar: &SkillHubProfile) -> bool {
@@ -695,6 +719,10 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
             }
         }
         profile.apply_to_sidecar(&mut sidecar, self.source_url_synced);
+        if entry.source_kind == "team" {
+            sidecar.source_version_id = entry.source_version_id.clone();
+            sidecar.acquired_by_user_id = Some(self.user_id.clone());
+        }
         sidecar.library_account_id = Some(self.user_id.clone());
         sidecar.library_entry_id = Some(entry.id.clone());
         let verify = expected.map(|expected| expected.verifier(skill_id));
@@ -706,6 +734,7 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
             expected_existing: expected.map(|expected| expected.tree_fingerprint.as_slice()),
             verify_existing: verify.as_ref().map(|verify| verify as &LibraryStateCheck),
             message,
+            retain_backup: false,
         }) {
             Ok(()) => {
                 if !self.apply_remote_version(skill_id, entry)? {
@@ -805,19 +834,13 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
             };
         let local_changed = local.state.content != indexed.baseline.content
             || local.state.profile != indexed.baseline.profile;
-        if library_read_profile(&self.paths.skill(&skill_id))?
-            .catalog_origin
-            .is_some()
+        let source_profile = library_read_profile(&self.paths.skill(&skill_id))?;
+        // Member content sync needs an original-acquisition card in the server DTO (#552).
+        let keep_member_files_local = (source_profile.catalog_origin.is_some()
+            || crate::commands::library_acquisition_source(&source_profile)
+                != AcquisitionSource::Local)
             && local.state.content != indexed.baseline.content
-            && self.official_update(&skill_id, &indexed).is_none()
-        {
-            self.problem(
-                Some(&skill_id),
-                Some(entry_id),
-                "官方商店 Skill 的本机内容已修改，保留在本机；请重新下载官方版本后同步",
-            );
-            return Ok(());
-        }
+            && self.official_update(&skill_id, &indexed).is_none();
 
         let remote = match remote {
             Some(remote) if !remote.deleted && remote.card.is_some() => remote,
@@ -889,7 +912,8 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
             && merged.source_url.is_none()
             && remote.profile.source_url.is_some();
 
-        let mut take_local_files = local_files_changed && !remote_files_changed;
+        let mut take_local_files =
+            local_files_changed && !remote_files_changed && !keep_member_files_local;
         let mut revision = remote.revision;
         let mut card_sha256 = remote
             .card
@@ -903,9 +927,12 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
         };
 
         let mut base_revision = remote.revision;
-        let pending = self
-            .pending_version(&skill_id, &local.state.content, &card_sha256)
-            .await?;
+        let pending = if keep_member_files_local {
+            None
+        } else {
+            self.pending_version(&skill_id, &local.state.content, &card_sha256)
+                .await?
+        };
         let mut needs_put = take_local_files || remote.profile != merged || pending.is_some();
         // A store or team update the user installed here: point the entry at
         // the official version (granting it) instead of uploading a copy.
@@ -1028,8 +1055,10 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
                 None
             };
             let request = UpdateEntry {
-                version_intent: self
-                    .pending_version(
+                version_intent: if keep_member_files_local {
+                    None
+                } else {
+                    self.pending_version(
                         &skill_id,
                         &local.state.content,
                         source
@@ -1040,7 +1069,8 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
                             })
                             .unwrap_or(&card_sha256),
                     )
-                    .await?,
+                    .await?
+                },
                 base_revision,
                 profile: Some(merged.clone()),
                 source,
@@ -1913,7 +1943,10 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
         used_entry_ids: &BTreeSet<String>,
         seen: &mut BTreeSet<String>,
     ) -> Result<String, SyncError> {
-        if let Some(id) = local.sidecar.id.clone().filter(|id| is_uuid(id)) {
+        // Avatar registration may have assigned the UUID since the inventory scan.
+        let _lock = self.lock(&local.skill_id)?;
+        let current = library_read_profile(&self.paths.skill(&local.skill_id))?;
+        if let Some(id) = current.id.clone().filter(|id| is_uuid(id)) {
             let in_account_elsewhere = used_entry_ids.contains(&id)
                 && self
                     .remote
@@ -1924,9 +1957,14 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
             }
         }
         let id = new_uuid();
-        let _lock = self.lock(&local.skill_id)?;
         let assigned = id.clone();
-        self.write_sidecar(&local.skill_id, |sidecar| sidecar.id = Some(assigned))?;
+        self.write_sidecar(&local.skill_id, |sidecar| {
+            sidecar.id = Some(assigned);
+            // A duplicate stable id is a distinct copy, not an avatar alias.
+            if current.id.as_deref().is_some_and(is_uuid) {
+                sidecar.avatar_local_id = None;
+            }
+        })?;
         seen.insert(id.clone());
         Ok(id)
     }
@@ -2711,6 +2749,7 @@ impl<'a, A: LibraryApi, G: AccountGuard, L: LocalOps> Engine<'a, A, G, L> {
                     .map(|expected| expected.tree_fingerprint.as_slice()),
                 verify_existing: verify.as_ref().map(|verify| verify as &LibraryStateCheck),
                 message: "保存另一台设备上的修改（副本）",
+                retain_backup: false,
             }) {
                 let message = match error {
                     LibraryLandingError::LocalChanged => "副本 Skill 在写入时发生变化".to_string(),
@@ -2912,9 +2951,18 @@ fn new_sidecar(entry: &RemoteEntry, skill_id: &str, card_sha256: &str) -> SkillH
     let authored = entry.author_skill_id.is_some();
     SkillHubProfile {
         catalog_origin: entry.source_origin.clone(),
-        acquisition_version: (entry.source_kind == "catalog")
-            .then(|| entry.source_version_id.clone())
-            .flatten(),
+        acquisition_version: if entry.source_kind == "catalog" {
+            entry.source_version_id.clone()
+        } else if source != AcquisitionSource::Local {
+            entry.version_state.version.as_ref().map(|receipt| {
+                receipt
+                    .formal_label
+                    .clone()
+                    .unwrap_or_else(|| receipt.label.clone())
+            })
+        } else {
+            None
+        },
         id: Some(new_uuid()),
         name: Some(skill_id.to_string()),
         server_id: entry

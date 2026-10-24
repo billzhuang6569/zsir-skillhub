@@ -117,6 +117,73 @@ describePostgres('Skill avatar PostgreSQL identity and restart recovery', () => 
   }
   const customUrl = 'https://picem-media.whatonearth.work/pg-custom.png'
 
+  it.each([false, true])('stable local UUID survives library and author creation (author first: %s)', async authorFirst => {
+    const entryId = randomUUID(), cardId = randomUUID()
+    const skill = await prisma.skill.create({ data: { authorId: ownerId, name: `stable-avatar-${entryId}`, displayName: 'Stable avatar' } })
+    await prisma.skillCard.create({ data: { sha256: cardId, contentHash: cardId, size: 1, storageKey: 'fixture' } })
+    try {
+      if (authorFirst) await prisma.libraryEntry.create({ data: { id: entryId, userId: ownerId, cardSha256: cardId,
+        name: 'stable-avatar', requestDigest: 'fixture', authorSkillId: skill.id } })
+      const task = await avatars.ensureSkillAvatar({ ownerId, localSkillId: entryId, ...(authorFirst ? { skillId: skill.id } : {}),
+        input: { name: 'Stable avatar', description: 'Local first', scenarios: [] } })
+      const ready = await prisma.skillAvatar.update({ where: { id: task.id }, data: {
+        status: 'ready', requestId: randomUUID(), assetId: 'stable-fixture', url: 'https://example.invalid/stable.webp',
+      } })
+      if (!authorFirst) await prisma.libraryEntry.create({ data: { id: entryId, userId: ownerId, cardSha256: cardId,
+        name: 'stable-avatar', requestDigest: 'fixture', authorSkillId: skill.id } })
+      const attempts = await prisma.skillAvatarGenerationAttempt.count({ where: { avatarId: task.id } })
+      if (!authorFirst) {
+        const other = await prisma.skill.create({ data: { authorId: ownerId, name: `wrong-avatar-${entryId}`, displayName: 'Other' } })
+        await expect(avatars.ensureSkillAvatar({ ownerId, localSkillId: entryId, skillId: other.id }))
+          .rejects.toMatchObject({ code: avatars.AVATAR_IDENTITY_CONFLICT })
+        expect((await prisma.skillAvatar.findUniqueOrThrow({ where: { id: task.id } })).skillId).toBeNull()
+        await prisma.libraryEntry.update({ where: { id: entryId }, data: { authorSkillId: null } })
+        await expect(avatars.ensureSkillAvatar({ ownerId, localSkillId: entryId, skillId: skill.id }))
+          .rejects.toMatchObject({ code: avatars.AVATAR_IDENTITY_CONFLICT })
+        await prisma.libraryEntry.update({ where: { id: entryId }, data: { authorSkillId: skill.id } })
+      }
+      const results = await Promise.all(Array.from({ length: 8 }, () => avatars.ensureSkillAvatar({ ownerId, localSkillId: entryId, skillId: skill.id })))
+      expect(results.every(row => row.id === task.id && row.requestId === ready.requestId && row.url === ready.url)).toBe(true)
+      expect(await prisma.skillAvatarGenerationAttempt.count({ where: { avatarId: task.id } })).toBe(attempts)
+      expect((await prisma.skill.findUniqueOrThrow({ where: { id: skill.id } })).avatarUrl).toBe(ready.url)
+    } finally {
+      await prisma.libraryEntry.deleteMany({ where: { id: entryId } })
+      await prisma.skillCard.delete({ where: { sha256: cardId } })
+    }
+  })
+
+  it('continues a reviewed legacy local task once under concurrent recovery, retaining image, request and quota', async () => {
+    const { continueLegacyAvatar } = await import('../ops/avatar-continuation.js')
+    const oldLocalId = randomUUID(), entryId = randomUUID()
+    const original = await avatars.ensureSkillAvatar({ ownerId, localSkillId: oldLocalId, input: { name: 'Legacy', description: 'Local first', scenarios: [] } })
+    const task = await prisma.skillAvatar.update({ where: { id: original.id }, data: {
+      status: 'ready', assetId: 'fixture-legacy', url: 'https://example.invalid/legacy.webp', requestId: randomUUID(),
+    } })
+    const skill = await prisma.skill.create({ data: { authorId: ownerId, name: 'legacy-continuation', displayName: 'Legacy' } })
+    const cardId = randomUUID()
+    await prisma.skillCard.create({ data: { sha256: cardId, contentHash: cardId, size: 1, storageKey: 'fixture' } })
+    try {
+      const entry = await prisma.libraryEntry.create({ data: { id: entryId, userId: ownerId, cardSha256: cardId,
+        name: 'legacy', requestDigest: 'fixture', authorSkillId: skill.id } })
+      const plan = { approval: 'private-reviewed-fixture', ownerId, taskId: task.id, oldLocalId, entryId,
+        entryRevision: entry.revision, authorSkillId: skill.id, taskUpdatedAt: task.updatedAt.toISOString() }
+      const attempts = await prisma.skillAvatarGenerationAttempt.count({ where: { avatarId: task.id } })
+      expect(await continueLegacyAvatar(plan)).toMatchObject({ dryRun: true })
+      const results = await Promise.allSettled(Array.from({ length: 8 }, () => continueLegacyAvatar(plan, true)))
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      const next = await prisma.skillAvatar.findUniqueOrThrow({ where: { id: task.id } })
+      expect(next).toMatchObject({ localSkillId: entryId, skillId: skill.id, requestId: task.requestId, url: task.url, assetId: task.assetId, status: 'ready' })
+      expect(await prisma.skillAvatarGenerationAttempt.count({ where: { avatarId: task.id } })).toBe(attempts)
+      const reads = await Promise.all([oldLocalId, entryId, entryId].map(localSkillId => avatars.ensureSkillAvatar({ ownerId, localSkillId, skillId: skill.id })))
+      expect(reads.every(row => row.id === task.id && row.localSkillId === entryId)).toBe(true)
+      expect(await prisma.skillAvatar.count({ where: { ownerId, OR: [{ localSkillId: oldLocalId }, { localSkillId: entryId }] } })).toBe(1)
+      expect((await prisma.skill.findUniqueOrThrow({ where: { id: skill.id } })).avatarUrl).toBe(task.url)
+    } finally {
+      await prisma.libraryEntry.deleteMany({ where: { id: entryId } })
+      await prisma.skillCard.delete({ where: { sha256: cardId } })
+    }
+  })
+
   it('custom upload: upload-only rows use no quota, and concurrent restores at the limit let only the first ones through', async () => {
     upload.mockResolvedValue({ assetId: 'ast_pg_custom', url: customUrl })
     const keys = Array.from({ length: 5 }, (_, index) => `custom-restore-${index}`)

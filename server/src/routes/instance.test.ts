@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import jwt from '@fastify/jwt'
 import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,7 +7,8 @@ vi.mock('node:crypto', async (importOriginal) => {
   const crypto = await importOriginal<typeof import('node:crypto')>()
   return { ...crypto, sign: vi.fn(crypto.sign) }
 })
-vi.mock('../db.js', () => ({ db: {} }))
+const mockUser = vi.hoisted(() => vi.fn())
+vi.mock('../db.js', () => ({ db: { user: { findUnique: mockUser } } }))
 vi.mock('../config.js', () => ({ config: {
   PUBLIC_BASE_URL: 'https://skills.example.test/instance',
   INSTANCE_ADDITIONAL_BASE_URLS: ['https://new.example.test/SkillHub', 'http://127.0.0.1:3001'],
@@ -18,6 +20,8 @@ vi.mock('../lib/instance-identity.js', () => ({ getInstanceIdentity: vi.fn() }))
 import { getInstanceIdentity } from '../lib/instance-identity.js'
 import { publicServiceInfo } from '../server-info.js'
 import { instanceRoutes } from './instance.js'
+import { config } from '../config.js'
+import { publicBaseUrlSchema } from '../config-schema.js'
 
 describe('instance address proof', () => {
   let app: FastifyInstance
@@ -30,9 +34,33 @@ describe('instance address proof', () => {
     vi.clearAllMocks()
     vi.mocked(getInstanceIdentity).mockReturnValue(identity)
     app = Fastify()
+    await app.register(jwt, { secret: 'instance-base-urls-test-signing-secret' })
     await app.register(instanceRoutes, { prefix: '/api/instance' })
+    app.get('/health', async () => publicServiceInfo('ok'))
   })
   afterEach(async (): Promise<void> => { await app.close() })
+
+  it.each(['selfhost', 'yitan-official'] as const)('%s protects instance bases with real product JWT validation', async (profile): Promise<void> => {
+    config.SKILLHUB_PROFILE = profile
+    mockUser.mockResolvedValue({ id: 'member', tokenVersion: 1, email: 'member@example.test', displayName: 'Member' })
+    for (const authorization of [undefined, 'Bearer invalid', `Bearer ${app.jwt.sign({ sub: 'member', ver: 1, purpose: 'web-admin', webAdmin: true })}`, `Bearer ${app.jwt.sign({ sub: 'member', ver: 1, purpose: 'catalog' })}`]) {
+      const response = await app.inject({ url: '/api/instance/base-urls', headers: authorization ? { authorization } : {} })
+      expect(response.statusCode).toBe(401)
+      expect(response.json()).toEqual({ error: 'Unauthorized' })
+      expect(response.body).not.toContain('baseUrls')
+    }
+    const response = await app.inject({ url: '/api/instance/base-urls', headers: {
+      authorization: `Bearer ${app.jwt.sign({ sub: 'member', ver: 1, purpose: 'product' })}`,
+    } })
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['cache-control']).toBe('no-store')
+    expect(response.json()).toEqual({ baseUrls: [config.PUBLIC_BASE_URL, ...config.INSTANCE_ADDITIONAL_BASE_URLS] })
+    for (const base of response.json<{ baseUrls: string[] }>().baseUrls) expect(publicBaseUrlSchema.parse(base)).toBe(base)
+    const health = await app.inject('/health')
+    expect(health.statusCode).toBe(200)
+    expect(health.json()).not.toHaveProperty('baseUrls')
+    expect(health.body).not.toMatch(/new\.example\.test|127\.0\.0\.1:3001/)
+  })
 
   it('signs exact ordered payload bytes verifiable with the published raw public key', async (): Promise<void> => {
     const response = await app.inject({ method: 'POST', url, payload: { nonce } })

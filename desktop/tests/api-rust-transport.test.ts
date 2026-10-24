@@ -3,7 +3,7 @@ import test, { beforeEach, afterEach } from 'node:test'
 import {
   ApiError, apiGetMe, apiLogout, apiHealth, apiGetSkill, apiGetTeams, apiGetMarketplace,
   apiDeleteSkill, apiDownloadSkillPackage, apiDownloadMarketplacePackage, apiLogin, apiChangePassword,
-  apiGetSkillAvatars, onApiUnauthorized, apiAnalyzeSkill,
+  apiGetSkillAvatars, onApiUnauthorized, apiAnalyzeSkill, apiGetInstanceBaseUrls,
 } from '../src/lib/api.ts'
 import { readFileSync } from 'node:fs'
 import type { ServerRequest, ServerResponse } from '../src/lib/tauri.ts'
@@ -65,6 +65,16 @@ test('JSON, 204, health and explicit space use the fixed IPC contract', async ()
   assert.equal(await apiLogout(), undefined)
   await apiAnalyzeSkill('skill', '# Skill')
   assert.equal(calls.at(-1)?.timeoutMs, 150_000)
+})
+
+test('instance bases use the authenticated route in the explicit current space', async () => {
+  const result = { baseUrls: ['https://fixture.invalid'] }
+  respond = async () => json(200, result)
+  assert.deepEqual(await apiGetInstanceBaseUrls(space), result)
+  assert.equal(calls[0].route, 'instance.base-urls')
+  assert.deepEqual(calls[0].space, space)
+  const routes = JSON.parse(readFileSync(new URL('../src/lib/server-routes.json', import.meta.url), 'utf8'))
+  assert.equal(routes['instance.base-urls'].auth, true)
 })
 
 test('structured HTTP errors retain Retry-After; delete 404 is idempotent', async () => {

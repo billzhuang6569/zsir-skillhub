@@ -10,10 +10,28 @@ const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const source = (path: string): string => readFileSync(resolve(desktopRoot, path), 'utf8')
 const settings = source('src/pages/SettingsPage.tsx')
 
+test('#585 settings navigation follows visible groups, scrolls to them and respects reduced motion', () => {
+  const styles = source('src/pages/SettingsPage.css')
+  for (const id of ['service', 'agents', 'keys', 'ai', 'sync', 'store', 'preferences', 'trash', 'feedback', 'help']) {
+    assert.match(settings, new RegExp(`id="settings-${id}" data-settings-section`))
+  }
+  assert.match(settings, /<nav className="settings-nav" aria-label="设置分组">\{settingsSections\.map/)
+  assert.match(settings, /aria-current=\{activeSection === section\.id \? 'location' : undefined\}/)
+  assert.match(settings, /main\.addEventListener\('scroll', updateActive, \{ passive: true \}\)/)
+  assert.match(settings, /scrollIntoView\(\{ behavior: window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches \? 'auto' : 'smooth'/)
+  assert.match(styles, /\.settings-nav button:focus-visible \{ outline:/)
+  assert.match(styles, /@media \(max-width: 850px\) \{ \.settings-page \{ display: block; \} \.settings-nav \{ display: none; \} \}/)
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{ \.app-main \{ scroll-behavior: auto; \} \}/)
+  const help = settings.slice(settings.indexOf('id="settings-help"'))
+  assert.match(help, /<RuntimeCliPathNotice guidance=\{runtimeCliStatus\.pathGuidance\} \/>/)
+  assert.match(help, /<b>CLI 组件占用<\/b>/)
+  assert.doesNotMatch(settings.slice(settings.indexOf('id="settings-agents"'), settings.indexOf('id="settings-keys"')), /<RuntimeCliPathNotice|CLI 组件占用/)
+})
+
 test('#490 groups follow the approved order in all spaces, with admin feedback only on official', () => {
   const connected = /\{capabilities\.profile !== 'local' && <>[\s\S]*?\n      <\/>\}/
   const store = /\{capabilities\.profile !== 'official' && <>[\s\S]*?\n      <\/>\}/
-  const feedback = /\{capabilities\.profile === 'official' && currentUser\?\.marketplaceRole === 'admin' && <>[^\n]*<\/>\}/
+  const feedback = /\{showFeedback && <>[^\n]*<\/>\}/
   assert.match(settings, connected)
   assert.match(settings, store)
   assert.match(settings, feedback)
@@ -22,7 +40,7 @@ test('#490 groups follow the approved order in all spaces, with admin feedback o
       .replace(connected, match => profile === 'local' ? '' : match)
       .replace(store, match => profile === 'official' ? '' : match)
       .replace(feedback, match => profile === 'official' && admin ? match : '')
-    const labels = ['服务与账号', ...Array.from(visible.matchAll(/<p className="settings-label">([^<]+)/g), match => match[1].trim())]
+    const labels = ['服务与账号', ...Array.from(visible.matchAll(/<p className="settings-label"[^>]*>([^<]+)/g), match => match[1].trim())]
     assert.deepEqual(labels, [
       '服务与账号', 'Agent 工具', '钥匙',
       ...(profile === 'local' ? [] : ['AI 与头像', '同步与迁移']),
@@ -113,7 +131,7 @@ test('钥匙备份文件 row: count and size, reveal and delete with a confirm, 
 })
 
 test('the other Settings sections stay; 团队钥匙 moved to the 钥匙 page (#294)', () => {
-  for (const label of ['回收站', '帮助与关于', '偏好']) assert.ok(settings.includes(`<p className="settings-label">${label}</p>`), label)
+  for (const label of ['回收站', '帮助与关于', '偏好']) assert.match(settings, new RegExp(`<p className="settings-label"[^>]*>${label}</p>`))
   assert.match(settings, /<ServiceSettings onOpenInstance=/)
   assert.ok(!settings.includes('<p className="settings-label">团队钥匙</p>'))
   assert.doesNotMatch(settings, /TeamKeyList/)
@@ -145,7 +163,7 @@ test('#334 AGENT 工具: detected list with one switch, incomplete kept apart, u
   assert.match(settings, /const lines = \[agentStateLabel\(agent\), `Skill 目录：\$\{agent\.dir\}`\]/)
   assert.match(settings, /aria-label=\{`\$\{agent\.name\} 检测详情`\}/)
   // 检测未完成 rows show a neutral warning badge and no switch.
-  const incompleteRows = panel.slice(panel.indexOf('incomplete.map('), panel.indexOf('agent-tools-empty'))
+  const incompleteRows = panel.slice(panel.indexOf('incomplete.map('), panel.indexOf('agent-tools-empty', panel.indexOf('incomplete.map(')))
   assert.match(incompleteRows, /agent-tool-state-badge/)
   assert.doesNotMatch(incompleteRows, /<Switch/)
   // Undetected tools collapse into one expandable line.
@@ -157,12 +175,18 @@ test('#334 AGENT 工具: detected list with one switch, incomplete kept apart, u
   assert.match(panel, /'未检测到可用工具'/)
   assert.match(panel, /无法检测本机 Agent，当前选项保持不变；可以重试。/)
   // Runtime notices stay inside the panel, unchanged.
-  assert.match(settings, /<AgentToolsPanel [^\n]*>\n\s+\{\(!runtimeCliChecking && !runtimeCliReady \|\| shellIntegrated\) && <div className="agent-runtime-notices">/)
+  assert.match(settings, /<AgentToolsPanel [^\n]*>\n\s+\{\(!runtimeCliChecking \|\| shellIntegrated\) && <div className="agent-runtime-notices">/)
   // Neutral styling: no whole-card green tint; tooltips not clipped; label hides on narrow containers.
   assert.doesNotMatch(styles, /\.agent-tool-card\.detected|color-success-tint\) 45%/)
   assert.match(styles, /\.settings-group\.agent-tools-group \{ overflow: visible;[^}]*container: agent-tools \/ inline-size; \}/)
   assert.match(styles, /@container agent-tools \(max-width: 440px\) \{\s*\.agent-tool-toggle-label \{ display: none; \}/)
   assert.match(styles, /\.agent-tool-state-badge \{[^}]*var\(--color-warning-tint\)/)
+})
+
+test('WorkBuddy upgrade guidance keeps old installs and directs users to the distinct target', () => {
+  assert.match(settings, /agents\.some\(\(agent\) => agent\.key === 'workbuddy-ai'\)/)
+  assert.match(settings, /旧安装现属 WorkBuddy AI/)
+  assert.match(settings, /「WorkBuddy」安装，确认后可停用 WorkBuddy AI/)
 })
 
 test('#334 × #335: unconfirmed Skill roots stay in the detected list with a badge, no card switch, and are not counted as usable', () => {

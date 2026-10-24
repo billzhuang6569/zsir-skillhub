@@ -1,0 +1,8 @@
+.skill-list-name { position: relative; display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.skill-list-name-full { position: absolute; left: 0; top: 0; width: max-content; visibility: hidden; }
+@media (prefers-reduced-motion: no-preference) {
+  .skill-list-name[data-overflow="true"]:hover .skill-list-name-short { visibility: hidden; }
+  .skill-list-name[data-overflow="true"]:hover .skill-list-name-full { visibility: visible; animation: skill-name-scroll 6s linear infinite; }
+}
+@keyframes skill-name-scroll { 0%, 15% { transform: translateX(0); } 85%, 100% { transform: translateX(var(--name-travel)); } }
+.skill-library-subtitle.placeholder, .local-library-subtitle.placeholder { color: var(--color-muted); font-weight: 400; }

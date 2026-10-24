@@ -25,11 +25,11 @@ use std::os::unix::fs::OpenOptionsExt as _;
 
 pub(crate) const TEAM_MUTATION_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub team share preflight --local-skill-id <id> --team-id <uuid> --json\n",
-    "  skillhub team share apply --local-skill-id <id> --team-id <uuid> --plan-digest <64hex> --json\n",
-    "  skillhub team share status --local-skill-id <id> --team-id <uuid> --json\n",
-    "  skillhub team unshare preflight --local-skill-id <id> --team-id <uuid> --json\n",
-    "  skillhub team unshare apply --local-skill-id <id> --team-id <uuid> --plan-digest <64hex> --json"
+    "  skillhub team share preflight --local-skill-id <id> --team-id <uuid> [--json]\n",
+    "  skillhub team share apply --local-skill-id <id> --team-id <uuid> --plan-digest <64hex> [--json]\n",
+    "  skillhub team share status --local-skill-id <id> --team-id <uuid> [--json]\n",
+    "  skillhub team unshare preflight --local-skill-id <id> --team-id <uuid> [--json]\n",
+    "  skillhub team unshare apply --local-skill-id <id> --team-id <uuid> --plan-digest <64hex> [--json]"
 );
 
 const SHARE_PREFLIGHT_COMMAND: &str = "team share preflight";
@@ -342,9 +342,6 @@ fn parse_args(args: &[String]) -> Result<TeamMutationCommand, &'static str> {
             _ => return Err(command),
         }
     }
-    if !json_requested {
-        return Err(command);
-    }
     let local_skill_id = local_skill_id.ok_or(command)?;
     let team_id = team_id.ok_or(command)?;
     match phase {
@@ -656,6 +653,7 @@ fn valid_local_profile(profile: &SkillHubProfile, local_skill_id: &str) -> bool 
                     | "codex"
                     | "agent-skills"
                     | "workbuddy"
+                    | "workbuddy-ai"
                     | "doubao"
                     | "opencode"
                     | "openclaw"
@@ -965,7 +963,8 @@ fn plan_for(
 async fn verified_guard(
     command: &'static str,
 ) -> Result<(CliAuthGuard, CliAccount), CliCommandOutput> {
-    let guard = CliAuthGuard::capture().map_err(|error| auth_guard_failure(command, error))?;
+    let guard =
+        CliAuthGuard::capture_for_server().map_err(|error| auth_guard_failure(command, error))?;
     guard
         .token_for_request()
         .map_err(|error| auth_guard_failure(command, error))?;
@@ -2273,6 +2272,15 @@ mod tests {
     }
 
     #[test]
+    fn local_profile_accepts_both_workbuddy_targets_but_rejects_unknown_agents() {
+        let mut profile = local_context(false).profile;
+        profile.compatible_agents = vec!["workbuddy".into(), "workbuddy-ai".into()];
+        assert!(valid_local_profile(&profile, LOCAL_ID));
+        profile.compatible_agents.push("unknown".into());
+        assert!(!valid_local_profile(&profile, LOCAL_ID));
+    }
+
+    #[test]
     fn sharing_uses_current_normalized_label_without_rewriting_the_sidecar_or_git() {
         let (root, mut profile) = saved_fixture("v0.1.1 · legacy snapshot");
         profile.version = "v9.9.9 · stale sidecar display".into();
@@ -2476,5 +2484,68 @@ mod tests {
         assert!(!serialized.contains("cGFja2FnZQ"));
         assert!(!serialized.contains("/Users/"));
         assert!(!serialized.contains("Bearer"));
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &[
+                "team",
+                "share",
+                "preflight",
+                "--local-skill-id",
+                "sample",
+                "--team-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            ],
+            &[
+                "team",
+                "share",
+                "apply",
+                "--local-skill-id",
+                "sample",
+                "--team-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "team",
+                "share",
+                "status",
+                "--local-skill-id",
+                "sample",
+                "--team-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            ],
+            &[
+                "team",
+                "unshare",
+                "preflight",
+                "--local-skill-id",
+                "sample",
+                "--team-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            ],
+            &[
+                "team",
+                "unshare",
+                "apply",
+                "--local-skill-id",
+                "sample",
+                "--team-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_args(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_args(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_args(&args).is_err(), "{case:?}");
+        }
     }
 }

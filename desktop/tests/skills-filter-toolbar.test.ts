@@ -30,9 +30,9 @@ test('filter triggers show icons, labels and chevrons (#488)', () => {
 test('the sort control shows icons and text and persists on this computer (#488)', () => {
   const page = read('src/pages/SkillsPage.tsx')
   assert.match(page, /role="group" aria-label="排序"/)
-  assert.match(page, /aria-pressed=\{value === option\.value\} aria-label=\{option\.label\} title=\{option\.label\}/)
-  assert.match(page, /\{ value: 'time', label: '按时间', icon: 'clock' \}/)
-  assert.match(page, /\{ value: 'name', label: '按名称', icon: 'type' \}/)
+  assert.match(page, /aria-pressed=\{selected\} aria-label=\{description\} title=\{description\}/)
+  assert.match(page, /value: 'time', reverse: 'time-asc', label: '按时间', icon: 'clock'/)
+  assert.match(page, /value: 'name', reverse: 'name-desc', label: '按名称', icon: 'type'/)
   assert.match(page, /<Icon name=\{option\.icon\} size=\{15\} \/><span>\{option\.label\}<\/span>/)
   // The account list honours the preference and its memo re-runs when it changes; 本地 Skills have no timestamps.
   assert.match(page, /orderSkills\(managedSkills\.filter/)

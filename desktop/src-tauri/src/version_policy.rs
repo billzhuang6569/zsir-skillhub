@@ -1395,6 +1395,24 @@ mod tests {
     }
 
     #[test]
+    fn formal_binding_snapshots_do_not_consume_an_extra_version_number() {
+        let (home, root) = fixture();
+        let mut metadata = VersionMetadata::default();
+        for value in [11, 12] {
+            metadata.high_water = value;
+            fs::write(root.join("SKILL.md"), format!("# Published {value}\n")).unwrap();
+            library_snapshot_at(&root, "补全正式版本记录").unwrap();
+            normalize_history(&root, &mut metadata).unwrap();
+            assert_eq!(metadata.high_water, value);
+            assert_eq!(
+                allocate(metadata.high_water, None).unwrap(),
+                label(value + 1).unwrap()
+            );
+        }
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn complete_history_maps_each_real_tree_without_rewriting_objects_or_free_notes() {
         let (home, root) = fixture();
         let mut hashes = Vec::new();

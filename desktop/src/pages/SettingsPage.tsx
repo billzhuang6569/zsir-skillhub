@@ -17,6 +17,8 @@ import {
   checkShellIntegration,
   disableLegacyShellIntegration,
   getRuntimeCliStatus,
+  getRuntimeCliStorage,
+  cleanupRuntimeCli,
   listTrashItems,
   openTrashItem,
   rollbackMarketplaceReplacement,
@@ -30,7 +32,7 @@ import {
 } from '../lib/tauri.js'
 import { refreshAgentCapabilities } from '../lib/agent-detection.js'
 import { UNCONFIRMED_SKILL_ROOT_HINT, agentAcceptsSkillWrites, agentStateLabel, agentStateTitle } from '../lib/agents.js'
-import type { AgentInfo, EnvBackupSummary, RuntimeCliStatus, TrashItem } from '../lib/tauri.js'
+import type { AgentInfo, EnvBackupSummary, RuntimeCliStatus, RuntimeCliStorage, TrashItem } from '../lib/tauri.js'
 import { apiGetSkillTrash, apiRestoreSkill } from '../lib/api.js'
 import type { ApiDeletedSkill } from '../lib/api.js'
 import { LIBRARY_ENTRIES_CHANGED_EVENT, type LibraryEntryList, type LibraryEntrySummary } from '../lib/library-sync.js'
@@ -42,7 +44,7 @@ import { THEME_PREFERENCES, THEME_PREFERENCE_LABELS, type ThemePreference } from
 import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl.js'
 import { Switch } from '../components/Switch.js'
 import { Tooltip } from '../components/Tooltip.js'
-import { SETTINGS_KEY_COPY, envBackupConfirmTitle, envBackupTitle, revealFolderLabel } from '../lib/env-backups.js'
+import { SETTINGS_KEY_COPY, envBackupConfirmTitle, envBackupTitle, formatBytes, revealFolderLabel } from '../lib/env-backups.js'
 import type { SkillTitlePreference } from '../lib/skill-title.js'
 import { useTheme } from '../lib/use-theme.js'
 import FeedbackAdminPanel from '../components/FeedbackAdminPanel.js'
@@ -122,6 +124,7 @@ function AgentToolsPanel({ agents, status, hiddenCardAgents, onToggleCard, onDet
     </div>
     {status === 'error' && <div className="agent-tools-error"><div className="banner banner-error full">无法检测本机 Agent，当前选项保持不变；可以重试。</div></div>}
     {firstRun && checking && <div className="agent-tool-skeleton" aria-hidden="true"><span /><span /></div>}
+    {agents.some((agent) => agent.key === 'workbuddy-ai') && detected.some((agent) => agent.key === 'workbuddy' || agent.key === 'workbuddy-ai') && <p className="agent-tools-empty">WorkBuddy 与 WorkBuddy AI 使用不同的 Skill 目录。旧安装现属 WorkBuddy AI；若日常使用 WorkBuddy，请在 Skill 详情选择「WorkBuddy」安装，确认后可停用 WorkBuddy AI。</p>}
     {detected.length > 0 && <ul className="agent-tool-list" aria-label="已检测到的工具">
       {detected.map((agent) => {
         const visible = !hiddenCardAgents.includes(agent.key)
@@ -230,7 +233,22 @@ function trashActionError(error: unknown): string {
   return message
 }
 
+function RuntimeCliPathNotice({ guidance }: { guidance: NonNullable<RuntimeCliStatus['pathGuidance']> }) {
+  const command = guidance.command
+  return <div className="agent-runtime-notice cli-path-notice">
+    <Icon name="info" size={14} />
+    <div>
+      <b>终端 PATH 提示</b>
+      <span>{guidance.message}</span>
+      {command && <code className="mono">{command}</code>}
+      {command && <button type="button" className="btn btn-ghost btn-sm" onClick={() => void navigator.clipboard.writeText(command).then(() => toast('PATH 命令已复制')).catch((error: unknown) => toast(userMessage(error), 'error'))}>复制 PATH 命令</button>}
+    </div>
+  </div>
+}
+
 export default function SettingsPage() {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [activeSection, setActiveSection] = useState('settings-service')
   const serverInfo = useStore(state => state.serverInfo)
   const capabilities = useSpaceCapabilities()
   const space = useStore(state => state.activeSpace)
@@ -251,6 +269,11 @@ export default function SettingsPage() {
   const [runtimeCliStatus, setRuntimeCliStatus] = useState<RuntimeCliStatus | null>(null)
   const [runtimeCliError, setRuntimeCliError] = useState<string | null>(null)
   const [runtimeCliChecking, setRuntimeCliChecking] = useState(true)
+  const [cliStorage, setCliStorage] = useState<RuntimeCliStorage | null>(null)
+  const [cliStorageError, setCliStorageError] = useState<string | null>(null)
+  const [cliCleanupWarnings, setCliCleanupWarnings] = useState<string[]>([])
+  const [cliStorageBusy, setCliStorageBusy] = useState(false)
+  const cliStorageBusyRef = useRef(false)
   const [trashItems, setTrashItems] = useState<TrashItem[]>([])
   const [accountTrashItems, setAccountTrashItems] = useState<ApiDeletedSkill[]>([])
   const [libraryTrashList, setLibraryTrashList] = useState<LibraryEntryList | null>(null)
@@ -332,18 +355,56 @@ export default function SettingsPage() {
     try { setShellIntegrated(await checkShellIntegration()) }
     catch (error: unknown) { toast(messageOf(error), 'error') }
   }, [])
+  const refreshCliStorage = useCallback(async (): Promise<void> => {
+    setCliStorageError(null)
+    try {
+      setCliStorage(await getRuntimeCliStorage())
+    } catch (error: unknown) {
+      setCliStorage(null)
+      setCliStorageError(messageOf(error))
+    }
+  }, [])
+  const reloadCliStorage = async (): Promise<void> => {
+    if (cliStorageBusyRef.current) return
+    cliStorageBusyRef.current = true
+    setCliStorageBusy(true)
+    try { await refreshCliStorage() }
+    finally {
+      cliStorageBusyRef.current = false
+      setCliStorageBusy(false)
+    }
+  }
+  const cleanCliStorage = async (): Promise<void> => {
+    if (cliStorageBusyRef.current || runtimeCliChecking || runtimeCliStatus?.managed !== true) return
+    cliStorageBusyRef.current = true
+    setCliStorageBusy(true)
+    setCliCleanupWarnings([])
+    try {
+      const result = await cleanupRuntimeCli()
+      setCliCleanupWarnings(result.warnings)
+      toast(`已清理 ${result.deletedCount} 个旧副本，释放 ${formatBytes(result.freedBytes)}`, result.warnings.length ? 'warn' : 'default')
+    } catch (error: unknown) {
+      setCliCleanupWarnings([messageOf(error)])
+    } finally {
+      await refreshCliStorage()
+      cliStorageBusyRef.current = false
+      setCliStorageBusy(false)
+    }
+  }
   const checkRuntimeCli = useCallback(async (recheck = false): Promise<void> => {
+    if (cliStorageBusyRef.current) return
     setRuntimeCliChecking(true)
     setRuntimeCliError(null)
     try {
       setRuntimeCliStatus(await getRuntimeCliStatus(recheck))
+      if (recheck) await refreshCliStorage()
     } catch (error: unknown) {
       setRuntimeCliStatus(null)
       setRuntimeCliError(messageOf(error))
     } finally {
       setRuntimeCliChecking(false)
     }
-  }, [])
+  }, [refreshCliStorage])
   const refreshTrash = useCallback(async (initial = false): Promise<boolean> => {
     const expectedUserId = currentUser?.id ?? null
     const generation = ++trashGenerationRef.current
@@ -490,9 +551,47 @@ export default function SettingsPage() {
     return () => window.clearInterval(timer)
   }, [runtimeCliStatus, checkRuntimeCli])
 
+  useEffect(() => {
+    void refreshCliStorage()
+  }, [refreshCliStorage])
+
   const runtimeCliReady = !runtimeCliChecking && runtimeCliStatus?.ready === true
   const runtimeCliUnmanaged = runtimeCliStatus?.managed === false
   const runtimeCliIssue = runtimeCliError ?? runtimeCliStatus?.error ?? null
+  const showFeedback = capabilities.profile === 'official' && currentUser?.marketplaceRole === 'admin'
+  const settingsSections = [
+    { id: 'settings-service', label: '服务与账号' },
+    { id: 'settings-agents', label: 'Agent 工具' },
+    { id: 'settings-keys', label: '钥匙' },
+    ...(capabilities.profile === 'local' ? [] : [{ id: 'settings-ai', label: 'AI 与头像' }, { id: 'settings-sync', label: '同步与迁移' }]),
+    ...(capabilities.profile === 'official' ? [] : [{ id: 'settings-store', label: 'Skill 商店' }]),
+    { id: 'settings-preferences', label: '偏好' },
+    { id: 'settings-trash', label: '回收站' },
+    ...(showFeedback ? [{ id: 'settings-feedback', label: '反馈管理' }] : []),
+    { id: 'settings-help', label: '帮助与关于' },
+  ]
+  useEffect(() => {
+    const main = contentRef.current?.closest('.app-main')
+    if (!main) return
+    const updateActive = (): void => {
+      const headings = contentRef.current?.querySelectorAll<HTMLElement>('[data-settings-section]')
+      if (!headings?.length) return
+      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) {
+        setActiveSection(headings[headings.length - 1].id)
+        return
+      }
+      const top = main.getBoundingClientRect().top + 100
+      let current = headings[0].id
+      for (const heading of headings) {
+        if (heading.getBoundingClientRect().top > top) break
+        current = heading.id
+      }
+      setActiveSection(current)
+    }
+    main.addEventListener('scroll', updateActive, { passive: true })
+    updateActive()
+    return () => main.removeEventListener('scroll', updateActive)
+  }, [capabilities.profile, showFeedback])
   const localServerIds = new Set(trashItems.flatMap((item) => (
     item.kind === 'managed_asset'
     && item.restorable
@@ -524,16 +623,18 @@ export default function SettingsPage() {
   return <>
     <PageHeading title="设置" subtitle="偏好与账号" />
     <div className="page-body settings-page">
-      <ServiceSettings onOpenInstance={() => setInstanceOpen(true)} />
-      <p className="settings-label">Agent 工具 <DocHelp topic="agents" variant="section" label="支持的工具" /></p>
+      <nav className="settings-nav" aria-label="设置分组">{settingsSections.map(section => <button key={section.id} type="button" className={activeSection === section.id ? 'active' : ''} aria-current={activeSection === section.id ? 'location' : undefined} onClick={() => document.getElementById(section.id)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })}>{section.label}</button>)}</nav>
+      <div className="settings-content" ref={contentRef}>
+      <div id="settings-service" data-settings-section><ServiceSettings onOpenInstance={() => setInstanceOpen(true)} /></div>
+      <p className="settings-label" id="settings-agents" data-settings-section>Agent 工具 <DocHelp topic="agents" variant="section" label="支持的工具" /></p>
       <AgentToolsPanel agents={agents} status={agentDetectionStatus} hiddenCardAgents={hiddenCardAgents} onToggleCard={setCardAgentVisible} onDetect={() => void detectAgents()}>
-        {(!runtimeCliChecking && !runtimeCliReady || shellIntegrated) && <div className="agent-runtime-notices">
+        {(!runtimeCliChecking || shellIntegrated) && <div className="agent-runtime-notices">
           {runtimeCliUnmanaged ? <div className="agent-runtime-notice"><Icon name="info" size={14} /><div><b>dev 构建不管理 CLI</b><span>Agent 继续使用正式版 CLI，dev 不会安装或更新它。</span></div></div> : !runtimeCliChecking && !runtimeCliReady && <div className={`agent-runtime-notice ${runtimeCliStatus?.commandPath ? 'danger' : ''}`}><Icon name="warn" size={14} /><div><b>{runtimeCliStatus?.commandPath ? 'CLI 安装有问题' : 'CLI 正在初始化'}</b><span>{runtimeCliIssue ?? '无法完成本机 skillhub 命令安装'}</span><small className="mono">命令路径：{runtimeCliStatus?.commandPath ?? '~/.local/bin/skillhub'}</small></div><button className="btn btn-ghost btn-sm" onClick={() => void checkRuntimeCli(true)}><Icon name="refresh" size={12} />重新检查</button></div>}
           {shellIntegrated && <div className="agent-runtime-notice warning"><Icon name="warn" size={14} /><div><b>发现旧版 Shell 全局加载</b><span>停用后，Skill 配置只会在 Skill 实际使用时获取。</span></div><button className="btn btn-danger-soft btn-sm" onClick={() => setConfirmLegacyDisable(true)}><Icon name="trash" size={12} />安全停用</button></div>}
         </div>}
       </AgentToolsPanel>
 
-      <p className="settings-label">钥匙 <DocHelp topic="keys" variant="section" label="钥匙是怎么用的" /></p>
+      <p className="settings-label" id="settings-keys" data-settings-section>钥匙 <DocHelp topic="keys" variant="section" label="钥匙是怎么用的" /></p>
       <div className="settings-group">
         <div className="settings-row settings-switch-row">
           <div className="settings-row-info"><b id="settings-auto-allow-title">{SETTINGS_KEY_COPY.autoAllowTitle}</b><span id="settings-auto-allow-description">{autoAllowState === 'error' && !currentUser ? SETTINGS_KEY_COPY.autoAllowSignedOut : SETTINGS_KEY_COPY.autoAllowDescription}</span></div>
@@ -551,7 +652,7 @@ export default function SettingsPage() {
       </div>
 
       {capabilities.profile !== 'local' && <>
-        <p className="settings-label">AI 与头像 <DocHelp topic="ai" variant="section" label="AI 与头像说明" /></p>
+        <p className="settings-label" id="settings-ai" data-settings-section>AI 与头像 <DocHelp topic="ai" variant="section" label="AI 与头像说明" /></p>
         <section className="settings-group">
           {capabilities.profile === 'official' ? <div className="settings-row">
             <div className="settings-row-info"><b>AI 分析</b><span>分析 Skill 的用途、摘要和标签，由一探官方提供。</span></div>
@@ -560,18 +661,18 @@ export default function SettingsPage() {
           {space && currentUser ? <AvatarSettings key={`${space.spaceId}:${space.generation}:${currentUser.id}:${currentUser.marketplaceRole}`} space={space} admin={currentUser.marketplaceRole === 'admin'} selfhost={capabilities.profile === 'selfhost'} />
             : <div className="settings-row"><div className="settings-row-info"><b>头像风格</b><span>登录后可选择头像风格</span></div></div>}
         </section>
-        <p className="settings-label">同步与迁移 <DocHelp topic="migrate" variant="section" label="迁移说明" /></p>
+        <p className="settings-label" id="settings-sync" data-settings-section>同步与迁移 <DocHelp topic="migrate" variant="section" label="迁移说明" /></p>
         <section className="settings-group">
           <OrganizerSyncStatus />
           <MigrationSettings />
         </section>
       </>}
       {capabilities.profile !== 'official' && <>
-        <p className="settings-label">Skill 商店 <DocHelp topic="storeLogin" variant="section" label="商店登录说明" /></p>
+        <p className="settings-label" id="settings-store" data-settings-section>Skill 商店 <DocHelp topic="storeLogin" variant="section" label="商店登录说明" /></p>
         <section className="settings-group"><CatalogLogin /></section>
       </>}
 
-      <p className="settings-label">偏好</p>
+      <p className="settings-label" id="settings-preferences" data-settings-section>偏好</p>
       <div className="settings-group">
         <div className="settings-row settings-choice-row">
           <div className="settings-row-info"><b>列表主要显示</b><span>选择 Skill 列表中更醒目的名称。</span></div>
@@ -583,7 +684,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <p className="settings-label">回收站</p>
+      <p className="settings-label" id="settings-trash" data-settings-section>回收站</p>
       <section className="settings-group trash-group" aria-busy={trashLoading || trashRefreshing} aria-labelledby="trash-heading">
         <div className="trash-head">
           <div><b id="trash-heading">可恢复项目</b><span>本机 Skill、同名备份与当前账号资产都会保留在这里。</span></div>
@@ -625,14 +726,26 @@ export default function SettingsPage() {
               </article>)}</div>}
       </section>
 
-      {capabilities.profile === 'official' && currentUser?.marketplaceRole === 'admin' && <><p className="settings-label">反馈管理</p><FeedbackAdminPanel /></>}
+      {showFeedback && <><p className="settings-label" id="settings-feedback" data-settings-section>反馈管理</p><FeedbackAdminPanel /></>}
 
-      <p className="settings-label">帮助与关于</p>
+      <p className="settings-label" id="settings-help" data-settings-section>帮助与关于</p>
       <div className="settings-group">
+        {runtimeCliStatus?.pathGuidance && <div className="settings-row"><RuntimeCliPathNotice guidance={runtimeCliStatus.pathGuidance} /></div>}
+        <div className="settings-row"><div className="agent-runtime-notice cli-storage-notice" aria-busy={cliStorageBusy}>
+          <Icon name="info" size={14} />
+          <div><b>CLI 组件占用</b>
+            {cliStorage ? <span>当前副本 {formatBytes(cliStorage.currentBytes)} · 可清理旧副本 {cliStorage.reclaimableCount} 个（{formatBytes(cliStorage.reclaimableBytes)}）</span> : <span>{cliStorageError ? `无法读取占用：${cliStorageError}` : '正在统计占用…'}</span>}
+            {runtimeCliUnmanaged && <span>请在正式版中清理旧副本。</span>}
+            {[...new Set([...cliCleanupWarnings, ...(cliStorage?.warnings ?? [])])].map(warning => <small key={warning} role="alert">{warning}</small>)}
+          </div>
+          {runtimeCliStatus?.managed === true && cliStorage && cliStorage.reclaimableCount > 0 && <button type="button" className="btn btn-ghost btn-sm" disabled={cliStorageBusy || runtimeCliChecking} onClick={() => void cleanCliStorage()}><Icon name="trash" size={12} />{cliStorageBusy ? '正在清理…' : '清理旧副本'}</button>}
+          <button type="button" className="btn btn-ghost btn-sm" disabled={cliStorageBusy || runtimeCliChecking} onClick={() => void reloadCliStorage()}>刷新占用</button>
+        </div></div>
         <div className="settings-row"><div className="settings-row-info"><b>使用文档</b><span>安装 Skill、钥匙、团队、自部署与常见问题。</span></div><DocHelp topic="docs" label="打开文档中心" /></div>
         <div className="settings-row"><div className="settings-row-info"><b>首次引导</b><span>重新了解使用方式和常用功能。</span></div><button className="btn btn-ghost btn-sm" onClick={() => window.dispatchEvent(new Event('skillhub-show-onboarding'))}>重新查看引导</button></div>
         <div className="settings-row"><div className="settings-row-info"><b>应用更新</b><span>{appUpdate.phase === 'checking' ? '正在从安全更新通道检查…' : appUpdate.phase === 'latest' ? '当前已是最新版本' : appUpdate.phase === 'available' ? `v${appUpdate.version} 可以下载` : appUpdate.phase === 'downloading' ? '正在下载并校验签名…' : appUpdate.phase === 'ready' ? '更新已安装，等待重启' : appUpdate.phase === 'error' ? appUpdate.error : '签名整包更新，失败时继续使用当前版本'}</span></div><button type="button" className="btn btn-ghost btn-sm" disabled={!supportsAppUpdates() || appUpdate.phase === 'checking' || appUpdate.phase === 'downloading'} onClick={() => void checkForAppUpdate()}><Icon name="refresh" size={13} />检查更新</button></div>
         <div className="settings-row settings-about-row"><div className="settings-row-info"><b>一探 SkillHub</b><span>v{appVersion} · 内部正式版</span></div><div className="settings-about-links">{LEGAL_LINKS.map((link) => <button key={link.url} type="button" className="btn btn-ghost btn-sm" onClick={() => void openLegalLink(link, openUrl, (message) => toast(message, 'error'), messageOf)}>{link.label}</button>)}</div></div>
+      </div>
       </div>
     </div>
     {confirmBackupDelete && envBackups && <ConfirmModal eyebrow="钥匙备份文件" title={envBackupConfirmTitle(envBackups.count)} description={SETTINGS_KEY_COPY.backupConfirmDescription} confirmLabel={SETTINGS_KEY_COPY.backupDelete} destructive busy={deletingBackups} onCancel={() => setConfirmBackupDelete(false)} onConfirm={() => void deleteBackups()} />}

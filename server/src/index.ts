@@ -13,6 +13,7 @@ import { requestIdFromTrustedEdge } from './lib/request-id.js'
 import { startAgentAuditCleanup } from './lib/admin-agent-audit-cleanup.js'
 import { registerDiagnosticCapture } from './lib/admin-diagnostic-events.js'
 import { startAvatarWorker } from './lib/skill-avatars.js'
+import { startSkillEnrichmentWorker } from './lib/skill-enrichment.js'
 import { assertAvatarReadModeAvailable } from './lib/avatar-model-verification.js'
 import { db } from './db.js'
 import { StorageUnavailableError } from './providers/storage-registry.js'
@@ -56,6 +57,7 @@ server.addHook('onSend', async (request, reply): Promise<void> => {
 
 // ---- Plugins ----
 let stopAvatarWorker: (() => Promise<void>) | undefined
+let stopSkillEnrichmentWorker: (() => Promise<void>) | undefined
 let stopAgentAuditCleanup: (() => void) | undefined
 const stopStartupRetries: Array<() => void> = []
 const stopDiagnosticCapture = config.SKILLHUB_PROFILE === 'yitan-official' ? registerDiagnosticCapture(server) : undefined
@@ -64,6 +66,7 @@ server.addHook('onClose', async (): Promise<void> => {
   stopAgentAuditCleanup?.()
   await stopDiagnosticCapture?.()
   await stopAvatarWorker?.()
+  await stopSkillEnrichmentWorker?.()
 })
 await server.register(cors, skillHubCorsOptions(config.CORS_ORIGIN))
 
@@ -117,6 +120,7 @@ try {
     stopAgentAuditCleanup = startAgentAuditCleanup(server.log)
   }
   stopAvatarWorker = startAvatarWorker(server.log)
+  stopSkillEnrichmentWorker = startSkillEnrichmentWorker(server.log)
   server.log.info(`SkillHub API running on http://localhost:${port}`)
 } catch (err) {
   server.log.error(err)

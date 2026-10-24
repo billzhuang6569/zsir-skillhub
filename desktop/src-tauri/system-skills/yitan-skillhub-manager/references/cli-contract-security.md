@@ -4,7 +4,8 @@
 
 - `skillhub --help` 和各命令族 `--help` 是本机已安装版本的能力事实源。
 - 文档提到但 help 未列出的命令视为尚未开放；回到 APP，不拼接私有命令。
-- 新控制面命令优先使用 `--json`；`run ... -- <program> [args...]` 由 Rust 直接启动目标进程并传播其退出码，不返回控制面 JSON，也不输出钥匙值。
+- 控制面命令默认输出 JSON 信封，`--json` 可省略；显式传入仍兼容。`server show` 与 `server use` 也使用同一信封；`--help` 和 `--version` 保持纯文本。用法错误的 `nextActions` 提供对应的 `--help` 命令。
+- `run ... -- <program> [args...]` 由 Rust 直接启动目标进程并传播其退出码，不返回控制面 JSON，也不输出钥匙值。
 - `env status` 与 `env request` 只处理钥匙的变量名和状态元数据；`env request` 只把变量名登记为待确认需求，没有任何读取、写入、解析或授权值的 CLI 命令。
 
 ## JSON
@@ -14,6 +15,7 @@
 常见错误处理：
 
 - `AUTH_REQUIRED`、`AUTH_EXPIRED`：停止账号型操作并按账号文档处理。
+- `SPACE_UNSUPPORTED`：当前是仅本机空间，不支持该账号功能；引导用户到 APP 设置 → 服务与账号连接一探官方或自部署服务器，不作为故障重试或上报。
 - `AUTH_SYNC_PENDING`：等待 APP 完成账号同步，再重新查询。
 - `ACCOUNT_CHANGED`、`AUTH_IDENTITY_MISMATCH`：丢弃结果，重新验证，不能换用旧账号资料。
 - `OFFLINE`：可继续不依赖 Server 的纯本地查询；不自动清会话。
@@ -25,7 +27,7 @@
 - `OPERATION_OUTCOME_UNKNOWN`：先用对应只读命令或 APP 复核真实状态；不自动重试写入。
 - `INTERNAL_ERROR`：停止并报告脱敏错误；不要绕过 CLI。
 
-退出码：`0` 成功，`1` 内部错误或结果未知，`2` 用法/校验，`3` 鉴权，`4` 冲突或计划失效，`5` 离线。始终同时检查 JSON 的 `ok` 和 `error.code`。
+退出码：`0` 成功，`1` 内部错误或结果未知，`2` 用法/校验或空间不支持，`3` 鉴权，`4` 冲突或计划失效，`5` 离线。始终同时检查 JSON 的 `ok` 和 `error.code`。
 
 ## 本地身份
 

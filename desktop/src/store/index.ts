@@ -50,7 +50,7 @@ export type KeysPageIntent = { tab: 'personal' | 'team'; key?: string }
 export type PendingCommentNavigation = {
   teamId: string
   serverSkillId: string
-  commentId: string
+  commentId?: string
 }
 
 export type AppUpdateState = {
@@ -110,6 +110,7 @@ export type SkillVersion = {
 export type LocalSkill = {
   /** Server analysis state; independent from the local import/analysis job status. */
   serverAnalysisStatus?: 'unanalysed' | 'completed'
+  enrichmentPending?: boolean
   id: string
   name: string          // raw folder name
   displayName: string
@@ -126,6 +127,13 @@ export type LocalSkill = {
   labels: string[]
   version: string
   latestVersion: string
+  sourceVersionId?: string
+  teamVersionId?: string
+  teamUpdateStatus?: string
+  teamUnshared?: boolean
+  acquiredByUserId?: string
+  teamEnvDeps?: LocalSkill['envDeps']
+  teamChangelog?: string | null
   versionStatus?: SkillVersionStatus
   versionProblem?: string | null
   versionReceiptId?: string
@@ -147,6 +155,10 @@ export type LocalSkill = {
   systemVersion?: string
   integrityStatus?: 'healthy' | 'repairRequired'
   acquisitionSource: AcquisitionSource
+  sourceModifiedFiles?: number | null
+  sourceLocalModified?: boolean
+  sourcePackageReady?: boolean
+  copiedFromSource?: boolean
   /** Account that most recently proved access through an authenticated API response. */
   serverAccessValidatedForUserId?: string
   /** SHA-256 of the exact remote package that created the current managed folder. */
@@ -308,8 +320,9 @@ export function writePreference(key: string, value: string): void {
   }
 }
 
-function readSkillSortPreference(): SkillSortPreference {
-  return readPreference(SKILL_SORT_PREFERENCE_KEY) === 'time' ? 'time' : 'name'
+export function readSkillSortPreference(): SkillSortPreference {
+  const value = readPreference(SKILL_SORT_PREFERENCE_KEY)
+  return value === 'time' || value === 'time-asc' || value === 'name-desc' ? value : 'name'
 }
 
 function readSkillTitlePreference(): SkillTitlePreference {
@@ -505,6 +518,7 @@ export type SkillHubStore = {
   clearLocalSkillImportRequest: () => void
   setPendingMarketplaceIntent: (intent: MarketplaceDeepLink | null) => void
   setPendingCommentNavigation: (navigation: PendingCommentNavigation | null) => void
+  openTeamSkill: (teamId: string, serverSkillId: string) => void
   setSearchQuery: (q: string) => void
   setCategoryFilter: (c: string) => void
   setStatusFilter: (s: string) => void
@@ -809,6 +823,8 @@ export const useStore = create<SkillHubStore>((set, get) => ({
   setLocalSkillPreview: (localSkillPreview) => set({ localSkillPreview }),
   setPendingMarketplaceIntent: (pendingMarketplaceIntent) => set({ pendingMarketplaceIntent }),
   setPendingCommentNavigation: (pendingCommentNavigation) => set({ pendingCommentNavigation }),
+  openTeamSkill: (teamId, serverSkillId) => set({ view: 'team-skills', activeTeamId: teamId, sheet: null,
+    pendingCommentNavigation: { teamId, serverSkillId } }),
   requestLocalSkillImport: (localImportRequestId) => set({ localImportRequestId }),
   clearLocalSkillImportRequest: () => set({ localImportRequestId: null }),
   setSearchQuery: (searchQuery) => set({ searchQuery }),

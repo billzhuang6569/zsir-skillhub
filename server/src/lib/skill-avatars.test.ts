@@ -9,7 +9,7 @@ const mock = vi.hoisted(() => ({
   skill: { findFirst: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
   skillAvatarAlias: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn() },
   skillAvatarGenerationAttempt: { count: vi.fn(), create: vi.fn() },
-  libraryEntry: { findFirst: vi.fn() },
+  libraryEntry: { findFirst: vi.fn(), findMany: vi.fn() },
   marketplaceListing: { findUnique: vi.fn() }, $transaction: vi.fn(), $queryRaw: vi.fn(),
   draft: vi.fn(), submit: vi.fn(), poll: vi.fn(), download: vi.fn(), upload: vi.fn(),
 }))
@@ -24,10 +24,11 @@ vi.mock('./media.js', () => ({ uploadMedia: mock.upload, publicImageUrl: (url: s
 import { AiRequestGuardError } from '../utils/ai-request-guard.js'
 import {
   AVATAR_BACKOFF_CAP_MS, AVATAR_MAX_ATTEMPTS, AVATAR_STEP_INTERVAL_MS, avatarDto, avatarStage, classifyAvatarFailure,
-  AVATAR_IDENTITY_CONFLICT, bindCloudAvatarToEntry, ensureSkillAvatar, nextAvatarAttemptAt, processAvatar, retryTarget, runAvatarWorkerOnce, sanitizeAvatarInput,
+  AVATAR_IDENTITY_CONFLICT, bindCloudAvatarToEntry, continueCloudAvatar, ensureEnrichmentAvatar, hasEnrichmentAvatar, ensureSkillAvatar, nextAvatarAttemptAt, processAvatar, retryTarget, runAvatarWorkerOnce, sanitizeAvatarInput,
 } from './skill-avatars.js'
 import { FalError } from './fal.js'
 import { config } from '../config.js'
+import { avatarRegistrationLimiter } from './avatar-generation.js'
 import { AiProviderHttpError, aiProviderHttpError } from '../utils/retry-after.js'
 const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger
 const task = (fields: Partial<SkillAvatar> = {}): SkillAvatar => ({
@@ -41,6 +42,7 @@ const task = (fields: Partial<SkillAvatar> = {}): SkillAvatar => ({
 const writes = (): Array<Record<string, unknown>> => mock.skillAvatar.updateMany.mock.calls.map(call => call[0].data as Record<string, unknown>)
 
 beforeEach(() => {
+  avatarRegistrationLimiter.clear('owner')
   vi.clearAllMocks()
   mock.$transaction.mockImplementation(async (fn: (db: typeof mock) => Promise<unknown>): Promise<unknown> => fn(mock))
   mock.skillAvatar.updateMany.mockResolvedValue({ count: 1 })
@@ -50,6 +52,8 @@ beforeEach(() => {
   mock.skillAvatarAlias.findMany.mockResolvedValue([])
   mock.skillAvatarAlias.create.mockResolvedValue(undefined)
   mock.libraryEntry.findFirst.mockResolvedValue(null)
+  mock.libraryEntry.findMany.mockResolvedValue([])
+  mock.skillAvatar.findFirst.mockResolvedValue(null)
   mock.skillAvatar.count.mockResolvedValue(0)
   // #235 claim: the due ids (one task), no owner busy; the claimed row is then read by findFirst.
   mock.skillAvatar.findMany.mockResolvedValue([{ id: '11111111-1111-4111-8111-111111111111', ownerId: 'owner' }])
@@ -63,6 +67,77 @@ beforeEach(() => {
 })
 
 describe('persistent Skill avatar generation', () => {
+  it.each(['ready', 'failed', 'needs_review', 'cancelled', 'queued'])('enrichment preserves existing %s tasks without a new attempt', async status => {
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud' })
+    mock.skillAvatar.findUnique.mockResolvedValue(task({ skillId: 'cloud', status }))
+    await ensureEnrichmentAvatar('owner', 'cloud')
+    expect(mock.skillAvatar.create).not.toHaveBeenCalled()
+    expect(mock.skillAvatarGenerationAttempt.create).not.toHaveBeenCalled()
+  })
+  it('enrichment finds proven entry/device aliases but ignores unrelated local tasks', async () => {
+    mock.libraryEntry.findMany.mockResolvedValue([{ id: 'entry' }])
+    mock.skillAvatarAlias.findUnique.mockResolvedValue({ avatar: task({ status: 'needs_review' }) })
+    expect(await hasEnrichmentAvatar(mock as unknown as import('@prisma/client').Prisma.TransactionClient, 'owner', 'cloud')).toBe(true)
+    mock.skillAvatarAlias.findUnique.mockResolvedValue(null)
+    mock.skillAvatar.findFirst.mockResolvedValue(task({ status: 'ready' }))
+    expect(await hasEnrichmentAvatar(mock as unknown as import('@prisma/client').Prisma.TransactionClient, 'owner', 'cloud')).toBe(false)
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud', displayName: 'Cloud', triggerScenarios: [] })
+    await ensureEnrichmentAvatar('owner', 'cloud')
+    expect(mock.skillAvatar.create).toHaveBeenCalledOnce()
+  })
+  it('enrichment parks conflicting identities proven by the same account entry', async () => {
+    mock.libraryEntry.findMany.mockResolvedValue([{ id: 'entry' }])
+    mock.skillAvatarAlias.findUnique.mockResolvedValue({ avatar: task({ skillId: 'other-cloud' }) })
+    await expect(hasEnrichmentAvatar(mock as unknown as import('@prisma/client').Prisma.TransactionClient, 'owner', 'cloud')).rejects.toMatchObject({ code: 'AVATAR_IDENTITY_CONFLICT' })
+  })
+  it('does not pay again for a device-first CLI Skill before its first LibraryEntry exists', async () => {
+    const local = await ensureSkillAvatar({ ownerId: 'owner', localSkillId: 'device-first', input: { name: 'CLI', description: 'Original', scenarios: [] } })
+    expect(mock.skillAvatar.create).toHaveBeenCalledOnce()
+    expect(mock.skillAvatarGenerationAttempt.create).toHaveBeenCalledOnce()
+    mock.skillAvatar.findFirst.mockResolvedValue(local)
+    mock.libraryEntry.findMany.mockResolvedValue([])
+    mock.skill.findFirst.mockResolvedValue({ id: 'cli-created', displayName: 'CLI', triggerScenarios: [] })
+    await expect(ensureEnrichmentAvatar('owner', 'cli-created')).rejects.toMatchObject({ code: 'AVATAR_IDENTITY_CONFLICT' })
+    expect(mock.skillAvatar.create).toHaveBeenCalledOnce()
+    expect(mock.skillAvatarGenerationAttempt.create).toHaveBeenCalledOnce()
+  })
+  it('enrichment reuses quota accounting and analyzed cloud input', async () => {
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud', displayName: 'Analyzed', description: 'New summary', triggerScenarios: [] })
+    await ensureEnrichmentAvatar('owner', 'cloud')
+    expect(mock.skillAvatar.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ input: { name: 'Analyzed', description: 'New summary', scenarios: [] } }) }))
+    expect(mock.skillAvatarGenerationAttempt.create).toHaveBeenCalledOnce()
+  })
+  it('enrichment obeys the daily quota and does not enqueue when disabled', async () => {
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud', displayName: 'Analyzed', triggerScenarios: [] })
+    mock.skillAvatarGenerationAttempt.count.mockResolvedValue(200)
+    await expect(ensureEnrichmentAvatar('owner', 'cloud')).rejects.toMatchObject({ statusCode: 429, code: 'AVATAR_DAILY_QUOTA' })
+    expect(mock.skillAvatarGenerationAttempt.create).not.toHaveBeenCalled()
+    config.SKILL_AVATARS_ENABLED = false
+    try {
+      mock.skillAvatar.create.mockClear()
+      await ensureEnrichmentAvatar('owner', 'cloud')
+      expect(mock.skillAvatar.create).not.toHaveBeenCalled()
+    } finally { config.SKILL_AVATARS_ENABLED = true }
+  })
+  it('background registration shares the API hourly allowance', async () => {
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud', displayName: 'Analyzed', triggerScenarios: [] })
+    for (let index = 0; index < 60; index += 1) avatarRegistrationLimiter.consume('owner', 60, 3600_000)
+    await expect(ensureEnrichmentAvatar('owner', 'cloud')).rejects.toMatchObject({ statusCode: 429, code: 'AVATAR_RATE_LIMITED' })
+    expect(mock.skillAvatar.create).not.toHaveBeenCalled()
+  })
+  it('import only binds existing identities and never creates a task before analysis', async () => {
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud', displayName: 'Original', triggerScenarios: [] })
+    await continueCloudAvatar('owner', 'cloud', 'entry')
+    expect(mock.skillAvatar.create).not.toHaveBeenCalled()
+    expect(mock.skillAvatarGenerationAttempt.create).not.toHaveBeenCalled()
+  })
+  it('import continuation projects the existing image onto the legacy cloud row', async () => {
+    mock.skill.findFirst.mockResolvedValue({ id: 'cloud', displayName: 'Original', triggerScenarios: [] })
+    mock.skillAvatar.findUnique.mockResolvedValue(task({ localSkillId: 'entry', skillId: 'cloud', status: 'ready', url: 'https://images.example.test/original.jpg' }))
+    await continueCloudAvatar('owner', 'cloud', 'entry')
+    expect(mock.skill.update).toHaveBeenCalledWith({ where: { id: 'cloud' }, data: { avatarUrl: 'https://images.example.test/original.jpg', avatarStatus: 'ready' } })
+    expect(mock.skillAvatar.create).not.toHaveBeenCalled()
+  })
   it('recovers saved assets and never requeues consumed submit rights without evidence', () => {
     const failed = task({ status: 'failed', leaseToken: null, submittedAt: new Date() })
     expect(retryTarget(failed)).toBeNull()
@@ -377,6 +452,40 @@ describe('avatar identity: alias-first resolution, verifiable continuation, park
   const created = (): Array<Record<string, unknown>> => mock.skillAvatar.create.mock.calls.map(call => call[0].data as Record<string, unknown>)
   const aliasRows = (): Array<Record<string, unknown>> => mock.skillAvatarAlias.create.mock.calls.map(call => call[0].data as Record<string, unknown>)
 
+  it.each([SKILL, null, 'different'])('first cloud binding requires the entry author asset (%s)', async authorSkillId => {
+    tasksByKey({ [ENTRY]: { skillId: null, status: 'ready' } })
+    ownedSkill()
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId })
+    const request = ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, skillId: SKILL })
+    if (authorSkillId === SKILL) {
+      await request
+      expect(mock.skillAvatar.update).toHaveBeenCalledWith(expect.objectContaining({ data: { skill: { connect: { id: SKILL } } } }))
+    } else {
+      await expect(request).rejects.toMatchObject({ code: AVATAR_IDENTITY_CONFLICT })
+      expect(mock.skillAvatar.update).not.toHaveBeenCalled()
+    }
+    expect(mock.skillAvatarGenerationAttempt.create).not.toHaveBeenCalled()
+  })
+
+  it('an old alias cannot bypass the canonical entry author binding', async () => {
+    tasksByKey({ [ENTRY]: { skillId: null } })
+    ownedSkill()
+    mock.skillAvatarAlias.findUnique.mockResolvedValue({ avatarId: `task:${ENTRY}`, avatar: task({ id: `task:${ENTRY}`, localSkillId: ENTRY, skillId: null }) })
+    mock.libraryEntry.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) => where.id === ENTRY
+      ? { userId: 'owner', deletedAt: null, authorSkillId: 'different' } : null)
+    await expect(ensureSkillAvatar({ ownerId: 'owner', localSkillId: DEVICE, skillId: SKILL })).rejects.toMatchObject({ code: AVATAR_IDENTITY_CONFLICT })
+    expect(mock.skillAvatar.update).not.toHaveBeenCalled()
+  })
+
+  it.each([null, 'different'])('a new task cannot bind an entry to the wrong author asset (%s)', async authorSkillId => {
+    tasksByKey({})
+    ownedSkill()
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId })
+    await expect(ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, skillId: SKILL })).rejects.toMatchObject({ code: AVATAR_IDENTITY_CONFLICT })
+    expect(mock.skillAvatar.create).not.toHaveBeenCalled()
+    expect(mock.skillAvatarGenerationAttempt.create).not.toHaveBeenCalled()
+  })
+
   it('new client, no prior task: one task keyed by the entry id, device id registered as alias', async () => {
     tasksByKey({})
     const result = await ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, aliasLocalIds: [DEVICE], input })
@@ -396,23 +505,23 @@ describe('avatar identity: alias-first resolution, verifiable continuation, park
   it('local-first continuation: an old device-keyed task is re-keyed to the entry only when entry → authorSkill is verifiable', async () => {
     tasksByKey({ [DEVICE]: { skillId: SKILL } })
     ownedSkill()
-    mock.libraryEntry.findFirst.mockResolvedValue({ authorSkillId: SKILL })
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId: SKILL })
     const result = await ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, aliasLocalIds: [DEVICE], skillId: SKILL })
     expect(mock.skillAvatar.create).not.toHaveBeenCalled()
     expect(mock.skillAvatar.update.mock.calls[0][0]).toMatchObject({ where: { id: `task:${DEVICE}` }, data: { localSkillId: ENTRY } })
     expect(aliasRows()).toEqual([{ ownerId: 'owner', aliasLocalId: DEVICE, avatarId: `task:${DEVICE}` }])
     expect(result.localSkillId).toBe(ENTRY)
-    expect(mock.libraryEntry.findFirst.mock.calls[0][0]).toMatchObject({ where: { id: ENTRY, userId: 'owner', deletedAt: null } })
+    expect(mock.libraryEntry.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: ENTRY, userId: 'owner', deletedAt: null } }))
   })
   it('an old task with no cloud binding is never re-keyed on the client\'s alias claim alone: 409, no new task', async () => {
     tasksByKey({ [DEVICE]: { skillId: null } })
-    mock.libraryEntry.findFirst.mockResolvedValue({ authorSkillId: SKILL })
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId: SKILL })
     await expect(ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, aliasLocalIds: [DEVICE] })).rejects.toMatchObject({ statusCode: 409, code: AVATAR_IDENTITY_CONFLICT })
     expect(mock.skillAvatar.create).not.toHaveBeenCalled()
     expect(mock.skillAvatar.update).not.toHaveBeenCalled()
     // Even with a requested skillId, the entry must name that very Skill.
     ownedSkill()
-    mock.libraryEntry.findFirst.mockResolvedValue({ authorSkillId: 'another-skill' })
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId: 'another-skill' })
     await expect(ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, aliasLocalIds: [DEVICE], skillId: SKILL })).rejects.toMatchObject({ code: AVATAR_IDENTITY_CONFLICT })
     expect(mock.skillAvatar.create).not.toHaveBeenCalled()
   })
@@ -421,19 +530,19 @@ describe('avatar identity: alias-first resolution, verifiable continuation, park
     // as alias and names a *different* asset that the entry really authors.
     tasksByKey({ [DEVICE]: { skillId: null, status: 'failed' } })
     ownedSkill()
-    mock.libraryEntry.findFirst.mockResolvedValue({ authorSkillId: SKILL })
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId: SKILL })
     await expect(ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, aliasLocalIds: [DEVICE], skillId: SKILL })).rejects.toMatchObject({ statusCode: 409, code: AVATAR_IDENTITY_CONFLICT })
     expect(mock.skillAvatar.update).not.toHaveBeenCalled()
     expect(mock.skillAvatar.create).not.toHaveBeenCalled()
     expect(mock.skillAvatarAlias.create).not.toHaveBeenCalled()
     expect(mock.skill.update).not.toHaveBeenCalled()
-    expect(mock.libraryEntry.findFirst).not.toHaveBeenCalled()
+    expect(mock.libraryEntry.findFirst).toHaveBeenCalled()
   })
   it('a cloud task with no local key is legally continued to the entry that authors it', async () => {
     mock.skillAvatar.findUnique.mockImplementation(async (args: { where: { ownerId_localSkillId?: unknown; skillId?: string } }): Promise<SkillAvatar | null> =>
       args.where.skillId === SKILL ? task({ id: 'cloud-task', localSkillId: null, skillId: SKILL, status: 'ready' }) : null)
     ownedSkill()
-    mock.libraryEntry.findFirst.mockResolvedValue({ authorSkillId: SKILL })
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId: SKILL })
     const result = await ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, aliasLocalIds: [DEVICE], skillId: SKILL })
     expect(mock.skillAvatar.create).not.toHaveBeenCalled()
     expect(mock.skillAvatar.update.mock.calls[0][0]).toMatchObject({ where: { id: 'cloud-task' }, data: { localSkillId: ENTRY } })
@@ -444,7 +553,7 @@ describe('avatar identity: alias-first resolution, verifiable continuation, park
     // Task keyed by some other device id, requested without listing it as alias.
     tasksByKey({ 'other-device': { skillId: SKILL } })
     ownedSkill()
-    mock.libraryEntry.findFirst.mockResolvedValue({ authorSkillId: SKILL })
+    mock.libraryEntry.findFirst.mockResolvedValue({ userId: 'owner', deletedAt: null, authorSkillId: SKILL })
     await expect(ensureSkillAvatar({ ownerId: 'owner', localSkillId: ENTRY, skillId: SKILL })).rejects.toMatchObject({ code: AVATAR_IDENTITY_CONFLICT })
     // The incident shape: device-keyed task and entry-keyed task both exist.
     tasksByKey({ [DEVICE]: { skillId: null, status: 'failed' }, [ENTRY]: { skillId: SKILL, status: 'failed' } })

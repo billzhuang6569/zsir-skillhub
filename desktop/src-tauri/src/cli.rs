@@ -81,6 +81,7 @@ impl CliAccount {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CliErrorCode {
+    SpaceUnsupported,
     AuthRequired,
     AuthExpired,
     AuthSyncPending,
@@ -100,6 +101,7 @@ pub(crate) enum CliErrorCode {
 impl CliErrorCode {
     fn as_str(self) -> &'static str {
         match self {
+            Self::SpaceUnsupported => "SPACE_UNSUPPORTED",
             Self::AuthRequired => "AUTH_REQUIRED",
             Self::AuthExpired => "AUTH_EXPIRED",
             Self::AuthSyncPending => "AUTH_SYNC_PENDING",
@@ -127,10 +129,10 @@ struct CliError {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CliEnvelope {
+struct CliEnvelope<'a> {
     schema_version: u8,
     ok: bool,
-    command: &'static str,
+    command: &'a str,
     account: CliAccount,
     data: Value,
     warnings: Vec<String>,
@@ -146,7 +148,7 @@ pub(crate) struct CliCommandOutput {
 
 impl CliCommandOutput {
     pub(crate) fn success(
-        command: &'static str,
+        command: &str,
         account: CliAccount,
         data: Value,
         warnings: Vec<String>,
@@ -168,13 +170,23 @@ impl CliCommandOutput {
     }
 
     pub(crate) fn failure(
-        command: &'static str,
+        command: &str,
         account: CliAccount,
         code: CliErrorCode,
         message: impl Into<String>,
         exit_code: i32,
-        next_actions: Vec<String>,
+        mut next_actions: Vec<String>,
     ) -> Self {
+        if exit_code == EXIT_USAGE {
+            let help = if command == "unknown" {
+                "skillhub --help".to_string()
+            } else {
+                format!("skillhub {command} --help")
+            };
+            if !next_actions.contains(&help) {
+                next_actions.push(help);
+            }
+        }
         Self::from_envelope(
             CliEnvelope {
                 schema_version: CLI_PROTOCOL_VERSION,
@@ -193,7 +205,7 @@ impl CliCommandOutput {
         )
     }
 
-    fn from_envelope(envelope: CliEnvelope, exit_code: i32) -> Self {
+    fn from_envelope(envelope: CliEnvelope<'_>, exit_code: i32) -> Self {
         let json = serde_json::to_string(&envelope).unwrap_or_else(|_| {
             r#"{"schemaVersion":1,"ok":false,"command":"unknown","account":{"state":"unknown","verified":false},"data":{},"warnings":[],"nextActions":[],"error":{"code":"INTERNAL_ERROR","message":"无法序列化 CLI 响应"}}"#.to_string()
         });
@@ -226,6 +238,25 @@ impl CliCommandOutput {
 mod tests {
     use super::{CliAccount, CliAccountState, CliCommandOutput, CliErrorCode, EXIT_AUTH};
     use serde_json::json;
+
+    #[test]
+    fn usage_errors_offer_the_corresponding_plain_text_help() {
+        for (command, help) in [
+            ("unknown", "skillhub --help"),
+            ("skill import", "skillhub skill import --help"),
+        ] {
+            let output = CliCommandOutput::failure(
+                command,
+                CliAccount::state(CliAccountState::Unknown),
+                CliErrorCode::ValidationFailed,
+                "参数错误",
+                super::EXIT_USAGE,
+                Vec::new(),
+            );
+            let value: serde_json::Value = serde_json::from_str(output.json()).unwrap();
+            assert_eq!(value["nextActions"], json!([help]));
+        }
+    }
 
     #[test]
     fn envelope_uses_stable_machine_fields() {

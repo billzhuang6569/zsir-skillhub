@@ -117,7 +117,7 @@ export function StoreSkillRow({ skill, busy, onOpen, onInstall }: SkillItemProps
     <span className="tsh-row-meta">
       <Metric icon="download" title="安装次数">{formatStoreCount(skill.installCount)}</Metric>
       <Metric icon="users-round" title="在用用户">{formatStoreCount(skill.marketplaceUserCount)}</Metric>
-      <span className="tsh-row-source" title={uploader(skill)}>{uploader(skill)}</span>
+      <span className="tsh-row-source" title={uploader(skill)} onClick={busy ? undefined : onOpen}>{uploader(skill)}</span>
       <StoreInstallButton skill={skill} busy={busy} onInstall={onInstall} title={title.primary} />
     </span>
   </article>
@@ -184,7 +184,7 @@ export function TrendingList({ title, items, ranges, range, onRangeChange, loadi
             </span>
             {item.growth
               ? <span className="tsh-delta"><StoreIcon name="trending-up" size={14} /><span className="tsh-sr-only">增长</span>{item.growth}</span>
-              : item.metric && <span className="tsh-metric tsh-num">{item.metric}</span>}
+              : item.metric && <Metric icon="download" title={item.metric.title}><span aria-hidden="true">{item.metric.value}</span></Metric>}
           </li>
         })}
     </ol>

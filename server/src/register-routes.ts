@@ -16,6 +16,7 @@ import { runtimeRoutes } from './routes/runtime.js'
 import { marketplaceRoutes } from './routes/marketplace.js'
 import { marketplaceExperienceRoutes } from './routes/marketplace-experience.js'
 import { teamInviteRoutes } from './routes/team-invites.js'
+import { teamSkillLinkRoutes } from './routes/team-skill-links.js'
 import { feedbackRoutes } from './routes/feedback.js'
 import { appUpdatesRoutes } from './routes/app-updates.js'
 import { appReleasesRoutes } from './routes/app-releases.js'
@@ -56,6 +57,7 @@ export async function registerRoutes(server: FastifyInstance, config: Pick<Confi
     await server.register(marketplaceExperienceRoutes, { prefix: '/api/marketplace' })
   }
   await server.register(teamInviteRoutes)
+  await server.register(teamSkillLinkRoutes)
   await server.register(feedbackRoutes, { prefix: '/api/feedback' })
   await server.register(appUpdatesRoutes, { prefix: '/api/app-updates' })
   await server.register(appReleasesRoutes, { prefix: '/api/app-releases' })

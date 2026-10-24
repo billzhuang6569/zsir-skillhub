@@ -14,9 +14,9 @@ use std::time::Duration;
 
 pub(crate) const FEEDBACK_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub feedback submit preflight --type <bug|usage|feature|other> --content <text> [--contact <text>] [--include-diagnostics] --json\n",
-    "  skillhub feedback submit apply --type <bug|usage|feature|other> --content <text> [--contact <text>] [--include-diagnostics] --operation-id <uuid> --plan-digest <64hex> --json\n",
-    "  skillhub feedback status --operation-id <uuid> --json"
+    "  skillhub feedback submit preflight --type <bug|usage|feature|other> --content <text> [--contact <text>] [--include-diagnostics] [--json]\n",
+    "  skillhub feedback submit apply --type <bug|usage|feature|other> --content <text> [--contact <text>] [--include-diagnostics] --operation-id <uuid> --plan-digest <64hex> [--json]\n",
+    "  skillhub feedback status --operation-id <uuid> [--json]"
 );
 
 const SUBMIT_PREFLIGHT_COMMAND: &str = "feedback submit preflight";
@@ -238,9 +238,6 @@ fn parse_submit(args: &[String]) -> Result<FeedbackCommand, &'static str> {
             _ => return Err(command),
         }
     }
-    if !json_requested {
-        return Err(command);
-    }
     let fields = FeedbackFields {
         feedback_type: feedback_type.ok_or(command)?,
         content: content.ok_or(command)?,
@@ -279,9 +276,6 @@ fn parse_status(args: &[String]) -> Result<FeedbackCommand, &'static str> {
             }
             _ => return Err(STATUS_COMMAND),
         }
-    }
-    if !json_requested {
-        return Err(STATUS_COMMAND);
     }
     Ok(FeedbackCommand::Status {
         operation_id: operation_id.ok_or(STATUS_COMMAND)?,
@@ -336,7 +330,12 @@ fn usage_failure(command: &'static str) -> CliCommandOutput {
 }
 
 fn capture_guard(command: &'static str) -> Result<CliAuthGuard, CliCommandOutput> {
-    CliAuthGuard::capture().map_err(|error| auth_guard_failure(command, error))
+    let guard = CliAuthGuard::capture().map_err(|error| auth_guard_failure(command, error))?;
+    if matches!(command, SUBMIT_PREFLIGHT_COMMAND | SUBMIT_APPLY_COMMAND) {
+        crate::cli_auth::require_server_space(guard.session())
+            .map_err(|error| auth_guard_failure(command, error))?;
+    }
+    Ok(guard)
 }
 
 fn guard_is_authenticated(
@@ -1060,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_json_invalid_values_and_duplicate_flags() {
+    fn accepts_default_json_and_rejects_invalid_values_and_duplicate_flags() {
         assert!(parse_command(&strings(&[
             "feedback",
             "submit",
@@ -1070,7 +1069,7 @@ mod tests {
             "--content",
             "正文"
         ]))
-        .is_err());
+        .is_ok());
         let oversized_unicode = "😀".repeat(1_001);
         assert!(parse_command(&[
             "feedback".into(),
@@ -1155,5 +1154,47 @@ mod tests {
             br#"{"id":"bad","status":"pending","createdAt":"2026-09-09T12:00:00.000Z"}"#,
         )
         .is_err());
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &[
+                "feedback",
+                "submit",
+                "preflight",
+                "--type",
+                "bug",
+                "--content",
+                "fixture",
+            ],
+            &[
+                "feedback",
+                "submit",
+                "apply",
+                "--type",
+                "bug",
+                "--content",
+                "fixture",
+                "--operation-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "feedback",
+                "status",
+                "--operation-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_command(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_command(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_command(&args).is_err(), "{case:?}");
+        }
     }
 }

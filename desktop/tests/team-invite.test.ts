@@ -170,7 +170,7 @@ test('desktop listens for deep links, scans the clipboard locally, and resumes a
   assert.match(app, /apiAcceptTeamInvite\(token, expectedSpace\)/)
   assert.match(app, /intent\.kind === 'join-team'/)
   assert.match(store, /\{ kind: 'join-team'; token: string \}/)
-  assert.match(rust, /use crate::official_channel::INVITE_PREFIX/)
+  assert.match(rust, /use crate::official_channel::(?:INVITE_PREFIX|\{[^}]*\bINVITE_PREFIX\b[^}]*\})\s*;/)
   assert.match(rust, /MAX_CLIPBOARD_LENGTH/)
   assert.match(config, /"schemes": \["skillhub"\]/)
 })

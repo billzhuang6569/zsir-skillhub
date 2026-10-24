@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify'
 import { Prisma } from '@prisma/client'
+import { notifyRemovedTeamShares } from '../lib/team-skill-version.js'
 import { z } from 'zod'
 import { db } from '../db.js'
 import { config } from '../config.js'
@@ -91,11 +92,13 @@ async function hasActiveTeamMembership(teamId: string, userId: string): Promise<
 async function revokeAuthoredTeamAssets(
   transaction: Prisma.TransactionClient,
   teamId: string,
-  authorId: string
+  authorId: string,
+  actorId: string
 ): Promise<void> {
   // Team keys the member put stay with the team (holder id is kept); only
   // the Skills they authored stop being shared, which removes those Skills
   // from every key's scope.
+  await notifyRemovedTeamShares(transaction, teamId, actorId, authorId)
   await transaction.skillTeamShare.deleteMany({ where: { teamId, skill: { authorId } } })
 }
 
@@ -282,6 +285,7 @@ export const teamsRoutes: FastifyPluginAsync = async (fastify) => {
         select: { userId: true },
       })
       const credentialCounts = await revokeTeamCredentialsForTeam(transaction, req.params.id, now)
+      await notifyRemovedTeamShares(transaction, req.params.id, req.user.id)
       await transaction.skillTeamShare.deleteMany({ where: { teamId: req.params.id } })
       await transaction.team.update({
         where: { id: req.params.id },
@@ -323,7 +327,7 @@ export const teamsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { teamId: id, userId },
       })
       if (removed.count === 0) return { kind: 'not-member' } as const
-      await revokeAuthoredTeamAssets(transaction, id, userId)
+      await revokeAuthoredTeamAssets(transaction, id, userId, req.user.id)
       await recordTeamActivity(transaction, {
         teamId: id,
         actorId: userId,
@@ -369,7 +373,7 @@ export const teamsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { teamId: req.params.id, userId: req.params.uid },
       })
       if (membership.count === 0) return { kind: 'not-member' } as const
-      await revokeAuthoredTeamAssets(transaction, req.params.id, req.params.uid)
+      await revokeAuthoredTeamAssets(transaction, req.params.id, req.params.uid, req.user.id)
       const removedUser = await transaction.user.findUnique({
         where: { id: req.params.uid },
         select: { displayName: true },

@@ -1,4 +1,22 @@
 import assert from 'node:assert/strict'
+import { sourceModificationLabel, sourceUpdateBlockReason } from '../src/lib/skill-library.ts'
+
+test('source checks block updates while loading and use the native fallback when unavailable', () => {
+  const unavailable = skill({ sourceModifiedFiles: undefined, sourceLocalModified: false, hasWorkingCopy: false })
+  assert.equal(sourceUpdateBlockReason(unavailable, true), '正在核验取得时的内容…')
+  assert.equal(sourceUpdateBlockReason(unavailable, false), null)
+  assert.match(sourceUpdateBlockReason({ ...unavailable, sourceLocalModified: true }, false)!, /本机修改/)
+  assert.match(sourceUpdateBlockReason({ ...unavailable, hasWorkingCopy: true }, false)!, /本机修改/)
+})
+
+test('acquired modifications remain visible after a snapshot', () => {
+  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'team', sourceModifiedFiles: 2, hasWorkingCopy: false })), '团队共享后修改')
+  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'marketplace', sourceModifiedFiles: 1 })), '商店获取后修改')
+  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'local', catalogOrigin: 'https://catalog.example.test', sourceModifiedFiles: 1 })), '商店获取后修改')
+  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'team', sourceModifiedFiles: 0 })), null)
+  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'team', sourceModifiedFiles: undefined })), '来源内容待核验')
+  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'local', sourceModifiedFiles: 1 })), null)
+})
 import test from 'node:test'
 import {
   envKeyIssue, isRuntimeRequestedEnvDependency, issueForSkill, sameEnvKeySummary, isSystemManagerSkill, isTeamSharedSkill, locallyManagedSkillNames, mapSettledWithConcurrency, matchesAgentInstallation, orderSkillsByName, orderSkillsByTime, orderSkills, orderTeamSharedSkills, reconcileAgentFilter, resolveTeamPreference, summarizeRequiredEnvRows,
@@ -135,6 +153,30 @@ test('My Skills sorts actual Skill names alphabetically without changing source 
   assert.deepEqual(orderSkillsByTime(dated).map((item) => item.id), ['edited', 'new', 'old', 'undated-a', 'bad', 'undated-b'])
   assert.deepEqual(orderSkills(dated, 'name').map((item) => item.id), orderSkillsByName(dated).map((item) => item.id))
   assert.deepEqual(source.map((item) => item.id), ['ten', 'bill', 'two', 'alpha'])
+})
+
+test('both sort criteria support both directions, with stable ties and undated Skills last', () => {
+  const source = [
+    { id: 'z', name: 'zeta' },
+    { id: 'b', name: 'beta', createdAt: '2026-01-01' },
+    { id: 'a2', name: 'alpha', createdAt: '2026-01-01' },
+    { id: 'new', name: 'new', createdAt: '2025-01-01', updatedAt: '2026-02-01' },
+    { id: 'bad', name: 'bad', updatedAt: 'invalid' },
+    { id: 'a1', name: 'alpha', createdAt: '2026-01-01' },
+  ]
+  const original = structuredClone(source)
+  const expected = {
+    name: ['a1', 'a2', 'bad', 'b', 'new', 'z'],
+    'name-desc': ['z', 'new', 'b', 'bad', 'a1', 'a2'],
+    time: ['new', 'a1', 'a2', 'b', 'bad', 'z'],
+    'time-asc': ['a1', 'a2', 'b', 'new', 'bad', 'z'],
+  }
+  for (const preference of ['name', 'name-desc', 'time', 'time-asc'] as const) {
+    assert.deepEqual(orderSkills(source, preference).map(item => item.id), expected[preference])
+    assert.deepEqual(orderSkills([...source].reverse(), preference).map(item => item.id), expected[preference])
+    assert.deepEqual(orderSkills([], preference), [])
+  }
+  assert.deepEqual(source, original)
 })
 
 test('system Manager stays managed but is hidden from personal list identity', () => {

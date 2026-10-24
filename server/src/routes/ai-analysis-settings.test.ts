@@ -36,7 +36,7 @@ describe('selfhost analysis configuration', () => {
       { authorization: 'Bearer stored-secret' }, expect.objectContaining({ model: 'saved-model' }), [], expect.any(Number)])
     state.provider.mockResolvedValueOnce({ choices: [{ message: { content: 'drawing prompt' } }] })
     expect(await requestConfiguredAiDraft('avatar:owner', 'system', 'input', 'text', 'background')).toBe('drawing prompt')
-    expect(state.reserve).toHaveBeenLastCalledWith('owner', 1)
+    expect(state.reserve).toHaveBeenLastCalledWith('owner', 1, 'background')
   })
   it('provider errors and invalid profiles remain unanalysed without heuristic fallback', async () => {
     state.value = { protocol: 'openai', baseUrl: 'https://saved.example', model: 'model' }

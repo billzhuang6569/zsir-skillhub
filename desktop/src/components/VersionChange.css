@@ -1,0 +1,6 @@
+.version-change { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); }
+.version-change > div { display: grid; gap: var(--space-1); min-width: 0; }
+.version-change > div > span { color: var(--color-muted); font-size: var(--font-size-caption); font-weight: var(--font-weight-caption); }
+.version-change code { display: block; overflow: hidden; padding: 7px 10px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-surface-sunken); color: var(--color-ink); font: 12px var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+.version-change .next code { border-color: var(--color-brand-line); background: var(--color-brand-tint); color: var(--color-brand-strong); }
+.version-change-arrow { color: var(--color-muted); }

@@ -72,7 +72,8 @@ export const aiBatchRoutes: FastifyPluginAsync = async (fastify): Promise<void> 
                   const currentUser = await transaction.user.findUnique({ where: { id: userId }, select: { tokenVersion: true } })
                   if (currentUser?.tokenVersion !== tokenVersion || job.abort.signal.aborted) return 0
                   const result = await transaction.skill.updateMany({ where: { id: skill.id, authorId: userId, deletedAt: null, updatedAt: skill.updatedAt },
-                    data: { ...analysis.profile, ...(skill.labelsManuallyEdited ? { labels: skill.labels as string[] } : {}), analysisStatus: 'completed' } })
+                    data: { ...(skill.profileManuallyEdited ? {} : analysis.profile),
+                      labels: skill.labelsManuallyEdited ? skill.labels as string[] : analysis.profile.labels, analysisStatus: 'completed' } })
                   return result.count
                 })
                 if (changed) job.completed += 1

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { FastifyBaseLogger } from 'fastify'
 import { Prisma, type SkillAvatar } from '@prisma/client'
-import { avatarGenerationEnabled } from './avatar-generation.js'
+import { avatarGenerationEnabled, avatarRegistrationLimiter } from './avatar-generation.js'
 import { config } from '../config.js'
 import { db } from '../db.js'
 import { lockUserMutation } from './mutation-lock.js'
@@ -245,6 +245,16 @@ async function resolveAvatarIdentity(transaction: Tx, options: AvatarIdentity): 
     }
     if (candidates.size > 1) throw new AvatarError(409, 'Skill 已有另一头像关联，请核对身份', AVATAR_IDENTITY_CONFLICT)
     const existing = candidates.values().next().value as SkillAvatar | undefined
+    if (skillId) {
+      // Check the canonical key too: an old alias must not bypass the entry's author binding.
+      for (const key of new Set([localSkillId, existing?.localSkillId])) {
+        if (!key) continue
+        const entry = await transaction.libraryEntry.findFirst({ where: { id: key }, select: { userId: true, deletedAt: true, authorSkillId: true } })
+        if (entry && (entry.userId !== ownerId || entry.deletedAt !== null || entry.authorSkillId !== skillId)) {
+          throw new AvatarError(409, '头像身份关联冲突', AVATAR_IDENTITY_CONFLICT)
+        }
+      }
+    }
     if (existing) {
       if (existing.skillId && skillId && existing.skillId !== skillId) throw new AvatarError(409, '头像身份关联冲突', AVATAR_IDENTITY_CONFLICT)
       const data: Prisma.SkillAvatarUpdateInput = skillId && !existing.skillId ? { skill: { connect: { id: skillId } } } : {}
@@ -448,6 +458,63 @@ export async function retryFailedAvatar(ownerId: string, avatarId: string): Prom
 export async function queueCloudAvatar(ownerId: string, skillId: string, localSkillId?: string, aliasLocalIds?: string[]): Promise<void> {
   if (!avatarGenerationEnabled() && !localSkillId) return
   await ensureSkillAvatar({ ownerId, skillId, localSkillId, aliasLocalIds })
+}
+
+/** Import only continues proven identities; the enrichment worker creates missing tasks after analysis. */
+export async function continueCloudAvatar(ownerId: string, skillId: string, localSkillId?: string, aliasLocalIds?: string[]): Promise<void> {
+  if (!localSkillId) return
+  await db.$transaction(async transaction => {
+    await lockUserMutation(transaction, ownerId)
+    const resolved = await resolveAvatarIdentity(transaction, { ownerId, skillId, localSkillId, aliasLocalIds })
+    if (!resolved.existing) return
+    if (variantsMode()) {
+      await mirrorAvatarJob(transaction, resolved.existing.id)
+      await fillEmptyListingAvatar(transaction, ownerId, skillId)
+    } else {
+      await mirrorSkillAvatar(transaction, resolved.existing.id)
+      await transaction.skill.update({ where: { id: skillId }, data: skillAvatarColumns(resolved.existing) })
+    }
+  })
+}
+
+/** Caller holds the owner lock. Never infer historical device identity from names/content. */
+export async function hasEnrichmentAvatar(transaction: Tx, ownerId: string, skillId: string): Promise<boolean> {
+  const tasks = new Map<string, { id: string; skillId: string | null }>()
+  const cloud = await transaction.skillAvatar.findUnique({ where: { skillId } })
+  if (cloud) tasks.set(cloud.id, cloud)
+  const entries = await transaction.libraryEntry.findMany({ where: { userId: ownerId, authorSkillId: skillId }, select: { id: true } })
+  // Before the first entry exists there is no #526 evidence to disambiguate a device-first import.
+  if (!cloud && !entries.length && await transaction.skillAvatar.findFirst({
+    where: { ownerId, skillId: null, status: { not: SUPERSEDED } }, select: { id: true },
+  })) throw new AvatarError(409, '头像身份待核对', AVATAR_IDENTITY_CONFLICT)
+  for (const entry of entries) {
+    const task = await resolveAvatarKey(transaction, ownerId, entry.id)
+    if (task) tasks.set(task.id, task)
+  }
+  // Entry keys also resolve proven device aliases; unrelated local tasks are not identity evidence.
+  if (tasks.size > 1 || [...tasks.values()].some(task => task.skillId && task.skillId !== skillId)) {
+    throw new AvatarError(409, '头像身份待核对', AVATAR_IDENTITY_CONFLICT, 3600)
+  }
+  return tasks.size > 0
+}
+
+/** Check and create under the same owner lock as device registration/custom upload. */
+export async function ensureEnrichmentAvatar(ownerId: string, skillId: string): Promise<void> {
+  if (!avatarGenerationEnabled()) return
+  await db.$transaction(async transaction => {
+    await lockUserMutation(transaction, ownerId)
+    const skill = await transaction.skill.findFirst({ where: { id: skillId, authorId: ownerId, deletedAt: null } })
+    if (!skill || skill.avatarUrl || await hasEnrichmentAvatar(transaction, ownerId, skillId)) return
+    const retryAfter = avatarRegistrationLimiter.consume(ownerId, 60, 60 * 60 * 1000)
+    if (retryAfter !== null) throw new AvatarError(429, '头像请求过于频繁', 'AVATAR_RATE_LIMITED', retryAfter)
+    const resolved = await resolveAvatarIdentity(transaction, { ownerId, skillId })
+    const created = await createAvatarTask(transaction, resolved, { status: 'queued', queuedAt: new Date() })
+    if (variantsMode()) await createAvatarJob(transaction, created, 'create')
+    else {
+      await reserveAvatarGeneration(transaction, created.id, 'create')
+      await transaction.skill.update({ where: { id: skillId }, data: { avatarStatus: 'pending' } })
+    }
+  })
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 const FOCUSABLE_SELECTOR = [
@@ -22,6 +22,7 @@ type FocusTrapDialogProps = {
   onEscape: () => void
   escapeDisabled?: boolean
   closeOnBackdrop?: boolean
+  style?: CSSProperties
 }
 
 function isVisible(element: HTMLElement): boolean {
@@ -56,6 +57,7 @@ export default function FocusTrapDialog({
   onEscape,
   escapeDisabled = false,
   closeOnBackdrop = false,
+  style,
 }: FocusTrapDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const onEscapeRef = useRef(onEscape)
@@ -134,6 +136,7 @@ export default function FocusTrapDialog({
     aria-modal="true"
     aria-label={label}
     tabIndex={-1}
+    style={style}
     onClick={(event) => {
       if (closeOnBackdrop && event.target === event.currentTarget && !escapeDisabledRef.current) {
         onEscapeRef.current()

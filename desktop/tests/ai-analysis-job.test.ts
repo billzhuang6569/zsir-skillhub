@@ -23,10 +23,17 @@ const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
 } })
 const { useStore } = await import('../src/store/index.ts')
 const {
-  aiAnalysisJobKey, describeAiAnalysisFailure, runSkillAiAnalysis,
+  aiAnalysisJobKey, describeAiAnalysisFailure, importAnalysisMessage, runSkillAiAnalysis,
 } = await import('../src/lib/ai-analysis-job.ts')
 const { ApiError } = await import('../src/lib/api.ts')
 hooks.deregister()
+
+test('cloud import distinguishes queued analysis from unavailable analysis', () => {
+  assert.equal(importAnalysisMessage({ status: 'unanalysed', queued: true }), '正在后台分析')
+  assert.equal(importAnalysisMessage({ status: 'unanalysed', queued: false }), '现有资料已保留，可稍后重试分析')
+  assert.equal(importAnalysisMessage({ status: 'completed' }), '资料已完善')
+  assert.equal(importAnalysisMessage({ status: 'recovered' }), '已恢复云端关联')
+})
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sheet = readFileSync(resolve(desktopRoot, 'src/components/SkillDetailSheet.tsx'), 'utf8')

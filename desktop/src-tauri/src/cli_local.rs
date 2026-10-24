@@ -29,32 +29,32 @@ const SKILL_DIFF_COMMAND: &str = "skill diff";
 
 pub(crate) const SKILL_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub skill list [--query <text>] --json\n",
-    "  skillhub skill show --skill-id <id> --json\n",
-    "  skillhub skill discover [--agent <key>] --json\n",
-    "  skillhub skill import preflight --path <path> [--skill-id <id>] --json\n",
-    "  skillhub skill import apply --path <path> [--skill-id <id>] --plan-digest <digest> [--replace-conflicts] --json\n",
-    "  skillhub skill install preflight --skill-id <id> --agent <key> [--agent <key> ...] --json\n",
-    "  skillhub skill install apply --skill-id <id> --agent <key> [--agent <key> ...] --plan-digest <digest> [--replace-conflicts] --json\n",
-    "  skillhub skill enable preflight --skill-id <id> --agent <key> --json\n",
-    "  skillhub skill enable apply --skill-id <id> --agent <key> --plan-digest <digest> [--replace-conflicts] --json\n",
-    "  skillhub skill disable preflight --skill-id <id> --agent <key> --json\n",
-    "  skillhub skill disable apply --skill-id <id> --agent <key> --plan-digest <digest> --json\n",
-    "  skillhub skill uninstall preflight --skill-id <id> --json\n",
-    "  skillhub skill uninstall apply --skill-id <id> --plan-digest <digest> --json\n",
-    "  skillhub skill history --skill-id <id> --json\n",
-    "  skillhub skill diff --skill-id <id> --working --json\n",
-    "  skillhub skill diff --skill-id <id> --from <hash> --to <hash> --json\n",
-    "  skillhub skill snapshot --skill-id <id> --message <text> [--version <0.1.1>] --json\n",
-    "  skillhub skill restore-version preflight --skill-id <id> --hash <40hex> [--receipt-id <uuid>] --json\n",
-    "  skillhub skill restore-version apply --skill-id <id> --hash <40hex> [--receipt-id <uuid>] --plan-digest <digest> --json\n",
-    "  skillhub skill delete preflight --skill-id <id> --json\n",
-    "  skillhub skill delete apply --skill-id <id> --plan-digest <digest> --json\n",
-    "  skillhub skill trash list --json\n",
-    "  skillhub skill trash restore preflight --trash-id <id> --json\n",
-    "  skillhub skill trash restore apply --trash-id <id> --plan-digest <digest> --json\n",
-    "  skillhub skill prepare-edit (--skill-id <id> | --skill-path <SKILL.md>) --json\n",
-    "  skillhub skill finish-edit <session-id> --json"
+    "  skillhub skill list [--query <text>] [--json]\n",
+    "  skillhub skill show --skill-id <id> [--json]\n",
+    "  skillhub skill discover [--agent <key>] [--json]\n",
+    "  skillhub skill import preflight --path <path> [--skill-id <id>] [--json]\n",
+    "  skillhub skill import apply --path <path> [--skill-id <id>] --plan-digest <digest> [--replace-conflicts] [--json]\n",
+    "  skillhub skill install preflight --skill-id <id> --agent <key> [--agent <key> ...] [--json]\n",
+    "  skillhub skill install apply --skill-id <id> --agent <key> [--agent <key> ...] --plan-digest <digest> [--replace-conflicts] [--json]\n",
+    "  skillhub skill enable preflight --skill-id <id> --agent <key> [--json]\n",
+    "  skillhub skill enable apply --skill-id <id> --agent <key> --plan-digest <digest> [--replace-conflicts] [--json]\n",
+    "  skillhub skill disable preflight --skill-id <id> --agent <key> [--json]\n",
+    "  skillhub skill disable apply --skill-id <id> --agent <key> --plan-digest <digest> [--json]\n",
+    "  skillhub skill uninstall preflight --skill-id <id> [--json]\n",
+    "  skillhub skill uninstall apply --skill-id <id> --plan-digest <digest> [--json]\n",
+    "  skillhub skill history --skill-id <id> [--json]\n",
+    "  skillhub skill diff --skill-id <id> --working [--json]\n",
+    "  skillhub skill diff --skill-id <id> --from <hash> --to <hash> [--json]\n",
+    "  skillhub skill snapshot --skill-id <id> --message <text> [--version <0.1.1>] [--json]\n",
+    "  skillhub skill restore-version preflight --skill-id <id> --hash <40hex> [--receipt-id <uuid>] [--json]\n",
+    "  skillhub skill restore-version apply --skill-id <id> --hash <40hex> [--receipt-id <uuid>] --plan-digest <digest> [--json]\n",
+    "  skillhub skill delete preflight --skill-id <id> [--json]\n",
+    "  skillhub skill delete apply --skill-id <id> --plan-digest <digest> [--json]\n",
+    "  skillhub skill trash list [--json]\n",
+    "  skillhub skill trash restore preflight --trash-id <id> [--json]\n",
+    "  skillhub skill trash restore apply --trash-id <id> --plan-digest <digest> [--json]\n",
+    "  skillhub skill prepare-edit (--skill-id <id> | --skill-path <SKILL.md>) [--json]\n",
+    "  skillhub skill finish-edit <session-id> [--json]"
 );
 
 const MAX_PROFILE_BYTES: u64 = 1024 * 1024;
@@ -322,22 +322,26 @@ fn parse_command(
 ) -> Result<ParsedCommand, (&'static str, &'static str)> {
     match args.first().map(String::as_str) {
         Some("status") => {
-            require_exact_json(args, STATUS_COMMAND, "用法：skillhub status --json")?;
+            require_exact_json(args, STATUS_COMMAND, "用法：skillhub status [--json]")?;
             Ok(ParsedCommand::Status)
         }
         Some("doctor") => {
-            require_exact_json(args, DOCTOR_COMMAND, "用法：skillhub doctor --json")?;
+            require_exact_json(args, DOCTOR_COMMAND, "用法：skillhub doctor [--json]")?;
             Ok(ParsedCommand::Doctor)
         }
         Some("agent") => {
             if args.get(1).map(String::as_str) != Some("list") {
-                return Err((AGENT_LIST_COMMAND, "用法：skillhub agent list --json"));
+                return Err((AGENT_LIST_COMMAND, "用法：skillhub agent list [--json]"));
             }
-            require_exact_json(args, AGENT_LIST_COMMAND, "用法：skillhub agent list --json")?;
+            require_exact_json(
+                args,
+                AGENT_LIST_COMMAND,
+                "用法：skillhub agent list [--json]",
+            )?;
             Ok(ParsedCommand::AgentList)
         }
         Some("skill") => parse_skill_command(args, context),
-        _ => Err((STATUS_COMMAND, "用法：skillhub status --json")),
+        _ => Err((STATUS_COMMAND, "用法：skillhub status [--json]")),
     }
 }
 
@@ -347,7 +351,9 @@ fn require_exact_json(
     usage: &'static str,
 ) -> Result<(), (&'static str, &'static str)> {
     let expected_len = if command == AGENT_LIST_COMMAND { 3 } else { 2 };
-    if args.len() == expected_len && args.last().map(String::as_str) == Some("--json") {
+    if args.len() == expected_len - 1
+        || (args.len() == expected_len && args.last().map(String::as_str) == Some("--json"))
+    {
         Ok(())
     } else {
         Err((command, usage))
@@ -363,26 +369,26 @@ fn parse_skill_command(
         Some("show") => parse_skill_id_only(
             args,
             SKILL_SHOW_COMMAND,
-            "用法：skillhub skill show --skill-id <id> --json",
+            "用法：skillhub skill show --skill-id <id> [--json]",
         )
         .map(|skill_id| ParsedCommand::SkillShow { skill_id }),
         Some("discover") => parse_skill_discover(args, context),
         Some("history") => parse_skill_id_only(
             args,
             SKILL_HISTORY_COMMAND,
-            "用法：skillhub skill history --skill-id <id> --json",
+            "用法：skillhub skill history --skill-id <id> [--json]",
         )
         .map(|skill_id| ParsedCommand::SkillHistory { skill_id }),
         Some("diff") => parse_skill_diff(args),
         _ => Err((
             SKILL_LIST_COMMAND,
-            "用法：skillhub skill <list|show|discover|history|diff> ... --json",
+            "用法：skillhub skill <list|show|discover|history|diff> ... [--json]",
         )),
     }
 }
 
 fn parse_skill_list(args: &[String]) -> Result<ParsedCommand, (&'static str, &'static str)> {
-    const USAGE: &str = "用法：skillhub skill list [--query <text>] --json";
+    const USAGE: &str = "用法：skillhub skill list [--query <text>] [--json]";
     let mut query = None;
     let mut json_seen = false;
     let mut index = 2;
@@ -405,9 +411,6 @@ fn parse_skill_list(args: &[String]) -> Result<ParsedCommand, (&'static str, &'s
             }
             _ => return Err((SKILL_LIST_COMMAND, USAGE)),
         }
-    }
-    if !json_seen {
-        return Err((SKILL_LIST_COMMAND, USAGE));
     }
     Ok(ParsedCommand::SkillList { query })
 }
@@ -439,8 +442,8 @@ fn parse_skill_id_only(
             _ => return Err((command, usage)),
         }
     }
-    match (skill_id, json_seen) {
-        (Some(skill_id), true) => Ok(skill_id),
+    match skill_id {
+        Some(skill_id) => Ok(skill_id),
         _ => Err((command, usage)),
     }
 }
@@ -449,7 +452,7 @@ fn parse_skill_discover(
     args: &[String],
     context: &LocalContext,
 ) -> Result<ParsedCommand, (&'static str, &'static str)> {
-    const USAGE: &str = "用法：skillhub skill discover [--agent <key>] --json";
+    const USAGE: &str = "用法：skillhub skill discover [--agent <key>] [--json]";
     let mut agent = None;
     let mut json_seen = false;
     let mut index = 2;
@@ -472,16 +475,13 @@ fn parse_skill_discover(
             _ => return Err((SKILL_DISCOVER_COMMAND, USAGE)),
         }
     }
-    if !json_seen {
-        return Err((SKILL_DISCOVER_COMMAND, USAGE));
-    }
     Ok(ParsedCommand::SkillDiscover { agent })
 }
 
 fn parse_skill_diff(args: &[String]) -> Result<ParsedCommand, (&'static str, &'static str)> {
     const USAGE: &str = concat!(
-        "用法：skillhub skill diff --skill-id <id> --working --json\n",
-        "或：skillhub skill diff --skill-id <id> --from <hash> --to <hash> --json"
+        "用法：skillhub skill diff --skill-id <id> --working [--json]\n",
+        "或：skillhub skill diff --skill-id <id> --from <hash> --to <hash> [--json]"
     );
     let mut skill_id = None;
     let mut working = false;
@@ -535,9 +535,6 @@ fn parse_skill_diff(args: &[String]) -> Result<ParsedCommand, (&'static str, &'s
     let Some(skill_id) = skill_id else {
         return Err((SKILL_DIFF_COMMAND, USAGE));
     };
-    if !json_seen {
-        return Err((SKILL_DIFF_COMMAND, USAGE));
-    }
     let mode = match (working, from, to) {
         (true, None, None) => DiffMode::Working,
         (false, Some(from), Some(to)) => DiffMode::Commits { from, to },
@@ -574,6 +571,7 @@ fn status(context: &LocalContext) -> CliCommandOutput {
             "platform": release_platform(),
             "arch": std::env::consts::ARCH,
             "managerSkill": manager,
+            "cliEntry": { "onPath": cli_on_path(std::env::var_os("PATH").as_deref()) },
             "serverValidated": false,
         }),
         warnings,
@@ -643,6 +641,14 @@ fn doctor(context: &LocalContext) -> CliCommandOutput {
         .filter(|check| !check.ok)
         .map(|check| check.message.clone())
         .collect::<Vec<_>>();
+    let guidance = crate::runtime_env::CliPathGuidance::default();
+    let mut next_actions = vec![guidance.message];
+    if let Some(command) = guidance.command {
+        next_actions.push(command);
+    }
+    if !healthy {
+        next_actions.push("请打开 SkillHub APP，在设置中检查或修复 CLI 与 Agent 安装".into());
+    }
     CliCommandOutput::success(
         DOCTOR_COMMAND,
         unknown_account(),
@@ -655,12 +661,22 @@ fn doctor(context: &LocalContext) -> CliCommandOutput {
             "legacyRemoveLinks": legacy_remove_links,
         }),
         warnings,
-        if healthy {
-            Vec::new()
-        } else {
-            vec!["请打开 SkillHub APP，在设置中检查或修复 CLI 与 Agent 安装".into()]
-        },
+        next_actions,
     )
+}
+
+fn cli_on_path(path: Option<&std::ffi::OsStr>) -> bool {
+    let Some(path) = path else { return false };
+    std::env::split_paths(path).any(|directory| {
+        #[cfg(windows)]
+        {
+            crate::executable_exists(&[directory], "skillhub")
+        }
+        #[cfg(not(windows))]
+        {
+            crate::is_launchable_file(&directory.join("skillhub"))
+        }
+    })
 }
 
 fn agent_list(context: &LocalContext) -> CliCommandOutput {
@@ -1910,8 +1926,7 @@ fn skill_not_found(command: &'static str, skill_id: &str) -> CliCommandOutput {
 mod tests {
     use super::{
         execute_local_cli_at, AgentRoot, LocalContext, AGENT_LIST_COMMAND, DOCTOR_COMMAND,
-        SKILL_DIFF_COMMAND, SKILL_DISCOVER_COMMAND, SKILL_HISTORY_COMMAND, SKILL_LIST_COMMAND,
-        SKILL_SHOW_COMMAND, STATUS_COMMAND,
+        SKILL_DIFF_COMMAND, SKILL_HISTORY_COMMAND, SKILL_LIST_COMMAND, SKILL_SHOW_COMMAND,
     };
     use crate::{AgentDetectionSource, AgentInfo, AgentSkillsStatus};
     use git2::{IndexAddOption, Repository, Signature};
@@ -2072,16 +2087,13 @@ mod tests {
     }
 
     #[test]
-    fn parsers_require_one_json_flag_and_preserve_legacy_edit_routing() {
+    fn parsers_reject_invalid_flags_and_preserve_legacy_edit_routing() {
         let home = TestHome::new("parser", false);
         let context = empty_context(&home.path);
         for (args, expected_command) in [
-            (vec!["status"], STATUS_COMMAND),
             (vec!["doctor", "--json", "--json"], DOCTOR_COMMAND),
             (vec!["agent", "show", "--json"], AGENT_LIST_COMMAND),
-            (vec!["skill", "list"], SKILL_LIST_COMMAND),
             (vec!["skill", "show", "--json"], SKILL_SHOW_COMMAND),
-            (vec!["skill", "discover"], SKILL_DISCOVER_COMMAND),
             (vec!["skill", "history", "--json"], SKILL_HISTORY_COMMAND),
             (
                 vec!["skill", "diff", "--skill-id", "sample", "--json"],
@@ -2147,8 +2159,8 @@ mod tests {
             agents: Vec::new(),
             agent_roots: vec![
                 AgentRoot {
-                    key: "workbuddy".into(),
-                    name: "WorkBuddy".into(),
+                    key: "workbuddy-ai".into(),
+                    name: "WorkBuddy AI".into(),
                     relative: PathBuf::from(".workbuddy-ai/skills"),
                 },
                 AgentRoot {
@@ -2187,7 +2199,7 @@ mod tests {
                 serde_json::json!({
                     "claude": "installed",
                     "codex": "conflict",
-                    "workbuddy": "notInstalled",
+                    "workbuddy-ai": "notInstalled",
                 })
             );
         }
@@ -2510,6 +2522,51 @@ mod tests {
     }
 
     #[test]
+    fn cli_path_resolution_only_checks_supplied_path() {
+        let home = TestHome::new("cli-path", true);
+        assert!(!super::cli_on_path(None));
+        let path = std::env::join_paths([&home.path]).unwrap();
+        assert!(!super::cli_on_path(Some(&path)));
+        let entry = home.path.join(if cfg!(windows) {
+            "skillhub.cmd"
+        } else {
+            "skillhub"
+        });
+        fs::create_dir(&entry).unwrap();
+        assert!(!super::cli_on_path(Some(&path)));
+        fs::remove_dir(&entry).unwrap();
+        fs::write(&entry, "fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&entry, fs::Permissions::from_mode(0o600)).unwrap();
+            assert!(!super::cli_on_path(Some(&path)));
+            fs::set_permissions(&entry, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        assert!(super::cli_on_path(Some(&path)));
+        let other_path = std::env::join_paths([home.path.join("absent")]).unwrap();
+        assert!(!super::cli_on_path(Some(&other_path)));
+        #[cfg(unix)]
+        {
+            fs::rename(&entry, home.path.join("skillhub.cmd")).unwrap();
+            assert!(!super::cli_on_path(Some(&path)));
+            std::os::unix::fs::symlink(home.path.join("skillhub.cmd"), &entry).unwrap();
+            assert!(super::cli_on_path(Some(&path)));
+        }
+    }
+
+    #[test]
+    fn status_includes_current_process_path_resolution() {
+        let home = TestHome::new("status-path", false);
+        let output = json_output(&["status", "--json"], &empty_context(&home.path));
+        assert_eq!(
+            output["data"]["cliEntry"]["onPath"],
+            super::cli_on_path(std::env::var_os("PATH").as_deref())
+        );
+        assert!(!home.path.exists());
+    }
+
+    #[test]
     fn doctor_does_not_create_a_missing_home() {
         let home = TestHome::new("doctor", false);
         let context = empty_context(&home.path);
@@ -2517,6 +2574,12 @@ mod tests {
         assert_eq!(output["ok"], true);
         assert_eq!(output["data"]["healthy"], false);
         assert_eq!(output["data"]["repairAttempted"], false);
+        let guidance = crate::runtime_env::CliPathGuidance::default();
+        let actions = output["nextActions"].as_array().unwrap();
+        assert!(actions.contains(&Value::String(guidance.message)));
+        if let Some(command) = guidance.command {
+            assert!(actions.contains(&Value::String(command)));
+        }
         assert!(!home.path.exists());
     }
 }

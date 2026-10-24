@@ -185,3 +185,30 @@ test('a manual recheck whose answer arrives after an account switch publishes no
 })
 
 function setSpace(space: SpaceHandle): void { useStore.setState({ authSpace: space }); serverFixture.space = space }
+
+test('legacy ready task recovered to canonical identity releases current parking and displays the original image without ensure', async () => {
+  const cloudSignature = avatarParkSignature('owner', { stableId: 'entry-id', aliasLocalIds: ['device-id'] }, 'cloud')
+  const parking = JSON.stringify({ ...JSON.parse(parkedFile), [cloudSignature]: {
+    parkedAt: 2, stableId: 'entry-id', aliasLocalIds: ['device-id'], serverId: 'cloud',
+  } })
+  let recovered = false
+  const originalUrl = 'https://example.invalid/original.webp'
+  await withFixture({ parking: async () => parking, list: async () => [{
+    localSkillId: recovered ? 'entry-id' : 'device-id', skillId: recovered ? 'cloud' : null,
+    aliases: recovered ? ['device-id'] : [], avatarStatus: 'ready', avatarUrl: originalUrl,
+  }] }, async (counters, space) => {
+    useStore.setState({ skills: [{ ...skill, serverId: 'cloud', serverOwnerId: 'owner', serverAccessValidatedForUserId: 'owner' }] })
+    await pass(space)
+    assert.equal(status(), 'conflict')
+    recovered = true
+    assert.equal(await recheckSkillAvatarIdentity(useStore.getState().skills[0]!, 'owner', space), 'released')
+    await pass(space)
+    assert.equal(status(), 'ready')
+    assert.equal(useStore.getState().skills[0]?.avatarUrl, originalUrl)
+    assert.equal(counters.posts, 0)
+    const persisted = JSON.parse(counters.writes.at(-1)!)
+    assert.equal(persisted[cloudSignature], undefined)
+    // A historical signature is not evidence for a different cloud binding.
+    assert.ok(persisted[PARKED_SIGNATURE])
+  })
+})

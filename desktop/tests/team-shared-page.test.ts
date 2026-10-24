@@ -83,6 +83,6 @@ test('team shared header shows 共享 / 已在本机 / 可获取 / 团队钥匙 
   const list = readFileSync(resolve(desktopRoot, 'src/components/SkillLibraryList.tsx'), 'utf8')
   assert.match(list, /className="btn btn-primary skill-library-get" aria-label="获取" title="获取" data-row-action="get"><Icon name="download"/)
   assert.match(list, /closest\?\.\('\[data-row-action="get"\]'\)\) openSkillSheet\(skill\.id, 'profile', 'install'\)/)
-  assert.match(list, /context === 'team' && teamSkillHasUpdate\(skill\) && <span className="skill-library-update">有更新<\/span>/)
+  assert.match(list, /<TeamSkillUpdateButton skill=\{skill\} \/>/)
   assert.match(list, /<UserChip name=\{teamSharer\.name\} me=\{teamSharer\.me\} avatarUrl=\{teamSharer\.avatarUrl\} \/>共享/)
 })

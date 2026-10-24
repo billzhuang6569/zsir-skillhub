@@ -15,6 +15,7 @@ import {
 } from '../lib/mutation-lock.js'
 import { redactSensitiveContent } from '../lib/sensitive-content.js'
 import { bindCloudAvatarToEntry } from '../lib/skill-avatars.js'
+import { inheritAuthorAsset } from '../lib/author-asset-inheritance.js'
 import {
   cardMetadata,
   CatalogAuthorshipError,
@@ -30,7 +31,7 @@ import { describeSkillPackage, SkillPackageValidationError } from '../lib/skill-
 import { authMiddleware } from '../middleware/auth.js'
 import { pruneQuickAccessAfterEntryDelete } from './library-organizer.js'
 import {
-  acceptVersionIntent, allocateVersion, entryHighWater, entryVersionMetadata, entryVersionMetadataBatch, type EntryVersionMetadata, lockEntryVersionSkills,
+  acceptVersionIntent, allocateVersion, entryHighWater, entryVersionMetadata, entryVersionMetadataBatch, type EntryVersionMetadata, lockEntryVersionSkills, sameCardContent,
   receiptDto, receiptInclude, replayReceipt, requireVersion, VersionIntentSchema, VersionPolicyError,
   type Receipt,
 } from '../lib/version-policy.js'
@@ -100,6 +101,9 @@ const RevisionBody = z.object({
   baseRevision: z.number().int().min(1).optional(),
   device: DeviceSchema,
 }).strict()
+const AuthorAssetBody = RevisionBody.extend({
+  inheritFrom: z.object({ serverSkillId: ResourceIdSchema }).strict().optional(),
+})
 
 const UploadCardBody = z.object({
   packageBase64: z.string().min(4).max(28_000_000),
@@ -283,6 +287,10 @@ async function candidateSourceVersionId(userId: string, source: LibrarySource): 
     })
     return listing?.versionId ?? null
   }
+  if (source.kind === 'team') {
+    const share = await db.skillTeamShare.findUnique({ where: { skillId_teamId: { skillId: source.skillId, teamId: source.teamId } }, select: { versionId: true } })
+    if (share?.versionId) return share.versionId
+  }
   const skill = await db.skill.findUnique({
     where: { id: source.skillId },
     select: { authorId: true, currentVersion: true, deletedAt: true },
@@ -372,7 +380,7 @@ async function resolveSourceLocked(
       }),
       transaction.skillTeamShare.findUnique({
         where: { skillId_teamId: { skillId: source.skillId, teamId: source.teamId } },
-        select: { skillId: true },
+        select: { skillId: true, versionId: true },
       }),
       transaction.skill.findUnique({
         where: { id: source.skillId },
@@ -383,12 +391,14 @@ async function resolveSourceLocked(
       return { outcome: 'source_unavailable' }
     }
     const version = await transaction.skillVersion.findUnique({
-      where: { skillId_version: { skillId: source.skillId, version: skill.currentVersion } },
+      where: share.versionId ? { id: share.versionId } : { skillId_version: { skillId: source.skillId, version: skill.currentVersion } },
       select: { id: true, cardSha256: true },
     })
     if (!version || version.id !== expectedVersionId || !version.cardSha256) {
       return { outcome: 'source_changed' }
     }
+    const acquisition = { skillId: source.skillId, teamId: source.teamId, userId, versionId: version.id }
+    await transaction.teamSkillAcquisition.upsert({ where: { skillId_teamId_userId_versionId: acquisition }, create: acquisition, update: {} })
     return {
       outcome: 'resolved',
       source: {
@@ -845,7 +855,15 @@ export const libraryRoutes: FastifyPluginAsync = async (fastify) => {
               ...(source.authorSkillId ? { authorSkillId: source.authorSkillId } : {}),
             }
         }
-        const targetCard = sourceFields.cardSha256 ?? current.cardSha256
+        let targetCard = sourceFields.cardSha256 ?? current.cardSha256
+        if (body.data.versionIntent?.kind === 'formal') {
+          const formal = await transaction.skillVersion.findUnique({ where: { id: body.data.versionIntent.versionId }, select: { cardSha256: true } })
+          // Only normalize equivalent archives; acceptVersionIntent still checks access and the exact grant.
+          if (formal?.cardSha256 && await sameCardContent(transaction, targetCard, formal.cardSha256)) {
+            targetCard = formal.cardSha256
+            sourceFields.cardSha256 = targetCard
+          }
+        }
         if (body.data.versionIntent) await requireReferenceQuota(transaction, userId, targetCard)
         const priorFormal = body.data.versionIntent?.kind === 'formal' && current.currentVersionReceiptId
           ? await transaction.libraryEntryVersion.findUnique({ where: { id: current.currentVersionReceiptId }, select: { formalVersionId: true } }) : null
@@ -963,7 +981,7 @@ export const libraryRoutes: FastifyPluginAsync = async (fastify) => {
     '/library/:id/author-asset',
     async (request: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply: FastifyReply): Promise<FastifyReply> => {
       const userId = request.user.id
-      const body = RevisionBody.safeParse(request.body ?? {})
+      const body = AuthorAssetBody.safeParse(request.body ?? {})
       if (!body.success) return reply.badRequest(body.error.message)
       try {
         const entry = await db.libraryEntry.findUnique({
@@ -1040,6 +1058,7 @@ export const libraryRoutes: FastifyPluginAsync = async (fastify) => {
               sourceUrl: profile.sourceUrl ?? null,
               category: profile.category ?? null,
               labels: profile.labels,
+              labelsManuallyEdited: profile.labels.length > 0,
               triggerScenarios: profile.triggerScenarios,
               compatibleAgents: profile.compatibleAgents,
               envDependencies: profile.envDependencies,
@@ -1072,6 +1091,7 @@ export const libraryRoutes: FastifyPluginAsync = async (fastify) => {
             },
             select: { id: true, name: true, currentVersion: true, versions: { select: { id: true } } },
           })
+          await inheritAuthorAsset(transaction, userId, skill.id, body.data.inheritFrom?.serverSkillId)
           const formalVersionId = skill.versions[0]!.id
           const receipt = currentReceipt
             ? await transaction.libraryEntryVersion.update({ where: { id: currentReceipt.id }, data: { formalVersionId } })

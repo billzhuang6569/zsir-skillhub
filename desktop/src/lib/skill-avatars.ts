@@ -317,7 +317,7 @@ export async function syncSkillAvatars(userId: string, space: SpaceHandle, signa
     const fresh = (): boolean => displayRevision(skill.id) === revisions.get(skill.id)
     if (!fresh()) continue
     try {
-      const generate = mayGenerateSkillAvatar(skill, userId)
+      const generate = !skill.copiedFromSource && mayGenerateSkillAvatar(skill, userId)
       // Device id stays on the sidecar; the account entry id is the stable identity once bound (#149).
       const deviceId = skill.localPath ? skill.avatarLocalId ?? await ensureSkillAvatarIdentity(skill.id) : undefined
       if (!current()) return { wakeAt: null }

@@ -161,6 +161,7 @@ export function detachStaleServerBinding<T extends ServerBoundSkill>(
 type RefreshableServerBinding = {
   catalogOrigin?: string
   serverAnalysisStatus?: 'unanalysed' | 'completed'
+  enrichmentPending?: boolean
   avatarLocalId?: string
   avatarUrl?: string | null
   avatarStatus?: string
@@ -194,6 +195,7 @@ export function reconcileLocalSkillRefresh<T extends RefreshableServerBinding>(
     avatarStatus: current.avatarStatus,
     avatarAccountUserId: current.avatarAccountUserId,
     serverAnalysisStatus: current.serverAnalysisStatus,
+    enrichmentPending: current.enrichmentPending,
     serverId: current.serverId,
     serverAccessValidatedForUserId: current.serverAccessValidatedForUserId,
     serverOwnerId: current.serverOwnerId,

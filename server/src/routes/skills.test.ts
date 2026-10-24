@@ -127,7 +127,9 @@ const mockDb = vi.hoisted(() => ({
     findMany: vi.fn(),
     findUnique: vi.fn(),
   },
+  teamSkillAcquisition: { findMany: vi.fn(), upsert: vi.fn() },
   skillTeamShare: {
+    findFirst: vi.fn(), update: vi.fn(),
     findMany: vi.fn(),
     findUnique: vi.fn(),
     upsert: vi.fn(),
@@ -158,6 +160,7 @@ const mockAuth = vi.hoisted((): {
 }))
 
 const mockConfig = vi.hoisted((): {
+  SKILLHUB_PROFILE: 'selfhost' | 'yitan-official'
   AI_API_BASE_URL: string | undefined
   AI_API_KEY: string | undefined
   AI_MODEL: string
@@ -171,7 +174,9 @@ const mockConfig = vi.hoisted((): {
   SKILL_MAX_STORAGE_BYTES_PER_USER: number
   SKILL_VERSION_WRITES_PER_HOUR: number
   SKILL_CARD_STORAGE_DIR: string
+  SKILL_AVATARS_ENABLED: boolean
 } => ({
+  SKILLHUB_PROFILE: 'yitan-official',
   AI_API_BASE_URL: undefined,
   AI_API_KEY: undefined,
   AI_MODEL: 'kimi-k3',
@@ -185,6 +190,7 @@ const mockConfig = vi.hoisted((): {
   SKILL_MAX_STORAGE_BYTES_PER_USER: 250 * 1024 * 1024,
   SKILL_VERSION_WRITES_PER_HOUR: 30,
   SKILL_CARD_STORAGE_DIR: '',
+  SKILL_AVATARS_ENABLED: true,
 }))
 const mockMutationLocks = vi.hoisted(() => ({
   lockSkillMutation: vi.fn().mockResolvedValue(undefined),
@@ -208,6 +214,8 @@ vi.mock('../middleware/auth.js', () => ({
 }))
 
 import {
+  ImportSkillBody,
+  analyzeSkillWithAI,
   fallbackProfile,
   inferFallbackSkillLabels,
   openAiCompatibleBaseUrl,
@@ -245,6 +253,7 @@ describe('skills routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockConfig.SKILLHUB_PROFILE = 'yitan-official'
     mockConfig.AI_API_BASE_URL = undefined
     mockConfig.AI_API_KEY = undefined
     mockConfig.AI_PROTOCOL = 'anthropic'
@@ -267,6 +276,8 @@ describe('skills routes', () => {
     mockDb.skillVersion.aggregate.mockResolvedValue({ _sum: { packageSize: 0 } })
     mockDb.marketplaceSubmission.updateMany.mockResolvedValue({ count: 0 })
     mockDb.marketplaceListing.updateMany.mockResolvedValue({ count: 0 })
+    mockDb.teamSkillAcquisition.findMany.mockResolvedValue([])
+    mockDb.skillTeamShare.findFirst.mockResolvedValue({ teamId: 'team-001', skill: { currentVersion: 'v1.0' } })
     mockDb.teamMember.findMany.mockResolvedValue([])
     mockDb.skillTeamShare.findMany.mockResolvedValue([])
     mockDb.user.findMany.mockResolvedValue([])
@@ -441,6 +452,29 @@ describe('skills routes', () => {
       mockDb.skill.findUnique.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER
     )
   })
+  it('marks manually edited profile fields so background analysis cannot overwrite them', async () => {
+    mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId: 'user-001' })
+    mockDb.skill.update.mockResolvedValue({ id: 'skill-001', displayName: 'My title' })
+    app = await buildApp()
+    const response = await app.inject({ method: 'PATCH', url: '/api/skills/skill-001', payload: { displayName: 'My title' } })
+    expect(response.statusCode).toBe(200)
+    expect(mockDb.skill.update).toHaveBeenCalledWith({ where: { id: 'skill-001' }, data: { displayName: 'My title', profileManuallyEdited: true } })
+  })
+
+  it.each(['selfhost', 'yitan-official'] as const)('new %s CLI Skills allow background labels', async profile => {
+    mockConfig.SKILLHUB_PROFILE = profile
+    mockDb.skill.create.mockResolvedValue({ id: 'skill-new', authorId: 'user-001', displayName: 'New', labels: [] })
+    app = await buildApp()
+    const response = await app.inject({ method: 'POST', url: '/api/skills', payload: { name: 'new-skill', displayName: 'New' } })
+    expect(response.statusCode).toBe(201)
+    expect(mockDb.skill.create).toHaveBeenCalledWith({ data: expect.objectContaining({ authorId: 'user-001', labelsManuallyEdited: false }) })
+  })
+  it.each([{ labels: [] }, { labels: ['manual'] }])('preserves explicitly supplied CLI labels: %j', async ({ labels }) => {
+    mockDb.skill.create.mockResolvedValue({ id: 'skill-new', authorId: 'user-001', displayName: 'New', labels })
+    app = await buildApp()
+    expect((await app.inject({ method: 'POST', url: '/api/skills', payload: { name: 'new-skill', displayName: 'New', labels } })).statusCode).toBe(201)
+    expect(mockDb.skill.create).toHaveBeenCalledWith({ data: expect.objectContaining({ labels, labelsManuallyEdited: true }) })
+  })
 
   it('publishes a version that drops a declared key without writing team credentials', async () => {
     const createdAt = new Date('2026-08-03T00:00:00.000Z')
@@ -541,18 +575,13 @@ describe('skills routes', () => {
     expect(mockDb.skill.create).not.toHaveBeenCalled()
   })
 
-  it('rejects an import when tokenVersion changes during the AI request', async () => {
-    const aiStarted = deferred<void>()
-    const aiResponse = deferred<Response>()
-    let currentTokenVersion = 7
+  it('rechecks tokenVersion before committing even though import no longer waits for AI', async () => {
+    const currentTokenVersion = 8
     mockConfig.AI_API_BASE_URL = 'https://provider.example'
     mockConfig.AI_API_KEY = 'test-api-key'
     mockDb.skill.findFirst.mockResolvedValue(null)
     mockDb.user.findUnique.mockImplementation(async () => ({ tokenVersion: currentTokenVersion }))
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      aiStarted.resolve()
-      return aiResponse.promise
-    }))
+    vi.stubGlobal('fetch', vi.fn())
     app = await buildApp()
 
     const pendingResponse = app.inject({
@@ -560,20 +589,6 @@ describe('skills routes', () => {
       url: '/api/skills/import',
       payload: { name: 'research-helper', skillMd: '# Research Helper', aiAnalysisConsent: true },
     })
-    await aiStarted.promise
-    currentTokenVersion += 1
-    aiResponse.resolve(new Response(JSON.stringify({
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          displayName: '研究助手',
-          description: '汇总资料并生成结构化研究结果',
-          category: '搜索与研究',
-          labels: ['信息检索', '深度研究'],
-          triggerScenarios: ['资料检索'],
-        }),
-      }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } }))
     const response = await pendingResponse
 
     expect(response.statusCode).toBe(401)
@@ -588,7 +603,19 @@ describe('skills routes', () => {
     expect(mockDb.skill.update).not.toHaveBeenCalled()
   })
 
-  it('analyzes metadata and creates the initial version during import', async () => {
+  it.each(['selfhost', 'yitan-official'] as const)('accepts both WorkBuddy compatibility keys on %s', (profile) => {
+    mockConfig.SKILLHUB_PROFILE = profile
+    const parsed = ImportSkillBody.safeParse({
+      name: 'workbuddy-fixture',
+      skillMd: '# Fixture',
+      compatibleAgents: ['workbuddy', 'workbuddy-ai'],
+      aiAnalysisConsent: true,
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.compatibleAgents).toEqual(['workbuddy', 'workbuddy-ai'])
+  })
+
+  it('stores raw metadata and creates the initial version without waiting for analysis', async () => {
     const createdAt = new Date('2026-08-02T00:00:00.000Z')
     mockDb.skill.findFirst.mockResolvedValue(null)
     mockDb.skill.create.mockResolvedValue({
@@ -617,7 +644,7 @@ describe('skills routes', () => {
       payload: {
         name: 'research-helper',
         skillMd: '# Research Helper\n\nThis skill gathers primary sources and returns a concise report.',
-        compatibleAgents: ['claude', 'codex', 'workbuddy', 'doubao', 'opencode', 'openclaw', 'trae'],
+        compatibleAgents: ['claude', 'codex', 'workbuddy', 'workbuddy-ai', 'doubao', 'opencode', 'openclaw', 'trae'],
         aiAnalysisConsent: true,
       },
     })
@@ -625,13 +652,13 @@ describe('skills routes', () => {
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({
       skill: { id: 'skill-001' },
-      analysis: { status: 'fallback', provider: null, redactedSecrets: 0 },
+      analysis: { status: 'unanalysed', queued: false, provider: null, redactedSecrets: 0 },
     })
     expect(mockDb.skill.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         name: 'research-helper',
         authorId: 'user-001',
-        compatibleAgents: ['claude', 'codex', 'workbuddy', 'doubao', 'opencode', 'openclaw', 'trae'],
+        compatibleAgents: ['claude', 'codex', 'workbuddy', 'workbuddy-ai', 'doubao', 'opencode', 'openclaw', 'trae'],
         currentVersion: '0.1.0',
         versions: {
           create: expect.objectContaining({
@@ -639,12 +666,12 @@ describe('skills routes', () => {
             changelog: '首次导入',
             profileSnapshotVersion: 1,
             skillName: 'research-helper',
-            displayName: 'Research Helper',
-            description: 'This skill gathers primary sources and returns a concise report.',
-            category: '其他',
+            displayName: 'research-helper',
+            description: '',
+            category: null,
             labels: expect.any(Array),
             triggerScenarios: [],
-            compatibleAgents: ['claude', 'codex', 'workbuddy', 'doubao', 'opencode', 'openclaw', 'trae'],
+            compatibleAgents: ['claude', 'codex', 'workbuddy', 'workbuddy-ai', 'doubao', 'opencode', 'openclaw', 'trae'],
             envDependencies: [],
             sourceContent: '# Research Helper\n\nThis skill gathers primary sources and returns a concise report.',
           }),
@@ -1334,7 +1361,87 @@ describe('skills routes', () => {
     expect(mockDb.$transaction).not.toHaveBeenCalled()
   })
 
-  it('downloads the latest package for a team member as binary', async () => {
+  it.each(['selfhost', 'yitan-official'] as const)('%s pushes only one team version and notifies acquired members', async (profile) => {
+    mockConfig.SKILLHUB_PROFILE = profile
+    const versionId = '11111111-1111-4111-8111-111111111111'
+    const packageData = createStoredSkillZip('# Team release\n')
+    mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId: 'user-001', displayName: 'Team Skill' })
+    mockDb.skillTeamShare.findFirst.mockResolvedValue({ versionId: '22222222-2222-4222-8222-222222222222', version: { version: '0.1.1' }, teamId: 'team-001' })
+    mockDb.skillVersion.findFirst.mockResolvedValue({ id: versionId, version: '0.1.2', packageData, packageSha256: createHash('sha256').update(packageData).digest('hex') })
+    mockDb.teamSkillAcquisition.findMany.mockResolvedValue([{ userId: 'member-a' }, { userId: 'former-member' }])
+    mockDb.teamMember.findMany.mockResolvedValue([{ userId: 'member-a' }])
+    app = await buildApp()
+    const response = await app.inject({ method: 'PUT', url: '/api/skills/skill-001/shares/team-001', payload: { versionId, expectedVersionId: '22222222-2222-4222-8222-222222222222' } })
+    expect(response.statusCode).toBe(200)
+    expect(mockDb.skillTeamShare.update).toHaveBeenCalledWith({ where: { skillId_teamId: { skillId: 'skill-001', teamId: 'team-001' } }, data: { versionId } })
+    expect(mockDb.teamMember.findMany).toHaveBeenCalledWith({ where: { teamId: 'team-001', userId: { in: ['member-a', 'former-member'], not: 'user-001' }, team: { dissolvedAt: null } }, select: { userId: true } })
+    expect(mockDb.notification.createMany).toHaveBeenCalledWith({ data: [{ userId: 'member-a', type: 'skill_update', payload: { skillId: 'skill-001', teamId: 'team-001', skillName: 'Team Skill', version: '0.1.2' } }] })
+    expect(mockDb.skill.update).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { authorId: 'someone-else', version: null, expected: 403 },
+    { authorId: 'user-001', version: null, expected: 400 },
+    { authorId: 'user-001', version: { id: 'invalid', packageData: Buffer.from('invalid zip') }, expected: 409 },
+  ])('rejects unauthorized or unsafe team pushes ($expected)', async ({ authorId, version, expected }) => {
+    mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId })
+    mockDb.skillVersion.findFirst.mockResolvedValue(version)
+    app = await buildApp()
+    const response = await app.inject({ method: 'PUT', url: '/api/skills/skill-001/shares/team-001', payload: { versionId: '11111111-1111-4111-8111-111111111111', expectedVersionId: null } })
+    expect(response.statusCode).toBe(expected)
+    expect(mockDb.skillTeamShare.update).not.toHaveBeenCalled()
+    expect(mockDb.notification.createMany).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { expected: '33333333-3333-4333-8333-333333333333', target: '0.1.3', mutate: false, code: 'TEAM_VERSION_CHANGED' },
+    { expected: '22222222-2222-4222-8222-222222222222', target: '0.1.1', mutate: false, code: 'TEAM_VERSION_NOT_NEWER' },
+    { expected: '22222222-2222-4222-8222-222222222222', target: '0.1.2', mutate: false, code: 'TEAM_VERSION_NOT_NEWER' },
+    { expected: '22222222-2222-4222-8222-222222222222', target: '0.1.3', mutate: true, code: 'TEAM_VERSION_PACKAGE_CHANGED' },
+    { expected: null, target: '0.1.3', mutate: false, code: null },
+  ])('push checks the confirmation and monotonic version ($code, $target)', async ({ expected, target, mutate, code }) => {
+    const versionId = '11111111-1111-4111-8111-111111111111'
+    const bytes = createStoredSkillZip('# release\n')
+    const sha = createHash('sha256').update(bytes).digest('hex')
+    let inTransaction = false
+    // A successful POST /versions has already moved currentVersion before the first legacy pin.
+    mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId: 'user-001', displayName: 'Demo', currentVersion: expected === null ? target : '0.1.2' })
+    mockDb.skillTeamShare.findFirst.mockResolvedValue({ versionId: expected === null ? null : '22222222-2222-4222-8222-222222222222', version: expected === null ? null : { version: '0.1.2' } })
+    mockDb.skillVersion.findFirst.mockImplementation(async (query: { select: { packageData?: boolean } }) => {
+      expect(Boolean(query.select.packageData)).toBe(!inTransaction)
+      return { id: versionId, version: target, cardSha256: null, packageSha256: inTransaction && mutate ? 'changed' : sha,
+        get packageData(): Buffer { expect(inTransaction).toBe(false); return bytes } }
+    })
+    mockDb.$transaction.mockImplementation(async (callback: (tx: typeof mockDb) => Promise<unknown>) => {
+      inTransaction = true
+      try { return await callback(mockDb) } finally { inTransaction = false }
+    })
+    app = await buildApp()
+    const response = await app.inject({ method: 'PUT', url: '/api/skills/skill-001/shares/team-001', payload: { versionId, expectedVersionId: expected } })
+    expect(response.statusCode).toBe(code ? 409 : 200)
+    if (code) {
+      expect(response.json().code).toBe(code)
+      expect(mockDb.skillTeamShare.update).not.toHaveBeenCalled()
+      expect(mockDb.notification.createMany).not.toHaveBeenCalled()
+    }
+    if (code === 'TEAM_VERSION_CHANGED') expect(response.json().currentVersion).toEqual({ versionId: '22222222-2222-4222-8222-222222222222', version: '0.1.2' })
+  })
+
+  it('team version history exposes only the selected published version', async () => {
+    mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId: 'author', currentVersion: '0.1.9', teamShares: [{ teamId: 'team-001' }, { teamId: 'team-002' }] })
+    mockDb.teamMember.count.mockResolvedValue(1)
+    mockDb.skillTeamShare.findFirst.mockResolvedValue({ teamId: 'team-002', versionId: 'pinned-002', skill: { currentVersion: '0.1.9' } })
+    mockDb.skillVersion.findFirst.mockResolvedValue({ id: 'pinned-002', version: '0.1.2', createdAt: new Date(), aliases: [] })
+    app = await buildApp()
+    const response = await app.inject({ method: 'GET', url: '/api/skills/skill-001/versions?teamId=team-002' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().map((version: { version: string }) => version.version)).toEqual(['0.1.2'])
+    expect(mockDb.skillTeamShare.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ teamId: 'team-002', skillId: 'skill-001' }) }))
+    expect(mockDb.skillVersion.findFirst).toHaveBeenCalledWith({ where: { skillId: 'skill-001', id: 'pinned-002' }, include: { aliases: true } })
+    expect(mockDb.skillVersion.findMany).not.toHaveBeenCalled()
+  })
+
+  it('downloads the pinned package for a team member as binary', async () => {
     const packageData = createStoredSkillZip('# Downloadable Skill\n')
     const packageSha256 = createHash('sha256').update(packageData).digest('hex')
     mockDb.skill.findUnique.mockResolvedValue({
@@ -1355,6 +1462,11 @@ describe('skills routes', () => {
     expect(response.rawPayload).toEqual(packageData)
     expect(response.headers['x-checksum-sha256']).toBe(packageSha256)
     expect(response.headers['x-skill-version']).toBe('v1.0')
+    expect(response.headers['x-skill-version-id']).toBe('version-001')
+    expect(mockDb.teamSkillAcquisition.upsert).toHaveBeenCalledWith({
+      where: { skillId_teamId_userId_versionId: { skillId: 'skill-shared', teamId: 'team-001', userId: 'user-001', versionId: 'version-001' } },
+      create: { skillId: 'skill-shared', teamId: 'team-001', userId: 'user-001', versionId: 'version-001' }, update: {},
+    })
     expect(response.headers['access-control-allow-origin']).toBe('http://localhost:1420')
     const exposedHeaders = String(response.headers['access-control-expose-headers'])
       .toLowerCase()
@@ -1363,13 +1475,14 @@ describe('skills routes', () => {
     expect(exposedHeaders).toEqual(expect.arrayContaining([
       'x-checksum-sha256',
       'x-skill-version',
+      'x-skill-version-id',
       'retry-after',
     ]))
     expect(response.headers['content-disposition']).toBe(
       `attachment; filename="skill-package.zip"; filename*=UTF-8''shared-skill.zip`
     )
     expect(mockDb.skillVersion.findFirst).toHaveBeenCalledWith({
-      where: { skillId: 'skill-shared', version: 'v1.0', OR: [{ packageData: { not: null } }, { cardSha256: { not: null } }] },
+      where: { skillId: 'skill-shared', id: 'version-001', OR: [{ packageData: { not: null } }, { cardSha256: { not: null } }] },
       select: { id: true, version: true, packageData: true, packageSha256: true, cardSha256: true },
     })
     expect(mockDb.skill.update).toHaveBeenCalledWith({
@@ -1497,22 +1610,12 @@ describe('skills routes', () => {
     })
 
     expect(response.statusCode).toBe(201)
-    expect(transaction.teamMember.findMany).toHaveBeenCalledWith({
-      where: {
-        userId: { not: 'user-001' },
-        team: {
-          dissolvedAt: null,
-          skillShares: { some: { skillId: 'skill-001' } },
-        },
-      },
-      distinct: ['userId'],
-      select: { userId: true },
-    })
+    expect(transaction.teamMember.findMany).not.toHaveBeenCalled()
     expect(transaction.notification.createMany).not.toHaveBeenCalled()
     expect(mockDb.teamActivity.create).not.toHaveBeenCalled()
   })
 
-  it('records one version activity per active team the Skill is shared to', async () => {
+  it('publishing an author version leaves every team and notification unchanged', async () => {
     const createdAt = new Date('2026-10-14T00:00:00.000Z')
     const transaction = {
       $executeRaw: vi.fn().mockResolvedValue(1),
@@ -1551,22 +1654,9 @@ describe('skills routes', () => {
     })
 
     expect(response.statusCode).toBe(201)
-    expect(transaction.skillTeamShare.findMany).toHaveBeenCalledWith({
-      where: { skillId: 'skill-001', team: { dissolvedAt: null } },
-      select: { teamId: true },
-    })
-    expect(transaction.teamActivity.create).toHaveBeenCalledTimes(2)
-    for (const teamId of ['team-001', 'team-002']) {
-      expect(transaction.teamActivity.create).toHaveBeenCalledWith({
-        data: {
-          teamId,
-          actorId: 'user-001',
-          type: 'skill_version_published',
-          payload: { skillId: 'skill-001', skillName: '周报助手', version: '2.0.0' },
-        },
-      })
-    }
-    expect(JSON.stringify(transaction.teamActivity.create.mock.calls)).not.toMatch(/"(value|ciphertext|email|token)"/)
+    expect(transaction.skillTeamShare.findMany).not.toHaveBeenCalled()
+    expect(transaction.teamActivity.create).not.toHaveBeenCalled()
+    expect(transaction.notification.createMany).not.toHaveBeenCalled()
   })
 
   it('requires active membership when listing team-scoped Skills', async () => {
@@ -1654,6 +1744,7 @@ describe('skills routes', () => {
       select: {
         sharedById: true,
         createdAt: true,
+        version: { select: { id: true, version: true, envDependencies: true, sourceContent: true, sourceUrl: true, changelog: true } },
         skill: {
           select: expect.objectContaining({
             id: true,
@@ -1679,6 +1770,8 @@ describe('skills routes', () => {
       ],
     })
     mockDb.teamMember.findMany.mockResolvedValue([{ teamId: 'team-visible' }])
+    mockDb.skillTeamShare.findFirst.mockResolvedValue({ teamId: 'team-visible', skill: { currentVersion: '0.1.0' } })
+    mockDb.skillVersion.findFirst.mockResolvedValue({ id: 'version-visible', version: '0.1.0', aliases: [], createdAt: new Date(), sourceContent: '# Shared source' })
     app = await buildApp()
 
     const response = await app.inject({ method: 'GET', url: '/api/skills/skill-shared' })
@@ -1719,12 +1812,36 @@ describe('skills routes', () => {
       select: expect.objectContaining({
         id: true,
         name: true,
-        teamShares: { select: { teamId: true } },
+        teamShares: { select: { teamId: true, versionId: true, version: { select: { version: true, packageSha256: true } } } },
       }),
       orderBy: { updatedAt: 'desc' },
     })
     expect(response.body).not.toContain('private source')
     expect(response.body).not.toContain('private/object.zip')
+  })
+
+  it('keeps cloud polling alive between completed analysis and avatar task creation', async () => {
+    mockDb.skill.findMany.mockResolvedValue([{ id: 'skill-owned', analysisStatus: 'completed', avatarUrl: null, avatarStatus: 'none',
+      enrichment: { phase: 'avatar' } }])
+    app = await buildApp()
+    const response = await app.inject({ method: 'GET', url: '/api/skills' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([{ id: 'skill-owned', analysisStatus: 'completed', avatarUrl: null, avatarStatus: 'pending', enrichmentPending: true }])
+    expect(mockDb.skill.findMany.mock.lastCall?.[0].select.enrichment).toEqual({ select: { phase: true } })
+    mockDb.skill.findMany.mockResolvedValue([{ id: 'skill-owned', analysisStatus: 'completed', avatarStatus: 'none', enrichment: { phase: 'parked' } }])
+    expect((await app.inject({ method: 'GET', url: '/api/skills' })).json()[0].avatarStatus).toBe('none')
+  })
+
+  it.each(['selfhost', 'yitan-official'] as const)('%s explicitly disables polling when providers or runnable tasks are absent', async profile => {
+    mockConfig.SKILLHUB_PROFILE = profile
+    mockConfig.SKILL_AVATARS_ENABLED = false
+    mockDb.skill.findMany.mockResolvedValue([{ id: 'old', analysisStatus: 'unanalysed', enrichment: null },
+      { id: 'failed', analysisStatus: 'unanalysed', enrichment: { phase: 'failed' } },
+      { id: 'parked', analysisStatus: 'unanalysed', enrichment: { phase: 'parked' } }])
+    try {
+      app = await buildApp()
+      expect((await app.inject({ method: 'GET', url: '/api/skills' })).json().map((row: { enrichmentPending: boolean }) => row.enrichmentPending)).toEqual([false, false, false])
+    } finally { mockConfig.SKILL_AVATARS_ENABLED = true }
   })
 
   it('lists only the owner\'s deleted Skills in the recycle bin', async () => {
@@ -2057,7 +2174,7 @@ describe('skills routes', () => {
     expect(mockDb.skillTeamShare.upsert).toHaveBeenCalledWith({
       where: { skillId_teamId: { skillId: 'skill-001', teamId: 'team-001' } },
       update: {},
-      create: { skillId: 'skill-001', teamId: 'team-001', sharedById: 'user-001' },
+      create: { skillId: 'skill-001', teamId: 'team-001', sharedById: 'user-001', versionId: 'version-001' },
       select: { skillId: true, teamId: true, sharedById: true, createdAt: true },
     })
     expect(mockMutationLocks.lockSkillTeamMutation).toHaveBeenCalledWith(
@@ -2109,7 +2226,8 @@ describe('skills routes', () => {
     expect(JSON.stringify(mockDb.teamActivity.create.mock.calls)).not.toMatch(/"(value|ciphertext|email|token)"/)
   })
 
-  it('unshares without touching team keys or writing credential audit', async () => {
+  it.each(['selfhost', 'yitan-official'] as const)('%s unshares without touching team keys or writing credential audit', async (profile) => {
+    mockConfig.SKILLHUB_PROFILE = profile
     mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId: 'user-001' })
     mockDb.skillTeamShare.deleteMany.mockResolvedValue({ count: 0 })
     app = await buildApp()
@@ -2132,7 +2250,8 @@ describe('skills routes', () => {
     expect(mockMutationLocks.lockSkillTeamMutation).toHaveBeenCalledOnce()
   })
 
-  it('serializes concurrent unshare requests under the Skill/Team lock', async () => {
+  it.each(['selfhost', 'yitan-official'] as const)('%s serializes concurrent unshare requests under the Skill/Team lock', async (profile) => {
+    mockConfig.SKILLHUB_PROFILE = profile
     let teamShareExists = true
     let lockTail = Promise.resolve()
     const lockReleases: Array<() => void> = []
@@ -2204,7 +2323,8 @@ describe('skills routes', () => {
     expect(mockDb.$transaction).toHaveBeenCalledOnce()
   })
 
-  it('denies an unrelated user from removing another author Skill share', async () => {
+  it.each(['selfhost', 'yitan-official'] as const)('%s denies an unrelated user from removing another author Skill share', async (profile) => {
+    mockConfig.SKILLHUB_PROFILE = profile
     mockDb.skill.findUnique.mockResolvedValue({ id: 'skill-001', authorId: 'author-001' })
     mockDb.team.findUnique.mockResolvedValue({ ownerId: 'other-owner' })
     app = await buildApp()
@@ -2261,9 +2381,11 @@ describe('skills routes', () => {
 
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({
-      skill: { id: 'skill-ai', displayName: '研究助手', category: '搜索与研究' },
-      analysis: { status: 'completed', provider: 'provider.example' },
+      skill: { id: 'skill-ai', displayName: 'research-helper-ai', category: null, enrichmentPending: true },
+      analysis: { status: 'unanalysed', queued: true, provider: 'provider.example' },
     })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await analyzeSkillWithAI('research-helper-ai', '# Research', 'anthropic-test')).toMatchObject({ source: 'ai', profile: { displayName: '研究助手' } })
     expect(fetchMock).toHaveBeenCalledWith(
       'https://provider.example/v1/messages',
       expect.objectContaining({
@@ -2307,7 +2429,9 @@ describe('skills routes', () => {
     })
 
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject({ analysis: { status: 'completed', provider: 'provider.example' } })
+    expect(response.json()).toMatchObject({ analysis: { status: 'unanalysed', provider: 'provider.example' } })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await analyzeSkillWithAI('research', '# Research', 'responses-test')).toMatchObject({ source: 'ai' })
     expect(fetchMock).toHaveBeenCalledWith(
       'https://provider.example/v1/responses',
       expect.objectContaining({
@@ -2340,10 +2464,9 @@ describe('skills routes', () => {
     })
 
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject({
-      skill: { displayName: '验收助手', category: '开发与工程', labels: ['测试验证', '发布部署'] },
-      analysis: { status: 'completed' },
-    })
+    expect(response.json()).toMatchObject({ analysis: { status: 'unanalysed' } })
+    expect(await analyzeSkillWithAI('fenced-profile', '# Fenced Profile', 'fenced-test')).toMatchObject({
+      profile: { displayName: '验收助手', category: '开发与工程', labels: ['测试验证', '发布部署'] }, source: 'ai' })
   })
 
   it('falls back to deterministic catalog labels when AI invents labels', async () => {
@@ -2382,11 +2505,13 @@ describe('skills routes', () => {
     }
     const catalog = new Set<string>(SKILL_LABEL_CATALOG)
     expect(response.statusCode).toBe(201)
-    expect(body.analysis.status).toBe('fallback')
-    expect(body.skill.labels).toEqual(expect.arrayContaining(['测试验证', '发布部署']))
-    expect(body.skill.labels.length).toBeGreaterThanOrEqual(2)
-    expect(body.skill.labels.length).toBeLessThanOrEqual(5)
-    expect(body.skill.labels.every((label) => catalog.has(label))).toBe(true)
+    expect(body.analysis.status).toBe('unanalysed')
+    const analysis = await analyzeSkillWithAI('release-verifier', '# Release Verifier\n\nValidate a release before deployment.', 'invalid-labels-test')
+    expect(analysis.source).toBe('fallback')
+    expect(analysis.profile.labels).toEqual(expect.arrayContaining(['测试验证', '发布部署']))
+    expect(analysis.profile.labels.length).toBeGreaterThanOrEqual(2)
+    expect(analysis.profile.labels.length).toBeLessThanOrEqual(5)
+    expect(analysis.profile.labels.every((label) => catalog.has(label))).toBe(true)
   })
 
   it('recovers an exact retry after the server already stored the same package and version', async () => {
@@ -2832,7 +2957,7 @@ describe('skills routes', () => {
       expect(response.json()).toMatchObject({ skill: { displayName: '深度研究助手' }, analysis: { status: 'completed' } })
       expect(mockDb.skill.update).toHaveBeenCalledWith({
         where: { id: 'skill-001' },
-        data: { ...aiProfile, sourceContent: '# Research Helper' },
+        data: { ...aiProfile, sourceContent: '# Research Helper', analysisStatus: 'completed' },
       })
     })
 

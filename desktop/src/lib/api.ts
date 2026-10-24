@@ -247,6 +247,7 @@ export type ApiTeamInviteAcceptance = {
 
 export type ApiSkill = {
   analysisStatus?: 'unanalysed' | 'completed'
+  enrichmentPending?: boolean
   id: string
   name: string
   displayName: string
@@ -261,6 +262,8 @@ export type ApiSkill = {
   compatibleAgents: string[]
   envDependencies?: { key: string; description?: string; required: boolean; obtain?: string }[]
   currentVersion: string
+  teamVersionId?: string
+  changelog?: string | null
   installCount: number
   authorId: string
   visibility: string
@@ -268,7 +271,7 @@ export type ApiSkill = {
   createdAt: string
   updatedAt: string
   author?: ApiUser
-  teamShares?: { teamId: string }[]
+  teamShares?: { teamId: string; versionId?: string; version?: { version: string; packageSha256?: string } }[]
   /** Team scope only (#293): who shared it to the requested team, and when. */
   sharedBy?: { id: string; displayName: string; avatarUrl?: string | null } | null
   sharedAt?: string | null
@@ -506,6 +509,7 @@ export type ApiMarketplacePackageInspection = {
 export type ApiDeletedSkill = ApiSkill & { deletedAt: string }
 
 export type ApiSkillVersion = {
+  contentIdentity?: { contentHash: string; executablePaths: string[] } | null
   id: string
   skillId: string
   version: string
@@ -520,7 +524,7 @@ export type ApiSkillVersion = {
 
 export type ApiImportResult = {
   skill: ApiSkill
-  analysis: { status: 'completed' | 'fallback' | 'recovered' | 'unanalysed'; provider: string | null; redactedSecrets: number }
+  analysis: { status: 'completed' | 'fallback' | 'recovered' | 'unanalysed'; queued?: boolean; provider: string | null; redactedSecrets: number }
   recovered?: boolean
   idempotent?: boolean
 }
@@ -1027,11 +1031,15 @@ export const apiEnsureCloudSkillAvatar = (skillId: string, space: SpaceHandle, s
 export const apiGetSkillTrash = (): Promise<ApiDeletedSkill[]> => apiFetch('/skills/trash')
 export const apiRestoreSkill = (skillId: string): Promise<ApiSkill> =>
   apiFetch(`/skills/${encodeURIComponent(skillId)}/restore`, { method: 'POST' })
-export const apiGetTeamSkills = (teamId: string): Promise<ApiSkill[]> => apiFetch(`/skills?scope=team&teamId=${encodeURIComponent(teamId)}`)
+export const apiGetTeamSkills = (teamId: string, space?: SpaceHandle): Promise<ApiSkill[]> => apiFetch(`/skills?scope=team&teamId=${encodeURIComponent(teamId)}`, { space })
+export const apiGetTeamSkillLink = (teamId: string, skillId: string, space: SpaceHandle): Promise<{ deepLink: string; landingPageUrl: string }> =>
+  apiFetch(`/team-skill/${encodeURIComponent(teamId)}/${encodeURIComponent(skillId)}`, { space })
+export const apiGetInstanceBaseUrls = (space: SpaceHandle): Promise<{ baseUrls: string[] }> =>
+  apiFetch('/instance/base-urls', { space })
 export const apiGetSkill = (skillId: string, space?: SpaceHandle): Promise<ApiSkill> => apiFetch(`/skills/${encodeURIComponent(skillId)}`, { space })
-export const apiGetSkillSource = (skillId: string, space?: SpaceHandle): Promise<{ skillMd: string }> =>
-  apiFetch(`/skills/${encodeURIComponent(skillId)}/source`, { space })
-export const apiGetSkillVersions = (skillId: string): Promise<ApiSkillVersion[]> => apiFetch(`/skills/${encodeURIComponent(skillId)}/versions`)
+export const apiGetSkillSource = (skillId: string, space?: SpaceHandle, teamId?: string): Promise<{ skillMd: string }> =>
+  apiFetch(`/skills/${encodeURIComponent(skillId)}/source${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''}`, { space })
+export const apiGetSkillVersions = (skillId: string, teamId?: string): Promise<ApiSkillVersion[]> => apiFetch(`/skills/${encodeURIComponent(skillId)}/versions${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''}`)
 export const apiImportSkill = (data: {
   name: string
   /** The local 「来源」; omitted when the Skill has none. */
@@ -1063,8 +1071,12 @@ export const apiCreateSkillVersion = (skillId: string, data: { version: string; 
   apiFetch(`/skills/${encodeURIComponent(skillId)}/versions`, { method: 'POST', body: data })
 export const apiShareSkillToTeam = (skillId: string, teamId: string): Promise<void> =>
   apiFetch<void>(`/skills/${encodeURIComponent(skillId)}/shares`, { method: 'POST', body: { teamId } }).then(() => notifyEnvReadinessChanged({ serverId: skillId }))
-export const apiUnshareSkill = (skillId: string, teamId: string): Promise<void> =>
-  apiFetch<void>(`/skills/${encodeURIComponent(skillId)}/shares/${encodeURIComponent(teamId)}`, { method: 'DELETE' }).then(() => notifyEnvReadinessChanged({ serverId: skillId }))
+export const apiTeamPushInfo = (skillId: string, teamId: string, space: SpaceHandle): Promise<{ versionId: string | null; version: string; packageSha256: string | null; recipientCount: number; contentIdentity?: ApiSkillVersion['contentIdentity'] }> =>
+  apiFetch(`/skills/${encodeURIComponent(skillId)}/shares/${encodeURIComponent(teamId)}`, { space })
+export const apiPushTeamVersion = (skillId: string, teamId: string, versionId: string, expectedVersionId: string | null, space: SpaceHandle): Promise<void> =>
+  apiFetch(`/skills/${encodeURIComponent(skillId)}/shares/${encodeURIComponent(teamId)}`, { method: 'PUT', body: { versionId, expectedVersionId }, space })
+export const apiUnshareSkill = (skillId: string, teamId: string, space?: SpaceHandle): Promise<void> =>
+  apiFetch<void>(`/skills/${encodeURIComponent(skillId)}/shares/${encodeURIComponent(teamId)}`, { method: 'DELETE', space }).then(() => notifyEnvReadinessChanged({ serverId: skillId }))
 export type ApiExpectedSkillProfile = {
   displayName: string
   description: string | null
@@ -1089,7 +1101,7 @@ export const apiAnalyzeSkill = (
   timeoutMs: AI_ANALYSIS_TIMEOUT_MS,
 })
 
-async function packageResponsePayload(response: Response): Promise<{ base64: string; sha256: string; version: string }> {
+async function packageResponsePayload(response: Response): Promise<{ base64: string; sha256: string; version: string; versionId?: string }> {
   const bytes = new Uint8Array(await response.arrayBuffer())
   let binary = ''
   const chunkSize = 0x8000
@@ -1100,11 +1112,12 @@ async function packageResponsePayload(response: Response): Promise<{ base64: str
     base64: btoa(binary),
     sha256: response.headers.get('X-Checksum-Sha256') ?? '',
     version: response.headers.get('X-Skill-Version') ?? 'v0.1.0',
+    versionId: response.headers.get('X-Skill-Version-Id') ?? undefined,
   }
 }
 
-export async function apiDownloadSkillPackage(skillId: string): Promise<{ base64: string; sha256: string; version: string }> {
-  const response = await apiResponse(`/api/skills/${encodeURIComponent(skillId)}/package`)
+export async function apiDownloadSkillPackage(skillId: string, space?: SpaceHandle, teamId?: string): Promise<{ base64: string; sha256: string; version: string; versionId?: string }> {
+  const response = await apiResponse(`/api/skills/${encodeURIComponent(skillId)}/package${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''}`, { space })
   if (!response.ok) throw await responseError(response)
   return packageResponsePayload(response)
 }

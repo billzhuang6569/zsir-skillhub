@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Icon } from './components/Icon.js'
 import { useSpaceCapabilities } from './lib/use-space-capabilities.js'
 import { spaceProfile } from './lib/space-capabilities.js'
 import ConnectServerDialog from './components/ConnectServerDialog.js'
@@ -79,6 +80,8 @@ import {
 } from './lib/library-sync.js'
 import { parseTeamInvite, isSameInviteServer, inviteSwitchTarget, teamInviteDeepLink, PENDING_INVITE_KEY, resumePendingTeamInvite, type ParsedTeamInvite } from './lib/team-invite.js'
 import { parseMarketplaceDeepLink } from './lib/marketplace-deep-link.js'
+import { createTeamSkillBaseUrlsCache, isTeamSkillServer, parseTeamSkillLink, TEAM_SKILL_UNAVAILABLE, type TeamSkillLink } from './lib/team-skill-link.js'
+import { apiGetTeamSkillLink, apiGetTeamSkills } from './lib/api.js'
 import { checkForAppUpdate } from './lib/app-updater.js'
 import { applyThemePreference } from './lib/theme.js'
 import { useTheme } from './lib/use-theme.js'
@@ -832,7 +835,69 @@ function AppContent() {
     }
   }, [capabilities.teams, selfhostAuth, matchesInviteSpace, setTeams])
 
+  const [pendingTeamSkillLink, setPendingTeamSkillLink] = useState<TeamSkillLink | null>(null)
+  const teamSkillLinkRef = useRef<TeamSkillLink | null>(null)
+  const teamSkillLoginRequested = useRef<TeamSkillLink | null>(null)
+  const [teamSkillBaseUrls] = useState(createTeamSkillBaseUrlsCache)
+  useEffect(() => { teamSkillBaseUrls.clear() }, [teamSkillBaseUrls, activeSpace?.spaceId, activeSpace?.generation, currentUser?.id, spacePending])
+  const updatePendingTeamSkillLink = useCallback((link: TeamSkillLink | null): void => {
+    teamSkillLinkRef.current = link
+    setPendingTeamSkillLink(link)
+  }, [])
+  const cancelTeamSkillLogin = (): void => {
+    updatePendingTeamSkillLink(null)
+    teamSkillLoginRequested.current = null
+    dismissAuthPrompt()
+  }
+  useEffect(() => {
+    if (!pendingTeamSkillLink || !activeSpace || !serverInfo || spacePending || authStatus === 'restoring') return
+    let cancelled = false
+    const expectedSpace = activeSpace
+    const expectedUser = currentUser?.id
+    const stillCurrent = (): boolean => !cancelled && teamSkillLinkRef.current === pendingTeamSkillLink
+      && sameSpace(expectedSpace, useStore.getState().activeSpace)
+      && useStore.getState().currentUser?.id === expectedUser
+    void (async (): Promise<void> => {
+      try {
+        if (!currentUser) {
+          if (teamSkillLoginRequested.current !== pendingTeamSkillLink) {
+            teamSkillLoginRequested.current = pendingTeamSkillLink
+            promptForAuth({ reason: '登录后打开团队共享 Skill' })
+          }
+          return
+        }
+        const context = await currentMediaSpace()
+        if (!stillCurrent()) return
+        const baseUrls = await teamSkillBaseUrls.get(expectedSpace, currentUser.id,
+          Boolean(serverInfo.capabilities?.includes('teams.skill-links.v1')))
+        if (!stillCurrent()) return
+        const matchesServer = sameSpace(expectedSpace, context.space)
+          && await isTeamSkillServer(pendingTeamSkillLink.server, context.serverBase, baseUrls)
+        if (!stillCurrent()) return
+        if (!matchesServer) {
+          toast(`这个链接来自另一个 SkillHub 服务器（${new URL(pendingTeamSkillLink.server).host}）`, 'error')
+          updatePendingTeamSkillLink(null)
+          return
+        }
+        if (serverInfo?.capabilities?.includes('teams.skill-links.v1')) {
+          await apiGetTeamSkillLink(pendingTeamSkillLink.teamId, pendingTeamSkillLink.skillId, expectedSpace)
+        } else {
+          const candidates = await apiGetTeamSkills(pendingTeamSkillLink.teamId, expectedSpace)
+          if (!candidates.some(skill => skill.id === pendingTeamSkillLink.skillId)) throw new Error(TEAM_SKILL_UNAVAILABLE)
+        }
+        if (!stillCurrent()) return
+        useStore.getState().openTeamSkill(pendingTeamSkillLink.teamId, pendingTeamSkillLink.skillId)
+        updatePendingTeamSkillLink(null)
+      } catch {
+        if (stillCurrent()) { toast(TEAM_SKILL_UNAVAILABLE, 'error'); updatePendingTeamSkillLink(null) }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [pendingTeamSkillLink, activeSpace, spacePending, authStatus, currentUser, serverInfo, promptForAuth, updatePendingTeamSkillLink, teamSkillBaseUrls])
+
   const considerDeepLink = useCallback(async (raw: string): Promise<void> => {
+    const teamSkillLink = await parseTeamSkillLink(raw)
+    if (teamSkillLink) { updatePendingTeamSkillLink(teamSkillLink); return }
     const marketplaceIntent = parseMarketplaceDeepLink(raw)
     if (marketplaceIntent) {
       setPendingMarketplaceIntent(marketplaceIntent)
@@ -840,7 +905,7 @@ function AppContent() {
       return
     }
     await considerTeamInvite(raw, true)
-  }, [considerTeamInvite, setPendingMarketplaceIntent, setView])
+  }, [considerTeamInvite, setPendingMarketplaceIntent, setView, updatePendingTeamSkillLink])
 
   useEffect(() => {
     if (!activeSpace || spacePending || (capabilities.profile !== 'local' && !serverInfo)) return
@@ -933,7 +998,7 @@ function AppContent() {
       <Sidebar onFeedback={() => setFeedbackOpen(true)} onDonate={() => {
         void openUrl(DONATION_PAGE_URL).catch(() => toast('无法打开捐款页，请稍后重试', 'error'))
       }} />
-      <div className={`app-workspace${workspaceSkillSheet || localSkillWorkspace ? ' skill-browser-open' : ''}`}>
+      <div className={`app-workspace${skillWorkspaceAvailable || localSkillWorkspace ? ' skill-browser-open' : ''}`}>
         <main className="app-main" id="main-content" tabIndex={-1}>
           {spacePending ? <div className="loading-block space-switch-loading" role="status"><span className="spin-icon" aria-hidden="true" /><p>正在切换空间…</p></div> : <>
           {view === 'skills'      && <SkillsPage key={`skills:${spaceKey}`} />}
@@ -957,6 +1022,7 @@ function AppContent() {
           />
         )}
         {localSkillWorkspace && <LocalSkillPreviewPanel />}
+        {skillWorkspaceAvailable && !workspaceSkillSheet && <section className="skill-detail-placeholder" aria-label="Skill 详情"><Icon name="skills" size={32} /><p>选择一个 Skill 查看详情</p></section>}
       </div>
 
       <div
@@ -988,7 +1054,7 @@ function AppContent() {
           }
         }}
         onAuthenticated={commitAuthenticatedSession}
-        onClose={dismissAuthPrompt}
+        onClose={cancelTeamSkillLogin}
       />}
 
       {otherServerInvite && <OtherServerInviteDialog server={otherServerInvite.server} busy={inviteConnecting}
@@ -996,6 +1062,7 @@ function AppContent() {
       {selfhostAuth && <ConnectServerDialog target={selfhostAuth.target} initialReport={selfhostAuth.report} teamInvite={selfhostAuth.teamInvite} migrationSource={selfhostAuth.migrationSource} lockAddress={inviteSwitch.current === 'connecting'} onConnected={() => {
         if (inviteSwitch.current === 'connecting') inviteSwitch.current = 'committed'
       }} onClose={() => {
+        cancelTeamSkillLogin()
         if (inviteSwitch.current === 'connecting') sessionStorage.removeItem(PENDING_INVITE_KEY)
         inviteSwitch.current = 'idle'
         setSelfhostAuth(null)

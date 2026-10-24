@@ -13,7 +13,12 @@ skillhub auth status --refresh --json
 skillhub agent list --json
 ```
 
-若提示找不到 `skillhub`，先启动已安装的 APP，在设置的 Agent 区域查看 CLI 初始化状态与命令路径；若提示安装有问题，按错误说明处理后点「重新检查」，再打开新的终端窗口重试。不要覆盖其他程序占用的同名命令。
+若提示找不到 `skillhub`，确认 SkillHub APP 已安装并至少打开过一次；APP 启动时安装 CLI。打开 APP → 设置 → Agent 工具，查看 CLI 状态与命令路径；有问题时按错误说明处理，再点「重新检查」。不要覆盖其他程序占用的同名命令。
+
+- macOS：入口是 `~/.local/bin/skillhub`，APP 只在 zsh 的 `~/.zprofile` 中加入 `~/.local/bin`。使用 bash、fish 或非登录 Shell 时，请自行把 `~/.local/bin` 加入 PATH，再新开终端。
+- Windows：入口是 `%USERPROFILE%\.skillhub\runtime\bin\skillhub.cmd`。APP 写入用户 PATH 后，只有新打开的终端才能看到，原终端需关闭后重开。
+
+仍不可用时，若命令已能运行，可用 `skillhub app open --json` 打开 APP；否则手动打开 APP 反馈。
 
 只读状态可能来自本机，`--refresh` 才请求账号验证。网络失败不代表本机数据已经丢失。
 

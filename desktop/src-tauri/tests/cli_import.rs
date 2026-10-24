@@ -62,14 +62,289 @@ fn json_stdout(output: &Output) -> Value {
 }
 
 #[test]
+fn local_space_rejects_account_commands_before_network_or_preflight() {
+    let home = TestHome::new();
+    assert!(run_cli(home.path(), &["server", "use", "local"])
+        .status
+        .success());
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let digest = "a".repeat(64);
+    let mut cases = vec![
+        vec!["team", "list"],
+        vec!["team", "skills", id],
+        vec!["team", "show", id],
+        vec!["team", "updates"],
+        vec!["team", "install", id, "--preflight"],
+        vec!["team", "install", id, "--apply", "--plan-digest", &digest],
+        vec!["sync"],
+        vec!["sync", "--retry"],
+        vec!["sync", "status"],
+        vec!["skill", "analyze", "example-skill", "--preflight"],
+        vec![
+            "skill",
+            "analyze",
+            "example-skill",
+            "--apply",
+            "--plan-digest",
+            &digest,
+        ],
+        vec![
+            "feedback",
+            "submit",
+            "preflight",
+            "--type",
+            "bug",
+            "--content",
+            "Example feedback",
+        ],
+        vec![
+            "feedback",
+            "submit",
+            "apply",
+            "--type",
+            "bug",
+            "--content",
+            "Example feedback",
+            "--operation-id",
+            id,
+            "--plan-digest",
+            &digest,
+        ],
+    ];
+    for action in ["share", "unshare"] {
+        for phase in ["preflight", "apply", "status"] {
+            if action == "unshare" && phase == "status" {
+                continue;
+            }
+            let mut args = vec![
+                "team",
+                action,
+                phase,
+                "--local-skill-id",
+                "example-skill",
+                "--team-id",
+                id,
+            ];
+            if phase == "apply" {
+                args.extend(["--plan-digest", &digest]);
+            }
+            cases.push(args);
+        }
+    }
+    for args in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_skillhub"))
+            .args(&args)
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .output()
+            .unwrap();
+        let value = json_stdout(&output);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {value}");
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["ok"], false);
+        assert_eq!(
+            value["error"]["code"], "SPACE_UNSUPPORTED",
+            "{args:?}: {value}"
+        );
+        assert!(value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("仅本机空间"));
+        assert!(value["nextActions"][0]
+            .as_str()
+            .unwrap()
+            .contains("设置 → 服务与账号"));
+        assert_eq!(value["data"], serde_json::json!({}));
+        assert!(output.stderr.is_empty(), "{args:?}: {:?}", output.stderr);
+    }
+    for args in [vec!["auth", "status"], vec!["auth", "status", "--refresh"]] {
+        let output = run_cli(home.path(), &args);
+        assert!(output.status.success());
+        let value = json_stdout(&output);
+        assert_eq!(value["account"]["state"], "guest");
+        assert_eq!(value["data"]["profile"], "local");
+        assert_eq!(value["data"]["serverValidated"], false);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn local_build_script_contract_accepts_the_real_cli_without_building_or_launching_app() {
+    let home = TestHome::new();
+    assert!(run_cli(home.path(), &["server", "use", "local"])
+        .status
+        .success());
+    let script = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../script/build_and_run.sh"),
+    )
+    .unwrap();
+    let expected_help = script
+        .lines()
+        .find(|line| line.starts_with("EXPECTED_CLI_HELP="))
+        .unwrap();
+    let start = script.find("verify_cli_contract() {").unwrap();
+    let end = script.find("verify_manager_skill_is_current() {").unwrap();
+    let probe = format!(
+        "set -euo pipefail\n{expected_help}\n{}\nverify_cli_contract \"$1\" \"$2\"\n",
+        &script[start..end]
+    );
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            &probe,
+            "--",
+            env!("CARGO_BIN_EXE_skillhub"),
+            env!("CARGO_PKG_VERSION"),
+        ])
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("NODE_OPTIONS")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn startup_recovery_failures_preserve_run_streams_and_control_command_names() {
+    let home = TestHome::new();
+    let runtime = home
+        .path()
+        .join(if skillhub_lib::official_channel::CHANNEL == "dev" {
+            ".skillhub-dev/runtime"
+        } else {
+            ".skillhub/runtime"
+        });
+    std::fs::create_dir_all(&runtime).unwrap();
+    let session = runtime.join("session.json");
+    std::fs::write(&session, "invalid fixture JSON").unwrap();
+
+    let run = run_cli(home.path(), &["run", "sample", "--", "fixture-program"]);
+    assert_eq!(run.status.code(), Some(4));
+    assert!(run.stdout.is_empty());
+    assert!(!run.stderr.is_empty());
+    assert!(serde_json::from_slice::<Value>(&run.stderr).is_err());
+
+    for (args, command) in [
+        (vec!["status"], "status"),
+        (vec!["doctor"], "doctor"),
+        (vec!["auth", "status"], "auth"),
+        (vec!["skill", "list"], "skill"),
+        (vec!["agent", "list"], "agent"),
+        (vec!["app", "open"], "app"),
+        (vec!["update", "check"], "update"),
+        (vec!["team", "list"], "team"),
+        (vec!["marketplace", "updates"], "marketplace"),
+        (vec!["feedback", "status"], "feedback"),
+        (vec!["env", "status"], "env"),
+        (vec!["sync", "status"], "sync"),
+        (vec!["server", "show"], "server show"),
+        (vec!["server", "use", "local"], "server use"),
+    ] {
+        let output = run_cli(home.path(), &args);
+        assert_eq!(output.status.code(), Some(4), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}");
+        let envelope = json_stdout(&output);
+        assert_eq!(envelope["command"], command);
+        assert_eq!(envelope["error"]["code"], "CONFLICT");
+    }
+    assert_eq!(
+        std::fs::read_to_string(session).unwrap(),
+        "invalid fixture JSON"
+    );
+}
+
+#[test]
+fn control_commands_default_to_the_same_json_envelope() {
+    let home = TestHome::new();
+    for args in [
+        vec!["status"],
+        vec!["doctor"],
+        vec!["auth", "status"],
+        vec!["agent", "list"],
+        vec!["skill", "list"],
+        vec!["skill", "discover"],
+        vec!["skill", "show", "--skill-id", "missing"],
+        vec!["skill", "history", "--skill-id", "missing"],
+        vec!["skill", "diff", "--skill-id", "missing", "--working"],
+        vec!["skill", "trash", "list"],
+        vec!["server", "show"],
+        vec!["env", "status"],
+        vec!["sync", "status"],
+    ] {
+        let default = run_cli(home.path(), &args);
+        let mut explicit_args = args.clone();
+        explicit_args.push("--json");
+        let explicit = run_cli(home.path(), &explicit_args);
+        assert_eq!(default.status.code(), explicit.status.code(), "{args:?}");
+        assert_eq!(json_stdout(&default), json_stdout(&explicit), "{args:?}");
+        assert!(default.stderr.is_empty(), "{args:?}");
+        assert!(explicit.stderr.is_empty(), "{args:?}");
+    }
+}
+
+#[test]
+fn guest_cloud_commands_accept_optional_json() {
+    let home = TestHome::new();
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    for args in [
+        vec!["team", "list"],
+        vec!["team", "skills", id],
+        vec!["team", "show", id],
+        vec!["team", "updates"],
+        vec!["marketplace", "updates"],
+    ] {
+        let default = run_cli(home.path(), &args);
+        let mut explicit_args = args.clone();
+        explicit_args.push("--json");
+        let explicit = run_cli(home.path(), &explicit_args);
+        let expected_exit = if args[0] == "marketplace" { 0 } else { 3 };
+        assert_eq!(default.status.code(), Some(expected_exit), "{args:?}");
+        assert_eq!(explicit.status.code(), Some(expected_exit), "{args:?}");
+        assert_eq!(json_stdout(&default), json_stdout(&explicit), "{args:?}");
+    }
+}
+
+#[test]
+fn usage_errors_are_json_and_point_to_text_help() {
+    let home = TestHome::new();
+    for args in [
+        vec!["status", "--invalid"],
+        vec!["server", "use"],
+        vec!["skill", "show"],
+    ] {
+        let output = run_cli(home.path(), &args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stderr.is_empty());
+        let envelope = json_stdout(&output);
+        assert_eq!(envelope["error"]["code"], "VALIDATION_FAILED");
+        let help = envelope["nextActions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|action| action.ends_with(" --help"))
+            .unwrap();
+        let help_args: Vec<_> = help.split_whitespace().skip(1).collect();
+        let help_output = run_cli(home.path(), &help_args);
+        assert!(help_output.status.success());
+        assert!(String::from_utf8_lossy(&help_output.stdout).starts_with("用法："));
+    }
+}
+
+#[test]
 fn server_show_prints_compiled_base_without_creating_runtime_state() {
     let home = TestHome::new();
     let config: Value = serde_json::from_str(skillhub_lib::official_channel::CHANNEL_JSON).unwrap();
     let output = run_cli(home.path(), &["server", "show"]);
     assert!(output.status.success());
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap().trim(),
-        config["serverOrigin"].as_str().unwrap()
+        json_stdout(&output)["data"]["origin"],
+        config["serverOrigin"]
     );
     assert!(output.stderr.is_empty());
     assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
@@ -82,12 +357,18 @@ fn server_show_prints_compiled_base_without_creating_runtime_state() {
 #[test]
 fn server_use_is_guest_and_app_lock_refuses_the_cli_without_mutation() {
     let home = TestHome::new();
-    assert!(run_cli(home.path(), &["server", "use", "local"])
-        .status
-        .success());
+    let switched = run_cli(home.path(), &["server", "use", "local"]);
+    assert!(switched.status.success());
+    assert!(switched.stderr.is_empty());
+    let envelope = json_stdout(&switched);
+    assert_eq!(envelope["command"], "server use");
+    assert_eq!(
+        envelope["data"],
+        serde_json::json!({"profile":"local", "origin":null, "spaceId":"local"})
+    );
     let shown = json_stdout(&run_cli(home.path(), &["server", "show", "--json"]));
-    assert_eq!(shown["profile"], "local");
-    assert_eq!(shown["signedIn"], false);
+    assert_eq!(shown["data"]["profile"], "local");
+    assert_eq!(shown["data"]["signedIn"], false);
     let root = home
         .path()
         .join(if skillhub_lib::official_channel::CHANNEL == "dev" {
@@ -103,9 +384,15 @@ fn server_use_is_guest_and_app_lock_refuses_the_cli_without_mutation() {
         .open(root.join("runtime/app.lock"))
         .unwrap();
     lock.lock().unwrap();
-    let busy = run_cli(home.path(), &["server", "use", "official"]);
+    let busy = run_cli(home.path(), &["server", "use", "local"]);
     assert_eq!(busy.status.code(), Some(4));
-    assert!(String::from_utf8_lossy(&busy.stderr).contains("请在 APP 设置页切换"));
+    assert!(busy.stderr.is_empty());
+    let envelope = json_stdout(&busy);
+    assert_eq!(envelope["error"]["code"], "CONFLICT");
+    assert_eq!(envelope["command"], "server use");
+    assert!(envelope["nextActions"]
+        .to_string()
+        .contains("请在 APP 设置页切换"));
     assert_eq!(std::fs::read(path).unwrap(), before);
     lock.unlock().unwrap();
 }
@@ -129,7 +416,7 @@ fn runtime_overrides_cannot_change_compiled_channel() {
         .unwrap();
     assert!(output.status.success());
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap().trim(),
+        json_stdout(&output)["data"]["origin"],
         skillhub_lib::official_channel::COMPILED.server_origin
     );
     assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());

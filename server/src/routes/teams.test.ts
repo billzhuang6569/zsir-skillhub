@@ -667,14 +667,15 @@ describe('teams routes', () => {
 
   it('removes all Skill shares and revokes team keys when dissolving a team', async () => {
     const transaction = {
-      teamMember: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-002' }]) },
+      teamMember: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-003' }]) },
       team: {
         findUnique: vi.fn().mockResolvedValue({
           id: 'team-001', name: '产品组', ownerId: 'user-001', dissolvedAt: null,
         }),
         update: vi.fn().mockResolvedValue({}),
       },
-      skillTeamShare: { deleteMany: vi.fn().mockResolvedValue({ count: 3 }) },
+      skillTeamShare: { findMany: vi.fn().mockResolvedValue([{ skillId: 'skill-001', skill: { displayName: 'Demo' } }]), deleteMany: vi.fn().mockResolvedValue({ count: 3 }) },
+      teamSkillAcquisition: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-003' }, { userId: 'former-member' }]) },
       notification: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
     }
     mockDb.$transaction.mockImplementation(
@@ -684,12 +685,15 @@ describe('teams routes', () => {
 
     const response = await app.inject({ method: 'DELETE', url: '/api/teams/team-001' })
 
+    expect(transaction.notification.createMany).toHaveBeenCalledWith({ data: [{ userId: 'member-003', type: 'skill_unshared', payload: { skillId: 'skill-001', teamId: 'team-001', skillName: 'Demo' } }] })
+    expect(transaction.teamMember.findMany).toHaveBeenCalledWith({ where: { teamId: 'team-001', userId: { in: ['member-003', 'former-member'], not: 'user-001' }, team: { dissolvedAt: null } }, select: { userId: true } })
     expect(response.statusCode).toBe(204)
     expect(mockCredentialLifecycle.revokeTeamCredentialsForTeam).toHaveBeenCalledWith(transaction, 'team-001', expect.any(Date))
+    expect(transaction.notification.createMany.mock.invocationCallOrder[0]).toBeLessThan(transaction.team.update.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER)
     expect(transaction.skillTeamShare.deleteMany).toHaveBeenCalledWith({ where: { teamId: 'team-001' } })
     expect(transaction.notification.createMany).toHaveBeenCalledWith({
       data: [{
-        userId: 'member-002',
+        userId: 'member-003',
         type: 'team_dissolved',
         payload: { teamId: 'team-001', teamName: '产品组' },
       }],
@@ -712,7 +716,7 @@ describe('teams routes', () => {
         update: vi.fn(),
       },
       teamMember: { findMany: vi.fn() },
-      skillTeamShare: { deleteMany: vi.fn() },
+      skillTeamShare: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() },
       notification: { createMany: vi.fn() },
     }
     mockDb.$transaction.mockImplementation(
@@ -754,11 +758,12 @@ describe('teams routes', () => {
       team: { findUnique: vi.fn().mockResolvedValue({
         id: 'team-001', name: '产品组', ownerId: 'owner-001', dissolvedAt: null,
       }) },
-      skillTeamShare: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      teamMember: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      skillTeamShare: { findMany: vi.fn().mockResolvedValue([{ skillId: 'skill-001', skill: { displayName: 'Demo' } }]), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      teamMember: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-003' }]), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
       user: { findUnique: vi.fn().mockResolvedValue({ displayName: '被移出的成员' }) },
       teamActivity: { create: vi.fn().mockResolvedValue({}) },
-      notification: { create: vi.fn().mockResolvedValue({}) },
+      teamSkillAcquisition: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-003' }, { userId: 'former-member' }]) },
+      notification: { createMany: vi.fn().mockResolvedValue({ count: 1 }), create: vi.fn().mockResolvedValue({}) },
     }
     mockDb.$transaction.mockImplementation(
       async (callback: (client: typeof transaction) => Promise<unknown>): Promise<unknown> => callback(transaction)
@@ -767,6 +772,8 @@ describe('teams routes', () => {
 
     const response = await app.inject({ method: 'POST', url: '/api/teams/team-001/leave' })
 
+    expect(transaction.notification.createMany).toHaveBeenCalledWith({ data: [{ userId: 'member-003', type: 'skill_unshared', payload: { skillId: 'skill-001', teamId: 'team-001', skillName: 'Demo' } }] })
+    expect(transaction.teamMember.findMany).toHaveBeenCalledWith({ where: { teamId: 'team-001', userId: { in: ['member-003', 'former-member'], not: 'user-001' }, team: { dissolvedAt: null } }, select: { userId: true } })
     expect(response.statusCode).toBe(204)
     const authoredInTeam = { teamId: 'team-001', skill: { authorId: 'user-001' } }
     expect(mockCredentialLifecycle.revokeTeamCredentialsForTeam).not.toHaveBeenCalled()
@@ -792,7 +799,7 @@ describe('teams routes', () => {
         id: 'team-001', name: '产品组', ownerId: 'owner-001', dissolvedAt: null,
       }) },
       teamMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
-      skillTeamShare: { deleteMany: vi.fn() },
+      skillTeamShare: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() },
       notification: { create: vi.fn() },
     }
     mockDb.$transaction.mockImplementation(
@@ -812,11 +819,12 @@ describe('teams routes', () => {
       team: { findUnique: vi.fn().mockResolvedValue({
         id: 'team-001', name: '产品组', ownerId: 'user-001', dissolvedAt: null,
       }) },
-      skillTeamShare: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      teamMember: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      skillTeamShare: { findMany: vi.fn().mockResolvedValue([{ skillId: 'skill-001', skill: { displayName: 'Demo' } }]), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      teamMember: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-003' }]), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
       user: { findUnique: vi.fn().mockResolvedValue({ displayName: '被移出的成员' }) },
       teamActivity: { create: vi.fn().mockResolvedValue({}) },
-      notification: { create: vi.fn().mockResolvedValue({}) },
+      teamSkillAcquisition: { findMany: vi.fn().mockResolvedValue([{ userId: 'member-003' }, { userId: 'former-member' }]) },
+      notification: { createMany: vi.fn().mockResolvedValue({ count: 1 }), create: vi.fn().mockResolvedValue({}) },
     }
     mockDb.$transaction.mockImplementation(
       async (callback: (client: typeof transaction) => Promise<unknown>): Promise<unknown> => callback(transaction)
@@ -828,6 +836,8 @@ describe('teams routes', () => {
       url: '/api/teams/team-001/members/member-002',
     })
 
+    expect(transaction.notification.createMany).toHaveBeenCalledWith({ data: [{ userId: 'member-003', type: 'skill_unshared', payload: { skillId: 'skill-001', teamId: 'team-001', skillName: 'Demo' } }] })
+    expect(transaction.teamMember.findMany).toHaveBeenCalledWith({ where: { teamId: 'team-001', userId: { in: ['member-003', 'former-member'], not: 'user-001' }, team: { dissolvedAt: null } }, select: { userId: true } })
     expect(response.statusCode).toBe(204)
     const authoredInTeam = { teamId: 'team-001', skill: { authorId: 'member-002' } }
     expect(mockCredentialLifecycle.revokeTeamCredentialsForTeam).not.toHaveBeenCalled()
@@ -853,7 +863,7 @@ describe('teams routes', () => {
         id: 'team-001', name: '产品组', ownerId: 'user-001', dissolvedAt: null,
       }) },
       teamMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
-      skillTeamShare: { deleteMany: vi.fn() },
+      skillTeamShare: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() },
       notification: { create: vi.fn() },
     }
     mockDb.$transaction.mockImplementation(

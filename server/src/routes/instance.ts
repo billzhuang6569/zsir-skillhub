@@ -5,6 +5,7 @@ import { config } from '../config.js'
 import { publicBaseUrlSchema } from '../config-schema.js'
 import { AttemptLimiter } from '../lib/attempt-limiter.js'
 import { getInstanceIdentity } from '../lib/instance-identity.js'
+import { authMiddleware } from '../middleware/auth.js'
 
 const AddressProofBody = z.object({
   nonce: z.string().regex(/^[A-Za-z0-9_-]{43}$/)
@@ -13,6 +14,11 @@ const AddressProofBody = z.object({
 })
 
 export const instanceRoutes: FastifyPluginAsync = async (fastify): Promise<void> => {
+  fastify.get('/base-urls', { onRequest: authMiddleware }, async (_request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    return reply.header('Cache-Control', 'no-store').send({
+      baseUrls: [config.PUBLIC_BASE_URL, ...config.INSTANCE_ADDITIONAL_BASE_URLS],
+    })
+  })
   const attempts = new AttemptLimiter()
   fastify.post('/address-proof', async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply): Promise<FastifyReply> => {
     reply.header('Cache-Control', 'no-store')

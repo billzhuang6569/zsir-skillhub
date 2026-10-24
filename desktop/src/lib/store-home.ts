@@ -128,7 +128,7 @@ export function searchSuggestions(skills: ReadonlyArray<Pick<ApiMarketplaceItem,
 
 export const RANKING_LIMIT = 8
 export type RankingRange = 'day' | 'week'
-export type RankedItem<T> = { skill: T; growth: string | null; metric?: string }
+export type RankedItem<T> = { skill: T; growth: string | null; metric?: { value: string; title: string } }
 export type Ranking<T> = { mode: 'trending' | 'popular'; items: RankedItem<T>[] }
 
 export type RankingApi<T> = {
@@ -163,7 +163,7 @@ export async function loadRanking<T>(api: RankingApi<T>, range: RankingRange, tr
             skill: api.toSkill(item),
             growth: trend ? formatGrowth(trend.growthPercent) : null,
             // The server keeps the field name, but counts downloads + installs.
-            metric: trend ? `${formatStoreCount(trend.recentInstalls)} 次下载+安装` : undefined,
+            metric: trend ? { value: formatStoreCount(trend.recentInstalls), title: `近期下载+安装 ${trend.recentInstalls} 次` } : undefined,
           }
         }),
       }
@@ -175,7 +175,7 @@ export async function loadRanking<T>(api: RankingApi<T>, range: RankingRange, tr
     items: popular.slice(0, RANKING_LIMIT).map((item) => ({
       skill: api.toSkill(item),
       growth: null,
-      metric: `${formatStoreCount(item.installCount ?? item.downloadCount)} 次安装`,
+      metric: { value: formatStoreCount(item.installCount ?? item.downloadCount), title: `安装 ${item.installCount ?? item.downloadCount} 次` },
     })),
   }
 }

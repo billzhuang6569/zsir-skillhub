@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { cloudLibrarySkills, managedOutsideAccount } from '../src/lib/cloud-library.ts'
+import { cloudEnrichmentProgress, cloudLibrarySkills, hasPendingCloudEnrichment, managedOutsideAccount, startCloudSkillRefresh } from '../src/lib/cloud-library.ts'
 import { libraryTransferFraction, type LibraryEntryList, type LibraryTransfer } from '../src/lib/library-sync.ts'
 import type { LocalSkill } from '../src/store/index.ts'
 import { skillVersionDisplay } from '../src/lib/versioning.ts'
@@ -17,15 +17,87 @@ const list: LibraryEntryList = { userId: 'A', entries: [
 ] }
 const transfer: LibraryTransfer = { userId: 'A', entryId: 'e1', revision: 1, received: 50, total: 100, phase: 'downloading', error: null }
 
+test('cloud polling stops when the last analysis/avatar finishes and ignores local-only Skills', t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  let calls = 0
+  for (const pending of [{ serverAnalysisStatus: 'unanalysed' as const }, { avatarStatus: 'pending' as const }]) {
+    assert.equal(hasPendingCloudEnrichment([skill(pending)]), false)
+    assert.equal(hasPendingCloudEnrichment([skill({ serverId: 'server', ...pending })]), false)
+    const stop = startCloudSkillRefresh(hasPendingCloudEnrichment([skill({ serverId: 'server', ...pending, enrichmentPending: true })]), () => { calls += 1 }, () => true)
+    t.mock.timers.tick(30_000)
+    stop.stop()
+  }
+  assert.equal(calls, 2)
+  const stop = startCloudSkillRefresh(hasPendingCloudEnrichment([skill({ serverId: 'server', serverAnalysisStatus: 'completed', avatarStatus: 'ready' })]), () => { calls += 1 }, () => true)
+  t.mock.timers.tick(60_000)
+  assert.equal(calls, 2)
+  stop.stop()
+})
+
+test('cloud refresh stops after twenty unchanged polls, resets on progress and resumes after user return', t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  let calls = 0
+  let rows = [skill({ serverId: 'server', enrichmentPending: true, serverAnalysisStatus: 'unanalysed' })]
+  const start = (): ReturnType<typeof startCloudSkillRefresh> => startCloudSkillRefresh(true, () => { calls += 1 }, () => true, () => cloudEnrichmentProgress(rows))
+  const stop = start()
+  for (let i = 0; i < 19; i++) t.mock.timers.tick(30_000)
+  rows = [{ ...rows[0], serverAnalysisStatus: 'completed' }]
+  for (let i = 0; i < 21; i++) t.mock.timers.tick(30_000)
+  assert.equal(calls, 40)
+  t.mock.timers.tick(60_000)
+  assert.equal(calls, 40)
+  stop.resume()
+  t.mock.timers.tick(30_000)
+  assert.equal(calls, 41)
+  stop.stop()
+  stop.resume()
+  t.mock.timers.tick(30_000)
+  assert.equal(calls, 41)
+})
+
+test('cloud refresh polls visible authenticated pages and stops on account change or unmount', t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  let calls = 0
+  let visible = true
+  const stopGuest = startCloudSkillRefresh(false, () => { calls += 1 }, () => visible)
+  t.mock.timers.tick(30_000)
+  assert.equal(calls, 0)
+  stopGuest.stop()
+  const stop = startCloudSkillRefresh(true, () => { calls += 1 }, () => visible)
+  t.mock.timers.tick(30_000)
+  assert.equal(calls, 1)
+  visible = false
+  t.mock.timers.tick(30_000)
+  assert.equal(calls, 1)
+  visible = true
+  t.mock.timers.tick(30_000)
+  assert.equal(calls, 2)
+  stop.stop()
+  t.mock.timers.tick(60_000)
+  assert.equal(calls, 2)
+})
+
+test('continuous user activity does not postpone an active polling timer', t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  let calls = 0
+  const polling = startCloudSkillRefresh(true, () => { calls += 1 }, () => true)
+  for (let i = 0; i < 6; i++) { t.mock.timers.tick(10_000); polling.resume() }
+  assert.equal(calls, 2)
+  polling.stop()
+})
+
 test('fresh server analysis wins over a stale cloud placeholder and immutable library profile', () => {
   const inventory = { ...list, entries: [{ ...list.entries[0], serverSkillId: 'server-1', profile: { description: 'old', labels: ['old'] } }] }
   const stale = skill({ id: 'library:e1', localPath: '', libraryAccountId: 'A', serverAnalysisStatus: 'unanalysed' })
   const fresh = skill({ id: 'server:server-1', localPath: '', serverId: 'server-1', serverAccessValidatedForUserId: 'A',
-    serverAnalysisStatus: 'completed', description: 'new', labels: ['manual'] })
+    serverAnalysisStatus: 'completed', enrichmentPending: false, displayName: 'Analyzed', description: 'new', labels: ['manual'], avatarUrl: 'https://images.example.test/ready.jpg' })
   for (const input of [[fresh, stale], [stale, fresh]]) {
     const row = cloudLibrarySkills(input, inventory, 'A')[0]
     assert.equal(row.serverAnalysisStatus, 'completed')
+    assert.equal(row.enrichmentPending, false)
     assert.equal(row.description, 'new')
+    assert.equal(row.displayName, 'Analyzed')
+    assert.equal(row.avatarUrl, 'https://images.example.test/ready.jpg')
     assert.deepEqual(row.labels, ['manual'])
   }
 })

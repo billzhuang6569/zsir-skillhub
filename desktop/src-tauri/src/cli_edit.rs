@@ -11,8 +11,8 @@ const MAX_PATH_BYTES: usize = 4_096;
 
 pub(crate) const EDIT_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub skill prepare-edit (--skill-id <id> | --skill-path <SKILL.md>) --json\n",
-    "  skillhub skill finish-edit <session-id> --json"
+    "  skillhub skill prepare-edit (--skill-id <id> | --skill-path <SKILL.md>) [--json]\n",
+    "  skillhub skill finish-edit <session-id> [--json]"
 );
 
 #[derive(Debug, PartialEq, Eq)]
@@ -214,7 +214,7 @@ fn parse_prepare(args: &[String]) -> Result<EditCommand, &'static str> {
             _ => return Err(PREPARE_COMMAND),
         }
     }
-    if !json_seen || skill_id.is_some() == skill_path.is_some() {
+    if skill_id.is_some() == skill_path.is_some() {
         return Err(PREPARE_COMMAND);
     }
     Ok(EditCommand::Prepare {
@@ -246,8 +246,8 @@ fn parse_finish(args: &[String]) -> Result<EditCommand, &'static str> {
                 .to_string(),
         );
     }
-    match (session_id, json_seen) {
-        (Some(session_id), true) => Ok(EditCommand::Finish { session_id }),
+    match session_id {
+        Some(session_id) => Ok(EditCommand::Finish { session_id }),
         _ => Err(FINISH_COMMAND),
     }
 }
@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_requires_exactly_one_target_and_one_json_flag() {
+    fn prepare_requires_exactly_one_target_and_optional_json_flag() {
         assert_eq!(
             parse_edit_command(&strings(&[
                 "skill",
@@ -499,7 +499,6 @@ mod tests {
             })
         );
         for args in [
-            vec!["skill", "prepare-edit", "--skill-id", "sample"],
             vec![
                 "skill",
                 "prepare-edit",
@@ -531,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn finish_requires_one_uuid_and_one_json_flag() {
+    fn finish_requires_one_uuid_and_optional_json_flag() {
         assert_eq!(
             parse_edit_command(&strings(&["skill", "finish-edit", "--json", SESSION_ID,])),
             Ok(EditCommand::Finish {
@@ -539,7 +538,6 @@ mod tests {
             })
         );
         for args in [
-            vec!["skill", "finish-edit", SESSION_ID],
             vec!["skill", "finish-edit", "not-a-uuid", "--json"],
             vec!["skill", "finish-edit", SESSION_ID, "--json", "--json"],
             vec!["skill", "finish-edit", SESSION_ID, "unexpected", "--json"],
@@ -637,5 +635,31 @@ mod tests {
     fn command_constants_match_envelope_contract() {
         assert_eq!(PREPARE_COMMAND, "skill prepare-edit");
         assert_eq!(FINISH_COMMAND, "skill finish-edit");
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &["skill", "prepare-edit", "--skill-id", "sample"],
+            &[
+                "skill",
+                "prepare-edit",
+                "--skill-path",
+                "/tmp/sample/SKILL.md",
+            ],
+            &[
+                "skill",
+                "finish-edit",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_edit_command(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_edit_command(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_edit_command(&args).is_err(), "{case:?}");
+        }
     }
 }

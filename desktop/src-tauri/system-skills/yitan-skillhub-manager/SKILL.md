@@ -13,26 +13,27 @@ description: 管理一探 SkillHub 的账号状态、本地与团队 Skill、Mar
 skillhub
 ```
 
-不要拼接私有可执行路径，不读取 SkillHub 私有存储，不直接调用 Server，不接收或输出 Token。若 `skillhub` 不可用，本 Skill 的前提不成立；不要实现下载安装或 bootstrap 流程。
+不要拼接私有可执行路径，不读取 SkillHub 私有存储，不直接调用 Server，不接收或输出 Token。若找不到 `skillhub`，按 [references/support-troubleshooting.md](references/support-troubleshooting.md) 排查；不要实现下载安装或 bootstrap 流程。
 
 两类入口分工：**管理命令**（查询、导入、安装、分享、`env status` 等）一律使用上面公开 PATH 中的 `skillhub`。**运行用户授权的 Skill 程序**时，使用 SkillHub 在该 Skill 的 Agent 投影中自动生成并固定的 Runtime 启动行（macOS 的私有 runtime launcher、Windows 的 `%USERPROFILE%\.skillhub\runtime\bin\skillhub.cmd`，见 [references/credentials-runtime.md](references/credentials-runtime.md)）。这是唯一的受控例外：启动行由 SkillHub 写入并维护，不是自行猜测或拼接的私有路径；投影中没有该启动行时回到 APP，不要构造它。
 
 ## 开始任务
 
 1. 根据用户意图只读取下方相关 reference。
-2. 运行 `skillhub --help` 或对应命令族的 `--help`，确认本机版本实际开放的命令和参数；不得猜测未列出的接口。`skill`、`marketplace`、`team`、`env`、`app`、`update` 和 `sync` 均提供对应 `--help`。
-3. 需要当前账号或任何团队、分析、分享能力时，先运行：
+2. 运行 `skillhub --help` 或对应命令族的 `--help`，确认本机版本实际开放的命令和参数；不得猜测未列出的接口。`skill`、`marketplace`、`team`、`env`、`app`、`update`、`sync`、`feedback`、`server` 和 `run` 均提供对应 `--help`。
+3. 需要当前账号或任何团队、分析、分享能力时，先用 `skillhub server show --json` 确认空间；`local` 按账号 reference 处理，服务器空间再运行：
 
    ```sh
    skillhub auth status --refresh --json
    ```
 
-4. 以 CLI JSON 的 `ok`、`data`、`warnings`、`nextActions` 和稳定错误码为准，不根据本地路径、旧结果或自然语言错误猜测状态。
+4. 控制面命令默认输出 JSON 信封，`--json` 可省略；显式传入仍兼容。`--help` 保持纯文本。以 CLI JSON 的 `ok`、`data`、`warnings`、`nextActions` 和稳定错误码为准，不根据本地路径、旧结果或自然语言错误猜测状态。
 
 若当前 APP 版本尚未开放完成某项任务所需的 CLI 命令，明确说明必须在已安装的 SkillHub APP 中完成；不要用 Shell、私有路径或直接 HTTP 绕过。
 
 ## 当前公开范围
 
+- 空间与服务器：`skillhub server show [--json]` 只读；`skillhub server use <url|official|local>` 仅 APP 未运行时可用，不能代替 APP 登录。
 - 只读：组件状态、诊断、账号验证、Agent 列表、本地 Skill 列表/详情/发现/历史/diff、钥匙（环境变量）缺失状态、Marketplace 和团队浏览与更新列表、团队分享状态、APP 更新检查和反馈状态。
 - 本地写入：导入、投影安装/启用/停用/卸载、快照、恢复指定历史版本、移入回收站、从回收站恢复、安全编辑会话，以及用 `skillhub env request` 登记运行时发现缺少的钥匙名（只写变量名，不写值）。
 - 账号型操作：分析本人 Skill、团队分享/取消分享会写入 Server；Marketplace/团队安装获取并校验当前固定版本包，然后写入本地。
@@ -45,7 +46,9 @@ skillhub
 
 - 查询、搜索、状态和诊断可以直接执行。
 - 导入、投影安装/启停/卸载、删除、回收站恢复、历史版本恢复、Marketplace/团队安装、分析、团队分享/取消分享和反馈提交必须先获取 CLI 预检结果，向用户说明真实目标、影响范围、冲突与可恢复性。
-- 取得用户对该计划的明确确认后，才可把 CLI 返回的 `planDigest` 原样交给对应 apply；`PLAN_STALE` 时重新预检，不能自动放宽范围。只有预检明确列出冲突且用户选择替换时才可使用 `--replace-conflicts`。
+- 除下述低风险操作外，取得用户对该计划的明确确认后，才可把 CLI 返回的 `planDigest` 原样交给对应 apply；`PLAN_STALE` 时重新预检，不能自动放宽范围。只有预检明确列出冲突且用户选择替换时才可使用 `--replace-conflicts`。
+- 低风险操作：单个 Agent 的 `skill enable` / `skill disable`、`env request`。用户已明确要求启用或停用时，预检 `ok: true`、可执行且无冲突、无 warnings，可直接用返回的 `planDigest` 执行 apply，再查询复核；有冲突、warnings、多个 Agent 或任何不确定时，回到上述确认流程。
+- `env request` 没有 preflight / apply / planDigest；只登记变量名、幂等。用户已明确要求时可直接执行，再用 `env status` 复核；填写值与授权仍在 APP 完成。
 - `snapshot` 是追加式本地版本记录，仅在用户明确要求保存当前版本时执行；它没有 apply 或 `planDigest`。
 - 命令结果不确定时停止并查询状态；不要自动重复外部写入。
 - 手动同步没有 preflight / apply / planDigest；先说明当前账号及上传、下载、删除同步的影响，在用户已授权此范围后执行。只读状态查询不代表 Server 实时确认，重试前先检查同步报告。
@@ -53,6 +56,7 @@ skillhub
 
 ## 按任务读取
 
+- 空间与服务器（仅本机 / 一探官方 / 自部署）：读 [references/auth-and-account.md](references/auth-and-account.md)。
 - 登录继承、当前账号、过期或切号：读 [references/auth-and-account.md](references/auth-and-account.md)。
 - APP/CLI/Manager 版本和更新检查：读 [references/status-and-updates.md](references/status-and-updates.md)。
 - 打开或聚焦 APP：读 [references/app-control.md](references/app-control.md)。

@@ -1,5 +1,20 @@
 # 支持、诊断与反馈
 
+## 找不到 skillhub 命令
+
+1. 确认 SkillHub APP 已安装，并至少打开过一次；APP 启动时安装随附的 CLI。
+2. 请用户打开 APP → 设置 → Agent 工具，查看 CLI 状态和命令路径；有问题时按错误说明处理，再点「重新检查」。不要覆盖其他程序占用的同名命令。
+3. 按平台检查 PATH，再新开终端重试：
+   - macOS：公开入口是 `~/.local/bin/skillhub`。APP 只在 `~/.zprofile` 为 zsh 加入 `~/.local/bin`；使用 bash、fish 或非登录 Shell 时，请用户自行把 `~/.local/bin` 加入 PATH。
+   - Windows：公开入口是 `%USERPROFILE%\.skillhub\runtime\bin\skillhub.cmd`。APP 写入用户 PATH 后，已打开的终端不会自动获得它，需新开终端。
+4. 仍不可用时，若公开命令已能运行，可用下列命令打开 APP；否则请用户手动打开 APP 反馈：
+
+   ```sh
+   skillhub app open --json
+   ```
+
+上述路径只供解释安装与 PATH；不要自行拼接可执行路径、读取私有存储或实现下载安装、bootstrap。
+
 ## 诊断
 
 先记录用户看到的具体现象，再使用以下只读命令获取脱敏状态：

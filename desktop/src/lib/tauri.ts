@@ -1,4 +1,21 @@
 import { invoke } from '@tauri-apps/api/core'
+export async function getSkillPackageDiff(skillId: string, packageBase64: string, expectedSha256: string): Promise<[number, SkillDiffLine[]]> {
+  return invoke('get_skill_package_diff', { skillId, packageBase64, expectedSha256 })
+}
+export type SkillPackageDiffLine = { kind: 'add' | 'del' | 'ctx'; oldLine: number | null; newLine: number | null; content: string }
+export type SkillPackageFileDiff = { path: string; status: 'added' | 'modified' | 'deleted'; binary: boolean; tooLarge: boolean; lines: SkillPackageDiffLine[] }
+export async function getSkillPackageFileDiffs(skillId: string, packageBase64: string, expectedSha256: string): Promise<SkillPackageFileDiff[]> {
+  return invoke('get_skill_package_file_diffs', { skillId, packageBase64, expectedSha256 })
+}
+export async function getSkillSourceDiff(skillId: string): Promise<SkillDiffLine[]> {
+  return invoke('get_skill_source_diff', { skillId })
+}
+export async function saveSkillAsPersonal(skillId: string): Promise<LocalSkill> {
+  return invoke('save_skill_as_personal', { skillId })
+}
+export async function discardSkillSourceChanges(skillId: string): Promise<LocalSkill> {
+  return invoke('discard_skill_source_changes', { skillId })
+}
 import type { ApiAuthSession } from './api.js'
 import type { AcquisitionSource, LocalSkill } from '../store/index.js'
 import type { AccountDeleteOutcome, LibraryEntryList, LibrarySyncReport, LibrarySyncStatus } from './library-sync.js'
@@ -413,7 +430,7 @@ export type AgentInfo = {
 
 export type AgentDetectionState = 'detected' | 'notFound' | 'incomplete'
 
-export type SkillPackage = { base64: string; sha256: string; size: number }
+export type SkillPackage = { base64: string; sha256: string; size: number; contentHash: string; executablePaths: string[] }
 
 export async function getInstalledAgents(): Promise<AgentInfo[]> {
   return invoke<AgentInfo[]>('get_installed_agents')
@@ -895,10 +912,33 @@ export type RuntimeCliStatus = {
   ready: boolean
   commandPath: string
   error?: string
+  warnings?: string[]
+  pathGuidance?: { message: string; command: string | null }
 }
 
 export async function getRuntimeCliStatus(recheck = false): Promise<RuntimeCliStatus> {
   return invoke<RuntimeCliStatus>(recheck ? 'recheck_runtime_cli' : 'get_runtime_cli_status')
+}
+
+export type RuntimeCliStorage = {
+  currentBytes: number
+  reclaimableCount: number
+  reclaimableBytes: number
+  warnings: string[]
+}
+
+export type RuntimeCliCleanup = {
+  deletedCount: number
+  freedBytes: number
+  warnings: string[]
+}
+
+export async function getRuntimeCliStorage(): Promise<RuntimeCliStorage> {
+  return invoke<RuntimeCliStorage>('get_runtime_cli_storage')
+}
+
+export async function cleanupRuntimeCli(): Promise<RuntimeCliCleanup> {
+  return invoke<RuntimeCliCleanup>('cleanup_runtime_cli')
 }
 
 export async function syncEnvDependencies(skillId: string, keys: string[], suggestions: EnvSuggestion[] = []): Promise<LocalSkill> {
@@ -918,6 +958,8 @@ export async function createSkillPackage(skillId: string): Promise<SkillPackage>
 }
 
 export async function importSkillPackage(data: {
+  sourceVersionId?: string
+  teamModifications?: 'preserve' | 'overwrite'
   skillId: string
   name?: string
   packageBase64: string

@@ -73,19 +73,19 @@ struct ProjectionMarkerSummary {
 
 pub(crate) const LIFECYCLE_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub skill delete preflight --skill-id <id> --json\n",
-    "  skillhub skill delete apply --skill-id <id> --plan-digest <64hex> --json\n",
-    "  skillhub skill trash list --json\n",
-    "  skillhub skill trash restore preflight --trash-id <uuid> --json\n",
-    "  skillhub skill trash restore apply --trash-id <uuid> --plan-digest <64hex> --json\n",
-    "  skillhub skill enable preflight --skill-id <id> --agent <key> --json\n",
-    "  skillhub skill enable apply --skill-id <id> --agent <key> --plan-digest <64hex> [--replace-conflicts] --json\n",
-    "  skillhub skill disable preflight --skill-id <id> --agent <key> --json\n",
-    "  skillhub skill disable apply --skill-id <id> --agent <key> --plan-digest <64hex> --json\n",
-    "  skillhub skill uninstall preflight --skill-id <id> --json\n",
-    "  skillhub skill uninstall apply --skill-id <id> --plan-digest <64hex> --json\n",
-    "  skillhub skill restore-version preflight --skill-id <id> --hash <40hex> [--receipt-id <uuid>] --json\n",
-    "  skillhub skill restore-version apply --skill-id <id> --hash <40hex> [--receipt-id <uuid>] --plan-digest <64hex> --json"
+    "  skillhub skill delete preflight --skill-id <id> [--json]\n",
+    "  skillhub skill delete apply --skill-id <id> --plan-digest <64hex> [--json]\n",
+    "  skillhub skill trash list [--json]\n",
+    "  skillhub skill trash restore preflight --trash-id <uuid> [--json]\n",
+    "  skillhub skill trash restore apply --trash-id <uuid> --plan-digest <64hex> [--json]\n",
+    "  skillhub skill enable preflight --skill-id <id> --agent <key> [--json]\n",
+    "  skillhub skill enable apply --skill-id <id> --agent <key> --plan-digest <64hex> [--replace-conflicts] [--json]\n",
+    "  skillhub skill disable preflight --skill-id <id> --agent <key> [--json]\n",
+    "  skillhub skill disable apply --skill-id <id> --agent <key> --plan-digest <64hex> [--json]\n",
+    "  skillhub skill uninstall preflight --skill-id <id> [--json]\n",
+    "  skillhub skill uninstall apply --skill-id <id> --plan-digest <64hex> [--json]\n",
+    "  skillhub skill restore-version preflight --skill-id <id> --hash <40hex> [--receipt-id <uuid>] [--json]\n",
+    "  skillhub skill restore-version apply --skill-id <id> --hash <40hex> [--receipt-id <uuid>] --plan-digest <64hex> [--json]"
 );
 
 #[derive(Debug, PartialEq, Eq)]
@@ -499,7 +499,7 @@ fn parse_delete(args: &[String]) -> Result<LifecycleCommand, &'static str> {
 
 fn parse_trash(args: &[String]) -> Result<LifecycleCommand, &'static str> {
     match args.get(2).map(String::as_str) {
-        Some("list") if args.len() == 4 && args.get(3).map(String::as_str) == Some("--json") => {
+        Some("list") if args.len() == 3 || (args.len() == 4 && args[3] == "--json") => {
             Ok(LifecycleCommand::TrashList)
         }
         Some("restore") => {
@@ -580,9 +580,6 @@ fn parse_projection_action(
     }
     let skill_id = skill_id.ok_or(command)?;
     let agent = agent.ok_or(command)?;
-    if !json_seen {
-        return Err(command);
-    }
     match (enable, action, plan_digest, replace_conflicts) {
         (true, Some("preflight"), None, false) => {
             Ok(LifecycleCommand::EnablePreflight { skill_id, agent })
@@ -676,9 +673,6 @@ fn parse_restore_version(args: &[String]) -> Result<LifecycleCommand, &'static s
     }
     let skill_id = skill_id.ok_or(command)?;
     let hash = hash.ok_or(command)?;
-    if !json_seen {
-        return Err(command);
-    }
     match (action, plan_digest) {
         (Some("preflight"), None) => Ok(LifecycleCommand::RestoreVersionPreflight {
             skill_id,
@@ -728,9 +722,6 @@ fn parse_plan_args(
             }
             _ => return Err(command),
         }
-    }
-    if !json_seen {
-        return Err(command);
     }
     Ok((id.ok_or(command)?, plan_digest))
 }
@@ -3673,7 +3664,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_requires_json_and_a_64_hex_digest_for_apply() {
+    fn parser_requires_a_64_hex_digest_for_apply() {
         let digest = "a".repeat(64);
         assert_eq!(
             parse_command(&[
@@ -4640,5 +4631,118 @@ mod projection_marker_version_tests {
             crate::commands::PROJECTION_HEADER_VERSION + 1,
             &[],
         )));
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &["skill", "trash", "list"],
+            &[
+                "skill",
+                "enable",
+                "preflight",
+                "--skill-id",
+                "example",
+                "--agent",
+                "claude",
+            ],
+            &[
+                "skill",
+                "enable",
+                "apply",
+                "--skill-id",
+                "example",
+                "--agent",
+                "claude",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "skill",
+                "disable",
+                "preflight",
+                "--skill-id",
+                "example",
+                "--agent",
+                "claude",
+            ],
+            &[
+                "skill",
+                "disable",
+                "apply",
+                "--skill-id",
+                "example",
+                "--agent",
+                "claude",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &["skill", "uninstall", "preflight", "--skill-id", "example"],
+            &[
+                "skill",
+                "uninstall",
+                "apply",
+                "--skill-id",
+                "example",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &["skill", "delete", "preflight", "--skill-id", "example"],
+            &[
+                "skill",
+                "delete",
+                "apply",
+                "--skill-id",
+                "example",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "skill",
+                "restore-version",
+                "preflight",
+                "--skill-id",
+                "example",
+                "--hash",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ],
+            &[
+                "skill",
+                "restore-version",
+                "apply",
+                "--skill-id",
+                "example",
+                "--hash",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+            &[
+                "skill",
+                "trash",
+                "restore",
+                "preflight",
+                "--trash-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            ],
+            &[
+                "skill",
+                "trash",
+                "restore",
+                "apply",
+                "--trash-id",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_command(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_command(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_command(&args).is_err(), "{case:?}");
+        }
     }
 }

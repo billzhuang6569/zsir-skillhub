@@ -89,7 +89,7 @@ test('飙升榜 falls back to the popular ranking when trending is unavailable, 
     toSkill,
   }, 'week', true)
   assert.equal(trending.mode, 'trending')
-  assert.deepEqual(trending.items, [{ skill: 'a', growth: '+200%', metric: '1.2 万 次下载+安装' }, { skill: 'b', growth: null, metric: undefined }])
+  assert.deepEqual(trending.items, [{ skill: 'a', growth: '+200%', metric: { value: '1.2 万', title: '近期下载+安装 12000 次' } }, { skill: 'b', growth: null, metric: undefined }])
   assert.deepEqual(calls, [`trending:week:${RANKING_LIMIT}`])
 
   const fallback = await loadRanking({
@@ -97,7 +97,7 @@ test('飙升榜 falls back to the popular ranking when trending is unavailable, 
     popular: async (limit) => { assert.equal(limit, RANKING_LIMIT); return [item({ id: 'p', installCount: 2318 })] },
     toSkill,
   }, 'day', true)
-  assert.deepEqual(fallback, { mode: 'popular', items: [{ skill: 'p', growth: null, metric: '2,318 次安装' }] })
+  assert.deepEqual(fallback, { mode: 'popular', items: [{ skill: 'p', growth: null, metric: { value: '2,318', title: '安装 2318 次' } }] })
 
   let trendingCalled = false
   await loadRanking({ trending: async () => { trendingCalled = true; return { range: 'day', items: [] } }, popular: async () => [], toSkill }, 'day', false)
@@ -107,6 +107,31 @@ test('飙升榜 falls back to the popular ranking when trending is unavailable, 
   // The page remembers that trending is unavailable and hides the panel when both sources fail.
   assert.match(page, /if \(value\.mode === 'popular'\) trendingAvailable\.current = false/)
   assert.match(page, /\{!rankingFailed && <div data-store-section="ranking">/)
+})
+
+test('ranking zero counts retain the full accessible meaning for both ranges', async () => {
+  for (const range of ['day', 'week'] as const) {
+    const ranking = await loadRanking({
+      trending: async (requested) => {
+        assert.equal(requested, range)
+        return { range, items: [{ ...item(), trend: { recentInstalls: 0, previousInstalls: 0, growthPercent: null } }] }
+      },
+      popular: async () => [], toSkill: (value) => value.id,
+    }, range, true)
+    assert.deepEqual(ranking.items[0], { skill: 'skill-1', growth: null, metric: { value: '0', title: '近期下载+安装 0 次' } })
+  }
+  assert.match(storeUi, /<Metric icon="download" title=\{item.metric.title\}><span aria-hidden="true">\{item.metric.value\}<\/span><\/Metric>/)
+})
+
+test('row columns stay fixed across install states and truncate uploaders with a hover title', () => {
+  assert.match(storeCss, /grid-template-columns: 64px 64px 120px 112px/)
+  assert.match(storeCss, /\.tsh-row-meta \.tsh-install \{ width: 112px; box-sizing: border-box;/)
+  assert.match(storeCss, /\.tsh-row-source \{[^}]*overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/)
+  assert.match(storeUi, /className="tsh-row-source" title=\{uploader\(skill\)\} onClick=\{busy \? undefined : onOpen\}/)
+  assert.match(storeCss, /\.tsh-row \{[^}]*flex-wrap: wrap;/)
+  assert.match(storeCss, /\.tsh-row-main \{ flex: 1 1 180px;/)
+  assert.match(storeCss, /\.tsh-row \.tsh-row-source \{ pointer-events: auto;/)
+  assert.match(storeCss, /@media \(max-width: 480px\)[\s\S]*padding-left: 0; grid-template-columns: 56px 56px minmax\(0, 1fr\) 112px/)
 })
 
 test('「大家在搜」 uses the first five distinct editorial labels of popular + latest, never a badge word', () => {

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub const SYSTEM_MANAGER_ID: &str = "yitan-skillhub-manager";
 pub const SYSTEM_MANAGER_DISPLAY_NAME: &str = "SkillHub Manager";
-pub const SYSTEM_MANAGER_VERSION: &str = "v2.0.4";
+pub const SYSTEM_MANAGER_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 const LEGACY_REFERENCE_FILES: [&str; 4] = [
     "editing.md",
@@ -163,8 +163,28 @@ pub(crate) fn cleanup_legacy_files(system_manager_root: &Path) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
-    use super::{cleanup_legacy_files, files, LEGACY_REFERENCE_FILES};
+    use super::{cleanup_legacy_files, files, LEGACY_REFERENCE_FILES, SYSTEM_MANAGER_VERSION};
     use std::fs;
+
+    #[test]
+    fn system_manager_version_matches_package_version() {
+        assert_eq!(
+            SYSTEM_MANAGER_VERSION,
+            format!("v{}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn bundled_skill_frontmatter_has_no_version() {
+        let index = files()[0].1;
+        let mut lines = index.lines();
+        assert_eq!(lines.next(), Some("---"));
+        let frontmatter: Vec<_> = lines.by_ref().take_while(|line| *line != "---").collect();
+        assert!(index.lines().skip(1).any(|line| line == "---"));
+        assert!(!frontmatter
+            .iter()
+            .any(|line| line.trim_start().starts_with("version:")));
+    }
 
     fn fixture_root(label: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -185,6 +205,8 @@ mod tests {
             .map(|(_, contents)| contents)
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(index.contains("控制面命令默认输出 JSON 信封，`--json` 可省略"));
+        assert!(guidance.contains("用法错误的 `nextActions` 提供对应的 `--help` 命令"));
         let cli_usage = [
             crate::CLI_USAGE,
             crate::cli_local::SKILL_USAGE,
@@ -199,16 +221,20 @@ mod tests {
             crate::runtime_env::RUN_USAGE,
         ]
         .join("\n");
+        assert!(!cli_usage.contains(" --json"));
+        assert!(guidance.contains("skillhub auth status [--refresh] [--json]"));
         let required_commands = [
-            "skillhub status --json",
-            "skillhub doctor --json",
-            "skillhub auth status [--refresh] --json",
-            "skillhub app open --json",
-            "skillhub update check --json",
-            "skillhub agent list --json",
+            "skillhub server show",
+            "skillhub server use",
+            "skillhub status",
+            "skillhub doctor",
+            "skillhub auth status [--refresh]",
+            "skillhub app open",
+            "skillhub update check",
+            "skillhub agent list",
             "skillhub marketplace search",
             "skillhub marketplace show",
-            "skillhub team list --json",
+            "skillhub team list",
             "skillhub team skills",
             "skillhub team show",
             "skillhub skill analyze",
@@ -268,6 +294,15 @@ mod tests {
         }
 
         assert!(index.contains("CLI 或 Agent 投影故障"));
+        assert!(index.contains("空间与服务器"));
+        assert!(!index.contains("本 Skill 的前提不成立"));
+        let support = bundled_files
+            .iter()
+            .find_map(|(name, contents)| {
+                (*name == "references/support-troubleshooting.md").then_some(*contents)
+            })
+            .expect("bundled troubleshooting reference");
+        assert!(support.contains("找不到 skillhub 命令"));
         for reference in [
             "references/support-troubleshooting.md",
             "references/local-skills.md",

@@ -12,7 +12,7 @@ use serde_json::json;
 use std::time::Duration;
 
 const AUTH_STATUS_COMMAND: &str = "auth status";
-const AUTH_STATUS_USAGE: &str = "用法：skillhub auth status [--refresh] --json";
+const AUTH_STATUS_USAGE: &str = "用法：skillhub auth status [--refresh] [--json]";
 const MAX_AUTH_RESPONSE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -53,6 +53,7 @@ struct AuthApi {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CliAuthGuardError {
+    SpaceUnsupported,
     AuthRequired,
     AuthExpired,
     SyncPending,
@@ -79,7 +80,20 @@ pub(crate) enum CliAccountVerificationError {
     ClientConfiguration,
 }
 
+pub(crate) fn require_server_space(session: &RuntimeSession) -> Result<(), CliAuthGuardError> {
+    if session.deployment().profile() == "local" {
+        return Err(CliAuthGuardError::SpaceUnsupported);
+    }
+    Ok(())
+}
+
 impl CliAuthGuard {
+    pub(crate) fn capture_for_server() -> Result<Self, CliAuthGuardError> {
+        let guard = Self::capture()?;
+        require_server_space(guard.session())?;
+        Ok(guard)
+    }
+
     pub(crate) fn origin(&self) -> Result<reqwest::Url, String> {
         self.snapshot.server_origin()
     }
@@ -235,9 +249,6 @@ fn parse_auth_status_args(args: &[String]) -> Result<AuthStatusArgs, ()> {
             _ => return Err(()),
         }
     }
-    if !json {
-        return Err(());
-    }
     Ok(AuthStatusArgs { refresh })
 }
 
@@ -250,6 +261,14 @@ pub(crate) fn auth_guard_failure(
     error: CliAuthGuardError,
 ) -> CliCommandOutput {
     match error {
+        CliAuthGuardError::SpaceUnsupported => CliCommandOutput::failure(
+            command,
+            CliAccount::state(CliAccountState::Guest),
+            CliErrorCode::SpaceUnsupported,
+            "当前是仅本机空间，不支持此账号功能",
+            EXIT_USAGE,
+            vec!["请在 SkillHub APP 设置 → 服务与账号中连接一探官方或自部署服务器后使用".into()],
+        ),
         CliAuthGuardError::AuthRequired => CliCommandOutput::failure(
             command,
             CliAccount::state(CliAccountState::Guest),
@@ -460,7 +479,7 @@ async fn refreshed_status(guard: CliAuthGuard) -> CliCommandOutput {
         return CliCommandOutput::success(
             AUTH_STATUS_COMMAND,
             CliAccount::state(CliAccountState::Guest),
-            json!({ "refreshRequested": true, "serverValidated": false }),
+            json!({ "profile": guard.session().deployment().profile(), "refreshRequested": true, "serverValidated": false }),
             Vec::new(),
             vec!["如需使用账号功能，请打开 SkillHub APP 登录".into()],
         );
@@ -469,7 +488,7 @@ async fn refreshed_status(guard: CliAuthGuard) -> CliCommandOutput {
         Ok(account) => CliCommandOutput::success(
             AUTH_STATUS_COMMAND,
             account,
-            json!({ "refreshRequested": true, "serverValidated": true }),
+            json!({ "profile": guard.session().deployment().profile(), "refreshRequested": true, "serverValidated": true }),
             Vec::new(),
             Vec::new(),
         ),
@@ -509,7 +528,7 @@ pub(crate) async fn execute_auth_cli(args: &[String]) -> CliCommandOutput {
     CliCommandOutput::success(
         AUTH_STATUS_COMMAND,
         account,
-        json!({ "refreshRequested": false, "serverValidated": false }),
+        json!({ "profile": guard.session().deployment().profile(), "refreshRequested": false, "serverValidated": false }),
         if guard.token_for_request().is_ok() {
             vec!["本次仅检查本机会话，尚未向 Server 验证".into()]
         } else {
@@ -536,7 +555,46 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_parser_requires_json_and_rejects_duplicates() {
+    fn space_guard_uses_the_captured_profile() {
+        for (deployment, supported) in [
+            (serde_json::json!({"profile": "local"}), false),
+            (serde_json::json!({"profile": "official"}), true),
+            (
+                serde_json::json!({"profile": "selfhost", "origin": "http://127.0.0.1:3001", "initialOrigin": "http://127.0.0.1:3001", "instance": {"id": "example", "publicKey": "example"}}),
+                true,
+            ),
+        ] {
+            let snapshot = serde_json::from_value(serde_json::json!({
+                "version": 2, "deployment": deployment, "spaceId": "local",
+                "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 0
+            }))
+            .unwrap();
+            let guard = super::CliAuthGuard { snapshot };
+            assert_eq!(
+                super::require_server_space(guard.session()).is_ok(),
+                supported
+            );
+            if !supported {
+                for command in [
+                    "team list",
+                    "sync",
+                    "feedback submit preflight",
+                    "skill analyze",
+                ] {
+                    let output = auth_guard_failure(
+                        command,
+                        super::require_server_space(guard.session()).unwrap_err(),
+                    );
+                    assert_eq!(output.exit_code(), crate::cli::EXIT_USAGE);
+                    let value: serde_json::Value = serde_json::from_str(output.json()).unwrap();
+                    assert_eq!(value["error"]["code"], "SPACE_UNSUPPORTED");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn auth_status_parser_defaults_to_json_and_rejects_duplicates() {
         assert_eq!(
             parse_auth_status_args(&strings(&["auth", "status", "--json"])),
             Ok(AuthStatusArgs { refresh: false })
@@ -550,7 +608,6 @@ mod tests {
             Ok(AuthStatusArgs { refresh: true })
         );
         for rejected in [
-            strings(&["auth", "status"]),
             strings(&["auth", "status", "--json", "--json"]),
             strings(&["auth", "me", "--json"]),
             strings(&["auth", "status", "--json", "extra"]),
@@ -582,5 +639,18 @@ mod tests {
         assert_eq!(value["error"]["code"], "AUTH_SYNC_PENDING");
         assert_eq!(output.exit_code(), EXIT_AUTH);
         assert!(!output.json().contains("authToken"));
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[&["auth", "status"], &["auth", "status", "--refresh"]];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_auth_status_args(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_auth_status_args(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_auth_status_args(&args).is_err(), "{case:?}");
+        }
     }
 }

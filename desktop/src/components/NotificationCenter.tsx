@@ -137,6 +137,16 @@ export default function NotificationCenter({ entries, onClose }: NotificationCen
       if (!notification.read) void markRead(notification.id)
       return
     }
+    if (notification.type === 'skill_update' || notification.type === 'skill_unshared') {
+      const teamId = payloadText(notification.payload, 'teamId')
+      const skillId = payloadText(notification.payload, 'skillId')
+      if (teamId && skillId) {
+        onClose()
+        useStore.getState().openTeamSkill(teamId, skillId)
+      } else toast('这条提醒缺少跳转信息', 'error')
+      if (!notification.read) void markRead(notification.id)
+      return
+    }
     if (notification.type !== 'comment_mention') {
       if (!notification.read) void markRead(notification.id)
       return

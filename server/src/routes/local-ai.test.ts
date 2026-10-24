@@ -279,6 +279,11 @@ describe('local AI leases', () => {
     await result()
     expect(mock.write.mock.lastCall?.[0].data.labels).toEqual(profile.labels)
   })
+  it('allows user initiated local inference but preserves manually edited profile fields', async (): Promise<void> => {
+    mock.skill.mockResolvedValue({ ...skill, profileManuallyEdited: true, labelsManuallyEdited: false })
+    expect((await result()).statusCode).toBe(200)
+    expect(mock.write.mock.lastCall?.[0].data).toEqual({ labels: profile.labels, analysisStatus: 'completed' })
+  })
   it('accepts ordinary Bearer and Basic documentation', async (): Promise<void> => {
     expect((await result({ ...body, profile: { ...profile, description: '处理 Bearer Token 鉴权；Basic usage' } })).statusCode).toBe(200)
   })

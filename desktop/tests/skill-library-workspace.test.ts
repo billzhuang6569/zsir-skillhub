@@ -24,7 +24,7 @@ test('My Skills uses a persistent directory and automatically selects a visible 
 })
 
 test('Skill workspace keeps the directory and non-modal detail side by side', () => {
-  assert.match(app, /className=\{`app-workspace\$\{workspaceSkillSheet \|\| localSkillWorkspace \? ' skill-browser-open' : ''\}`\}/)
+  assert.match(app, /className=\{`app-workspace\$\{skillWorkspaceAvailable \|\| localSkillWorkspace \? ' skill-browser-open' : ''\}`\}/)
   assert.match(app, /<SkillDetailSheet\s+mode="workspace"/)
   assert.match(app, /localSkillWorkspace && <LocalSkillPreviewPanel/)
   assert.match(detail, /<section className="detail-sheet workspace on"/)
@@ -54,7 +54,18 @@ test('Skill directory avatar owns one stable geometry and preserves its shared o
   assert.match(list, /avatarUrl=\{skill.avatarUrl\}/)
   assert.match(listStyles, /--skill-library-avatar-size:\s*48px/)
   assert.match(listStyles, /\.skill-library-avatar-wrap\s*\{[^}]*display:\s*grid;[^}]*place-items:\s*center;[^}]*width:\s*var\(--skill-library-avatar-size\);[^}]*height:\s*var\(--skill-library-avatar-size\);/s)
-  assert.match(listStyles, /\.skill-library-avatar-wrap\.team-shared::before\s*\{[^}]*inset:\s*-50%;[^}]*border-radius:\s*50%;/s)
+  assert.match(listStyles, /\.skill-library-avatar-wrap\.team-shared\s*\{\s*box-shadow: inset 0 0 0 2px var\(--color-brand\);\s*\}/)
   assert.match(listStyles, /\.skill-library-avatar\s*\{[^}]*width:\s*44px\s*!important;[^}]*height:\s*44px\s*!important;/s)
   assert.doesNotMatch(listStyles, /@media[^}]+\.skill-library-avatar\s*\{[^}]*width:/s)
+})
+
+test('team sharing is static and explained without replacing download progress', () => {
+  assert.doesNotMatch(listStyles, /shared-avatar-ring|\.team-shared::(?:before|after)/)
+  assert.match(list, /title=\{teamShared \? '已共享到团队' : undefined\}/)
+  assert.match(list, /aria-label=\{`查看 \$\{title.primary\}\$\{teamShared \? '，已共享到团队' : ''\}/)
+  assert.match(list, /role=\{transfer \? 'progressbar' : undefined\}/)
+  assert.match(list, /aria-valuenow=\{transfer && fraction !== null \? Math.round\(fraction \* 100\) : undefined\}/)
+  assert.match(listStyles, /\.skill-library-avatar-wrap\.downloading > \.skill-library-avatar \{ filter: grayscale\(1\); opacity: \.48; \}/)
+  assert.match(listStyles, /\.skill-library-avatar-wrap\.indeterminate \.skill-avatar-download-track > span \{[^}]*animation: skill-download-sweep 1\.4s ease-in-out infinite;/)
+  assert.match(list, /className="skill-avatar-color-reveal" style=\{\{ clipPath:/)
 })

@@ -388,6 +388,8 @@ model TeamJoinRequest {
 }
 
 model Skill {
+  enrichment SkillEnrichment?
+  profileManuallyEdited Boolean @default(false)
   catalogSources CatalogSkillSource[]
   analysisStatus    String    @default("unanalysed")
   labelsManuallyEdited Boolean @default(true)
@@ -434,6 +436,21 @@ model Skill {
   @@index([authorId, name])
   @@index([authorId, deletedAt])
   @@map("skills")
+}
+
+model SkillEnrichment {
+  skillId String @id
+  phase String @default("analysis")
+  attempts Int @default(0)
+  awaitingAnalysis Boolean @default(false)
+  errorCode String?
+  nextAttemptAt DateTime @default(now())
+  leaseToken String?
+  leaseUntil DateTime?
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@index([phase, nextAttemptAt])
+  @@map("skill_enrichments")
 }
 
 model LocalAiLease {
@@ -634,6 +651,7 @@ model SkillVersion {
   card                   SkillCard?              @relation(fields: [cardSha256], references: [sha256], onDelete: Restrict)
   marketplaceSubmissions MarketplaceSubmission[] @relation("MarketplaceSubmissionVersion")
   marketplaceListings    MarketplaceListing[]    @relation("MarketplaceListingVersion")
+  teamShares             SkillTeamShare[]
 
   @@unique([skillId, version])
   @@unique([id, skillId])
@@ -1038,12 +1056,27 @@ model SkillTeamShare {
   teamId     String
   sharedById String
   createdAt  DateTime @default(now())
+  versionId  String?
+  version    SkillVersion? @relation(fields: [versionId], references: [id], onDelete: NoAction)
 
   skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
   team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@id([skillId, teamId])
+  @@index([versionId])
   @@map("skill_team_shares")
+}
+
+// Acquisition survives unsharing; membership is rechecked before notifying.
+model TeamSkillAcquisition {
+  skillId   String
+  teamId    String
+  userId    String
+  versionId String @default("")
+  createdAt DateTime @default(now())
+
+  @@id([skillId, teamId, userId, versionId])
+  @@map("team_skill_acquisitions")
 }
 
 // Team key vault (#254): one value per (team, KEY). Any active member may put

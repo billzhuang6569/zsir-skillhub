@@ -61,7 +61,7 @@ test('every API call is registered with its method/path and every registry entry
     ts.forEachChild(node, visit)
   }
   visit(ast)
-  assert.equal(count, 117) // Includes product session renewal.
+  assert.equal(count, 121) // Includes authenticated instance bases for team Skill links.
   // Lease bodies are native-only; count their actual Rust callers, never add a
   // WebView API merely to satisfy this reachability check.
   const worker = readFileSync(new URL('../src-tauri/src/local_inference/worker.rs', import.meta.url), 'utf8')
@@ -82,9 +82,9 @@ test('path params round-trip once and query keys are allowlisted', () => {
   }
 })
 
-test('selfhost instance and analysis registry entries match actual Server routes', () => {
+test('instance and analysis registry entries match actual Server routes', () => {
   const registered = new Set<string>()
-  for (const [file, prefix] of [['instance-ai.ts', '/api/instance/settings'], ['instance-fal.ts', '/api/instance/settings'], ['ai-batches.ts', '/api/skills/analysis/batches']]) {
+  for (const [file, prefix] of [['instance.ts', '/api/instance'], ['instance-ai.ts', '/api/instance/settings'], ['instance-fal.ts', '/api/instance/settings'], ['ai-batches.ts', '/api/skills/analysis/batches']]) {
     const serverSource = readFileSync(new URL(`../../server/src/routes/${file}`, import.meta.url), 'utf8')
     for (const match of serverSource.matchAll(/fastify\.(get|post|put|delete)\('([^']+)'/g)) {
       const base = match[2] === '/ai/status' ? '/api/instance' : prefix
@@ -94,7 +94,7 @@ test('selfhost instance and analysis registry entries match actual Server routes
   for (const [id, route] of Object.entries(routes)) if (id.startsWith('instance.') || id.startsWith('analysis.')) {
     assert.ok(registered.has(`${route.method} ${route.path}`), id)
     assert.equal(route.auth, true)
-    assert.deepEqual((route as ServerRouteDefinition).profiles, ['selfhost'])
+    assert.deepEqual((route as ServerRouteDefinition).profiles, id === 'instance.base-urls' ? undefined : ['selfhost'])
   }
 })
 

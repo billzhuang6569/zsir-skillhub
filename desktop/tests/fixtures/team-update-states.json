@@ -1,0 +1,8 @@
+[
+  {"accountMatches":true,"available":true,"sameVersion":true,"localModified":false,"status":"up_to_date"},
+  {"accountMatches":true,"available":true,"sameVersion":true,"localModified":true,"status":"up_to_date"},
+  {"accountMatches":true,"available":true,"sameVersion":false,"localModified":false,"status":"update_available"},
+  {"accountMatches":true,"available":true,"sameVersion":false,"localModified":true,"status":"local_modified"},
+  {"accountMatches":false,"available":true,"sameVersion":false,"localModified":true,"status":"account_mismatch"},
+  {"accountMatches":true,"available":false,"sameVersion":false,"localModified":true,"status":"access_revoked"}
+]

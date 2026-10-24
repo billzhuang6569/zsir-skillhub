@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { activeAgentEntries, agentAcceptsSkillWrites, agentStateLabel, agentStateTitle, cardAgentOptions, parseHiddenCardAgents } from '../src/lib/agents.ts'
+import { AGENT_KEYS, agentDisplayName, emptyAgentStates, activeAgentEntries, agentAcceptsSkillWrites, agentStateLabel, agentStateTitle, cardAgentOptions, parseHiddenCardAgents } from '../src/lib/agents.ts'
+
+test('WorkBuddy targets have distinct names and independent installation states', () => {
+  assert.ok(AGENT_KEYS.includes('workbuddy-ai'))
+  assert.equal(agentDisplayName('workbuddy-ai'), 'WorkBuddy AI')
+  assert.equal(agentDisplayName('workbuddy'), 'WorkBuddy')
+  const states = { ...emptyAgentStates(), 'workbuddy-ai': 'on' as const }
+  assert.equal(states.workbuddy, null)
+  assert.deepEqual(activeAgentEntries(states), [['workbuddy-ai', 'on']])
+})
 
 test('Skill list shows no Agent icons after removal from every tool', () => {
   assert.deepEqual(activeAgentEntries({

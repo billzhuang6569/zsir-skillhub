@@ -48,6 +48,18 @@ beforeEach(() => {
 afterEach(() => { pending.splice(0).forEach(release => release()); vi.unstubAllGlobals() })
 
 describe('#238 an avatar backlog never takes the AI slot a user import needs', () => {
+  it('background analysis shares the same reserved user slot as avatar prompts', async () => {
+    fetchMock.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => pending.push(resolve))
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{}' }] }))
+    })
+    const background = analyzeSkillWithAI('background', '# Background', 'background-owner', undefined, 'background')
+    await vi.waitFor(() => expect(pending.length).toBe(1))
+    await expect(analyzeSkillWithAI('next', '# Next', 'other-owner', undefined, 'background')).rejects.toMatchObject({ reason: 'concurrency' })
+    await expect(analyzeSkillWithAI('manual', '# Manual', 'manual-owner')).resolves.toHaveProperty('source')
+    pending.splice(0).forEach(release => release())
+    await background
+  })
   it('keeps one slot free: the import analysis is admitted while avatar prompts fill the background share', async () => {
     const logger = { warn: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
     let sequence = 0

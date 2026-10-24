@@ -31,6 +31,7 @@ export const NOTIFICATION_TITLES: Record<string, string> = {
   team_member_removed: '已被移出团队',
   team_member_left: '团队成员已退出',
   skill_update: 'Skill 更新',
+  skill_unshared: '团队已停止共享 · 本机副本保留',
   marketplace_approved: 'Skill 商店审核通过',
   marketplace_rejected: 'Skill 商店审核未通过',
   marketplace_withdrawn: 'Skill 已被商店下架',
@@ -198,7 +199,7 @@ export function consentEntry(request: KeyConsentRequest, vaultKeys: readonly Vau
 
 const TEAM_TYPES: ReadonlySet<string> = new Set([
   'join_request', 'join_approved', 'join_rejected', 'team_member_joined', 'team_member_left',
-  'team_member_removed', 'team_created', 'team_dissolved', 'team_key_scope_added', 'comment_mention', 'skill_update',
+  'team_member_removed', 'team_created', 'team_dissolved', 'team_key_scope_added', 'comment_mention', 'skill_update', 'skill_unshared',
 ])
 
 export function notificationCategory(type: string): NotificationCategory {

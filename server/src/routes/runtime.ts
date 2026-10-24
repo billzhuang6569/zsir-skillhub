@@ -15,13 +15,15 @@ import { authMiddleware } from '../middleware/auth.js'
 const UuidSchema = z.string().uuid()
 const EnvKeySchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,99}$/)
 
-const OptionsQuery = z.object({ skillId: UuidSchema })
+const OptionsQuery = z.object({ skillId: UuidSchema, sourceVersionId: UuidSchema.optional(), teamId: UuidSchema.optional() })
 const RuntimeSourceSchema = z.object({
   key: EnvKeySchema,
   teamId: UuidSchema,
 })
 const ResolveBody = z.object({
   skillId: UuidSchema,
+  sourceVersionId: UuidSchema.optional(),
+  teamId: UuidSchema.optional(),
   sources: z.array(RuntimeSourceSchema).max(100).refine(
     (sources) => new Set(sources.map((source) => source.key)).size === sources.length,
     'Runtime source keys must be unique'
@@ -44,6 +46,23 @@ function noStore(reply: FastifyReply): void {
 
 function unavailable(reply: FastifyReply): FastifyReply {
   return reply.code(503).send({ error: 'Runtime environment service is temporarily unavailable' })
+}
+
+async function acquiredVersionDependencies(transaction: Prisma.TransactionClient, userId: string, skillId: string, versionId?: string): Promise<Prisma.JsonValue | undefined> {
+  if (!versionId) return undefined
+  const version = await transaction.skillVersion.findFirst({ where: { id: versionId, skillId }, select: { cardSha256: true, envDependencies: true } })
+  if (!version) return null
+  const receipt = await transaction.teamSkillAcquisition.findFirst({ where: { userId, skillId, versionId }, select: { versionId: true } })
+  const grant = !receipt && version.cardSha256 ? await transaction.cardGrant.findUnique({ where: { userId_cardSha256: { userId, cardSha256: version.cardSha256 } } }) : null
+  return receipt || grant ? version.envDependencies : null
+}
+
+function teamDependencies(skill: { authorId: string; envDependencies: Prisma.JsonValue; teamShares: { teamId: string; version: { envDependencies: Prisma.JsonValue } | null }[] }, userId: string, teamId?: string): EnvDependency[] {
+  if (skill.authorId === userId) return dependencies(skill.envDependencies)
+  const shares = skill.teamShares ?? []
+  const selected = teamId ? shares.find(share => share.teamId === teamId) : shares.length === 1 ? shares[0] : undefined
+  // Legacy clients without a source team must not combine different team versions.
+  return selected ? dependencies(selected.version?.envDependencies ?? skill.envDependencies) : []
 }
 
 function dependencies(value: Prisma.JsonValue): EnvDependency[] {
@@ -125,13 +144,16 @@ export const runtimeRoutes: FastifyPluginAsync = async (fastify): Promise<void> 
     try {
       const skill = await db.skill.findUnique({
         where: { id: query.data.skillId },
-        select: { id: true, authorId: true, envDependencies: true, deletedAt: true },
+        select: { id: true, authorId: true, envDependencies: true, deletedAt: true,
+          teamShares: { where: { team: { dissolvedAt: null, members: { some: { userId: request.user.id } } } },
+            select: { teamId: true, version: { select: { envDependencies: true } } } } },
       })
       if (!skill || skill.deletedAt) return reply.code(404).send({ error: 'Skill not found' })
       if (!await canAccessSkill(db, request.user.id, skill.id, skill.authorId)) {
         return reply.code(403).send({ error: 'Skill access is no longer available' })
       }
-      const declared = dependencies(skill.envDependencies)
+      const acquired = await acquiredVersionDependencies(db, request.user.id, skill.id, query.data.sourceVersionId)
+      const declared = acquired !== undefined ? dependencies(acquired) : teamDependencies(skill, request.user.id, query.data.teamId)
       const declaredKeys = new Set(declared.map((dependency) => dependency.key))
       // A team key is a source for this Skill only while the account is an
       // active member, the Skill is shared to that team, declares the key
@@ -263,12 +285,15 @@ export const runtimeRoutes: FastifyPluginAsync = async (fastify): Promise<void> 
         }
 
         const teamIds = [...new Set(body.data.sources.map((source) => source.teamId))].sort()
-        for (const teamId of teamIds) {
+        const readTeamIds = [...new Set([...teamIds, ...(body.data.teamId ? [body.data.teamId] : [])])].sort()
+        for (const teamId of readTeamIds) {
           await lockSkillTeamMutation(transaction, body.data.skillId, teamId)
         }
         const skill = await transaction.skill.findUnique({
           where: { id: body.data.skillId },
-          select: { id: true, authorId: true, envDependencies: true, deletedAt: true },
+          select: { id: true, authorId: true, envDependencies: true, deletedAt: true,
+            teamShares: { where: { teamId: { in: readTeamIds }, team: { dissolvedAt: null, members: { some: { userId: request.user.id } } } },
+              select: { teamId: true, version: { select: { envDependencies: true } } } } },
         })
         if (!skill || skill.deletedAt) {
           await writeAudit(transaction, request, {
@@ -286,7 +311,8 @@ export const runtimeRoutes: FastifyPluginAsync = async (fastify): Promise<void> 
           return { ok: false, statusCode: 403, error: 'Skill access is no longer available', reasonCode: 'skill_access_required' }
         }
 
-        const declared = dependencies(skill.envDependencies)
+        const acquired = await acquiredVersionDependencies(transaction, request.user.id, skill.id, body.data.sourceVersionId)
+        const declared = acquired !== undefined ? dependencies(acquired) : teamDependencies(skill, request.user.id, body.data.teamId)
         const declaredKeys = new Set(declared.map((dependency) => dependency.key))
         if (body.data.sources.some((source) => !declaredKeys.has(source.key))) {
           await writeAudit(transaction, request, {

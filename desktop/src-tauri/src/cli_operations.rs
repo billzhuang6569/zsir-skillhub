@@ -25,13 +25,13 @@ use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 
 pub(crate) const ANALYZE_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub skill analyze <local-skill-id> --preflight --json\n",
-    "  skillhub skill analyze <local-skill-id> --apply --plan-digest <digest> --json"
+    "  skillhub skill analyze <local-skill-id> --preflight [--json]\n",
+    "  skillhub skill analyze <local-skill-id> --apply --plan-digest <digest> [--json]"
 );
 pub(crate) const ENV_USAGE: &str = concat!(
     "用法：\n",
-    "  skillhub env status [--skill-id <local-skill-id>] --json\n",
-    "  skillhub env request --skill-id <local-skill-id> --key <KEY> [--reason <text>] --json"
+    "  skillhub env status [--skill-id <local-skill-id>] [--json]\n",
+    "  skillhub env request --skill-id <local-skill-id> --key <KEY> [--reason <text>] [--json]"
 );
 
 const ANALYZE_COMMAND: &str = "skill analyze";
@@ -309,7 +309,7 @@ fn parse_analyze_args(args: &[String]) -> Result<OperationArgs, &'static str> {
             _ => return Err(ANALYZE_COMMAND),
         }
     }
-    if !json_requested || preflight == apply {
+    if preflight == apply {
         return Err(ANALYZE_COMMAND);
     }
     let mode = if preflight {
@@ -353,9 +353,6 @@ fn parse_env_status_args(args: &[String]) -> Result<OperationArgs, &'static str>
             }
             _ => return Err(ENV_STATUS_COMMAND),
         }
-    }
-    if !json_requested {
-        return Err(ENV_STATUS_COMMAND);
     }
     Ok(OperationArgs::EnvStatus { local_skill_id })
 }
@@ -406,9 +403,6 @@ fn parse_env_request_args(args: &[String]) -> Result<OperationArgs, &'static str
             }
             _ => return Err(ENV_REQUEST_COMMAND),
         }
-    }
-    if !json_requested {
-        return Err(ENV_REQUEST_COMMAND);
     }
     Ok(OperationArgs::EnvRequest {
         local_skill_id: local_skill_id.ok_or(ENV_REQUEST_COMMAND)?,
@@ -971,6 +965,10 @@ async fn verified_guard(
     command: &'static str,
 ) -> Result<(CliAuthGuard, CliAccount), CliCommandOutput> {
     let guard = CliAuthGuard::capture().map_err(|error| auth_guard_failure(command, error))?;
+    if command == ANALYZE_COMMAND {
+        crate::cli_auth::require_server_space(guard.session())
+            .map_err(|error| auth_guard_failure(command, error))?;
+    }
     if let Err(error) = guard.token_for_request() {
         return Err(auth_guard_failure(command, error));
     }
@@ -2750,8 +2748,6 @@ mod tests {
         );
         assert!(is_operations_command(&strings(&["env", "request"])));
         for invalid in [
-            // --json is mandatory.
-            vec!["env", "request", "--skill-id", "writer", "--key", "FAL_KEY"],
             // Key and Skill id are both required and validated.
             vec!["env", "request", "--skill-id", "writer", "--json"],
             vec!["env", "request", "--key", "FAL_KEY", "--json"],
@@ -3647,5 +3643,38 @@ mod tests {
             (json["error"]["code"].clone(), exit),
             (json!("VALIDATION_FAILED"), 1)
         );
+    }
+    #[test]
+    fn json_flag_is_optional_and_duplicate_flags_are_rejected() {
+        let cases: &[&[&str]] = &[
+            &["env", "status"],
+            &["env", "status", "--skill-id", "sample"],
+            &[
+                "env",
+                "request",
+                "--skill-id",
+                "sample",
+                "--key",
+                "FIXTURE_API_KEY",
+            ],
+            &["skill", "analyze", "sample", "--preflight"],
+            &[
+                "skill",
+                "analyze",
+                "sample",
+                "--apply",
+                "--plan-digest",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ],
+        ];
+        for case in cases {
+            let mut args: Vec<String> = case.iter().map(|value| (*value).to_owned()).collect();
+            let default = parse_args(&args);
+            assert!(default.is_ok(), "{case:?}: {default:?}");
+            args.push("--json".into());
+            assert_eq!(default, parse_args(&args), "{case:?}");
+            args.push("--json".into());
+            assert!(parse_args(&args).is_err(), "{case:?}");
+        }
     }
 }

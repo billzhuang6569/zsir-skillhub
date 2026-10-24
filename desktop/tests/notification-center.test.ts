@@ -96,6 +96,20 @@ test('server items: join request (UserChip applicant, actionable while unread), 
   assert.equal(richText(serverEntry(notice('n7', 'unknown_type', {})).title), '系统通知')
 })
 
+test('team publication and unshare notifications retain their exact team navigation target', () => {
+  for (const type of ['skill_update', 'skill_unshared']) {
+    const entry = serverEntry(notice('team-change', type, { skillId: 'skill-a', teamId: 'team-b', skillName: 'Demo', version: '0.1.2' }))
+    assert.equal(entry.category, 'team')
+    assert.deepEqual(entry.notification?.payload, { skillId: 'skill-a', teamId: 'team-b', skillName: 'Demo', version: '0.1.2' })
+    if (type === 'skill_unshared') assert.equal(richText(entry.title), '团队已停止共享 · 本机副本保留')
+  }
+  const center = read('src/components/NotificationCenter.tsx')
+  const branch = center.slice(center.indexOf("if (notification.type === 'skill_update'"), center.indexOf("if (notification.type !== 'comment_mention'"))
+  assert.match(branch, /openTeamSkill\(teamId, skillId\)/)
+  assert.match(branch, /if \(teamId && skillId\)/)
+  assert.match(branch, /markRead\(notification.id\)/)
+})
+
 test('entries: local items first by time, counts, filters and the 99+ badge', () => {
   const entries = buildNotificationEntries({
     notifications: [

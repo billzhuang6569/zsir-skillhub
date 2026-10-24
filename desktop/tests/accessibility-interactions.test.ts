@@ -48,7 +48,7 @@ test('My Skills source and local preview keep batch selection keyboard-accessibl
 test('cloud Skill rows use the same real version and failure explanation as detail views', () => {
   const list = readFileSync(resolve(desktopRoot, 'src/components/SkillLibraryList.tsx'), 'utf8')
   assert.match(list, /const versionDisplay = skillVersionDisplay\(skill\)/)
-  assert.match(list, /\{versionDisplay\.label\}/)
+  assert.match(list, /context === 'team' \? `团队版本 \$\{skill.latestVersion \?\? skill.version\}` : versionDisplay\.label/)
   // #289: the version problem moved from the description line into the 版本需要处理 icon tooltip.
   assert.doesNotMatch(list, /skill-library-problem|role="status">\{versionDisplay\.problem\}/)
   assert.match(list, /versionDisplay\.problem,\n\s*context === 'personal' \? lastRunFailures/)

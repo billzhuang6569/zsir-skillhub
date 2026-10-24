@@ -19,9 +19,11 @@ const storeCss = withoutComments(read('src/components/store/StoreUI.css'))
 test('store detail hero: 64px avatar, name title with badges, displayName subtitle, by the title preference', () => {
   assert.match(sheet, /<SkillAvatarIcon className="sh-cat-icon sh-store-avatar" avatarUrl=\{skill\.avatarUrl\} status=\{skill\.avatarStatus\} size=\{64\} \/>/)
   assert.match(sheet, /const title = skillListText\(skill, preference\)/)
-  // Order: name → copy-name button → store badges.
-  assert.match(sheet, /<h2 className="sh-store-title"><span[^>]*>\{title\.primary\}<\/span><button type="button" className="rawname sh-store-copy"[^>]*onClick=\{onCopyName\}><Icon name="doc" size=\{10\} \/><\/button><MarketplaceBadges badges=\{skill\.marketplaceBadges\} \/>(?:\{version && <span className="sh-title-version mono">\{version\}<\/span>\})?<\/h2>/)
-  assert.match(sheet, /\{title\.secondary && <p className=\{`sh-store-subtitle/)
+  // Badges stay with the text; copy, quick access and problems share a separate row.
+  assert.match(sheet, /<h2 className="sh-store-title"><span[^>]*>\{title\.primary\}<\/span><MarketplaceBadges badges=\{skill\.marketplaceBadges\} \/>\{version && <span className="sh-title-version mono">\{version\}<\/span>\}<\/h2>/)
+  assert.match(sheet, /className=\{`sh-store-subtitle\$\{title\.secondary/)
+  assert.match(sheet, /\{title\.secondary \|\| UNANALYSED_SKILL_NAME\}/)
+  assert.match(sheetCss, /\.sh-store-subtitle\.placeholder \{ color: var\(--color-muted\);/)
   assert.match(sheetCss, /\.sh-store-avatar \{ border-radius: var\(--radius-md\); \}/)
   assert.match(sheetCss, /\.sh-store-subtitle \{[^}]*color: var\(--color-ink\); font-size: 13px; font-weight: 600;/)
   // #261: local and team details share the same header — name title + copy button, displayName subtitle, 64px avatar.
@@ -30,6 +32,21 @@ test('store detail hero: 64px avatar, name title with badges, displayName subtit
   assert.match(sheet, /<SkillAvatarIcon className="sh-cat-icon" avatarUrl=\{skill\.avatarUrl\} status=\{skill\.avatarStatus\} size=\{64\} \/>/)
   assert.match(sheet, /\{isMarketplaceCatalogSource\(skill\) && <StoreDetailFacts skill=\{skill\} \/>\}/)
   assert.match(sheet, /<div className="sh-id" \{\.\.\.blankDragRegion\(\)\}>/)
+})
+
+test('detail title wraps independently of its first-line action group (#527)', () => {
+  assert.match(sheet, /<\/h2>\s*<div className="sh-title-actions">\s*<TeamSkillUpdateButton skill=\{skill\} \/>\s*<button type="button" className="rawname sh-store-copy"[^>]*onClick=\{onCopyName\}><Icon name="doc" size=\{16\} \/><\/button>\s*\{pinnable && <SkillQuickAccessButton skill=\{skill\} \/>\}\s*\{problemButton\}/)
+  assert.match(sheetCss, /\.sh-title-row \{[^}]*align-items: flex-start;[^}]*min-width: 0;/)
+  assert.match(sheetCss, /\.sh-title-row > h2 \{[^}]*min-width: 0;[^}]*flex: 0 1 auto;[^}]*font-size: 20px;[^}]*line-height: 28px;/)
+  assert.match(sheetCss, /\.sh-store-title > span:first-child \{[^}]*overflow-wrap: anywhere;/)
+  assert.match(sheetCss, /\.sh-title-actions \{[^}]*display: flex;[^}]*flex: none;[^}]*flex-wrap: nowrap;[^}]*gap: var\(--space-2\);/)
+  assert.match(sheetCss, /\.sh-store-copy \{[^}]*flex: none;[^}]*width: 28px; height: 28px; padding: 0;/)
+  assert.match(sheetCss, /\.rawname:focus-visible \{[^}]*outline:/)
+  const quickAccess = read('src/components/SkillTagPopover.tsx')
+  assert.match(quickAccess, /disabled=\{!organizerReady\}/)
+  assert.match(quickAccess, /aria-pressed=\{pinned\}/)
+  assert.match(quickAccess, /<Icon name="star" size=\{16\} \/>/)
+  assert.match(sheet, /title=\{`复制 Skill 名称：\$\{skill.name\}`\} aria-label=\{`复制 Skill 名称 \$\{skill.name\}`\}/)
 })
 
 const item = (fields: Partial<ApiMarketplaceItem> = {}): ApiMarketplaceItem => ({

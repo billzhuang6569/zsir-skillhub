@@ -10,6 +10,7 @@ const COMPATIBLE_AGENTS: &[&str] = &[
     "codex",
     "agent-skills",
     "workbuddy",
+    "workbuddy-ai",
     "doubao",
     "opencode",
     "openclaw",
@@ -319,6 +320,18 @@ mod tests {
             Some("k")
         );
         assert_eq!(normalized.normalized(), normalized);
+    }
+
+    #[test]
+    fn normalization_keeps_both_workbuddy_targets() {
+        let profile = SyncProfile {
+            compatible_agents: vec!["workbuddy".into(), "workbuddy-ai".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            profile.normalized().compatible_agents,
+            profile.compatible_agents
+        );
     }
 
     #[test]

@@ -156,7 +156,8 @@ export const localAiRoutes: FastifyPluginAsync = async (fastify): Promise<void> 
       }
       const changed = await tx.skill.updateMany({
         where: { id: skill.id, authorId: userId, deletedAt: null, analysisStatus: 'unanalysed', updatedAt: skill.updatedAt },
-        data: { ...profile, ...(skill.labelsManuallyEdited ? { labels: skill.labels as string[] } : {}), analysisStatus: 'completed' },
+        data: { ...(skill.profileManuallyEdited ? {} : profile),
+          labels: skill.labelsManuallyEdited ? skill.labels as string[] : profile.labels, analysisStatus: 'completed' },
       })
       if (!changed.count) return failure(409, 'LEASE_STALE')
       await tx.localAiLease.delete({ where: { id: lease.id } })

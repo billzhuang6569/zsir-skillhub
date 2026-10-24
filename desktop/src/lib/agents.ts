@@ -1,9 +1,10 @@
-export const AGENT_KEYS = ['claude', 'codex', 'workbuddy', 'doubao', 'opencode', 'openclaw', 'gemini', 'trae'] as const
+export const AGENT_KEYS = ['claude', 'codex', 'workbuddy', 'workbuddy-ai', 'doubao', 'opencode', 'openclaw', 'gemini', 'trae'] as const
 
 export const AGENT_NAMES: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'ChatGPT',
   workbuddy: 'WorkBuddy',
+  'workbuddy-ai': 'WorkBuddy AI',
   doubao: '豆包工作',
   // Kept for previously stored server metadata; native clients no longer
   // expose this historical pseudo-Agent as an install target.

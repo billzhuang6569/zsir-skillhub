@@ -64,6 +64,74 @@ pub struct RuntimeCliStatus {
     ready: bool,
     command_path: String,
     error: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
+    #[serde(default)]
+    path_guidance: CliPathGuidance,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CliPathGuidance {
+    pub message: String,
+    pub command: Option<String>,
+}
+
+impl Default for CliPathGuidance {
+    fn default() -> Self {
+        cli_path_guidance(std::env::consts::OS, std::env::var("SHELL").ok().as_deref())
+    }
+}
+
+pub(crate) fn cli_path_guidance(platform: &str, shell: Option<&str>) -> CliPathGuidance {
+    if platform == "windows" {
+        return CliPathGuidance {
+            message: "新打开的终端才会看到 skillhub".into(),
+            command: None,
+        };
+    }
+    let shell = shell
+        .and_then(|value| Path::new(value).file_name())
+        .and_then(|name| name.to_str());
+    let (message, command) = match shell {
+        Some("fish") => (
+            "默认 shell 为 fish：在终端执行以下命令；如需持久生效，请手动加入 ~/.config/fish/config.fish。",
+            "set -gx PATH \"$HOME/.local/bin\" $PATH",
+        ),
+        Some("bash") => (
+            "默认 shell 为 bash：在终端执行以下命令；如需持久生效，请手动加入 ~/.bashrc（登录 shell 需在 ~/.bash_profile 中加载它）。",
+            "export PATH=\"$HOME/.local/bin:$PATH\"",
+        ),
+        Some("zsh") => (
+            "zsh 登录终端会读取 ~/.zprofile；IDE 等非登录终端若找不到 skillhub，可执行以下命令，或手动加入 ~/.zshrc。",
+            "export PATH=\"$HOME/.local/bin:$PATH\"",
+        ),
+        _ => (
+            "未识别默认 shell：请按所用 shell 的语法手动将 ~/.local/bin 加入 PATH。以下命令适用于 sh/bash/zsh。",
+            "export PATH=\"$HOME/.local/bin:$PATH\"",
+        ),
+    };
+    CliPathGuidance {
+        message: message.into(),
+        command: Some(command.into()),
+    }
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCliStorage {
+    current_bytes: u64,
+    reclaimable_count: u64,
+    reclaimable_bytes: u64,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCliCleanup {
+    deleted_count: u64,
+    freed_bytes: u64,
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -554,6 +622,10 @@ struct RuntimeTeamSelection {
 #[serde(rename_all = "camelCase")]
 struct RuntimeResolveRequest {
     skill_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_version_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    team_id: Option<String>,
     sources: Vec<RuntimeTeamSelection>,
 }
 
@@ -610,9 +682,21 @@ impl RuntimeApi {
         Ok(url)
     }
 
-    async fn options(&self, token: &str, skill_id: &str) -> Result<RuntimeOptionsResponse, String> {
+    async fn options(
+        &self,
+        token: &str,
+        skill_id: &str,
+        source_version_id: Option<&str>,
+        team_id: Option<&str>,
+    ) -> Result<RuntimeOptionsResponse, String> {
         let mut url = self.url("/api/runtime/env/options")?;
         url.query_pairs_mut().append_pair("skillId", skill_id);
+        if let Some(id) = source_version_id {
+            url.query_pairs_mut().append_pair("sourceVersionId", id);
+        }
+        if let Some(id) = team_id {
+            url.query_pairs_mut().append_pair("teamId", id);
+        }
         let response = self
             .client
             .get(url)
@@ -629,6 +713,8 @@ impl RuntimeApi {
         token: &str,
         skill_id: &str,
         sources: Vec<RuntimeTeamSelection>,
+        source_version_id: Option<&str>,
+        team_id: Option<&str>,
     ) -> Result<RuntimeResolveResponse, String> {
         let response = self
             .client
@@ -637,6 +723,8 @@ impl RuntimeApi {
             .header(reqwest::header::CACHE_CONTROL, "no-store")
             .json(&RuntimeResolveRequest {
                 skill_id: skill_id.to_string(),
+                source_version_id: source_version_id.map(str::to_string),
+                team_id: team_id.map(str::to_string),
                 sources,
             })
             .send()
@@ -671,6 +759,11 @@ pub(crate) async fn parse_response<T: DeserializeOwned>(
             .unwrap_or_else(|| format!("SkillHub 运行时请求失败 ({status})"));
         return if status == StatusCode::UNAUTHORIZED {
             Err("当前 SkillHub 登录已失效，请打开 APP 重新登录".into())
+        } else if message == "Skill access is no longer available"
+            || message == "Skill not found"
+            || message == "A selected Team source is no longer available"
+        {
+            Err("该 Skill 已不在团队中共享，团队钥匙不可用".into())
         } else {
             Err(message)
         };
@@ -2002,7 +2095,12 @@ async fn automatic_team_candidates_at(
         validate_user_id(server_skill_id).map_err(|_| "Skill 的服务器资产编号无效".to_string())?;
         let options = RuntimeApi::for_session(session)
             .await?
-            .options(auth_token, server_skill_id)
+            .options(
+                auth_token,
+                server_skill_id,
+                profile.source_version_id.as_deref(),
+                profile.team_shared_from.as_deref(),
+            )
             .await?;
         if options.skill_id != server_skill_id {
             return Err("服务器返回了错误的 Skill 环境来源".to_string());
@@ -2140,7 +2238,13 @@ async fn resolve_env_at(
         validate_user_id(server_skill_id).map_err(|_| "Skill 的服务器资产编号无效".to_string())?;
         let response = RuntimeApi::for_session(&session)
             .await?
-            .resolve(auth_token, server_skill_id, team_selections.clone())
+            .resolve(
+                auth_token,
+                server_skill_id,
+                team_selections.clone(),
+                profile.source_version_id.as_deref(),
+                profile.team_shared_from.as_deref(),
+            )
             .await?;
         let server_keys = response
             .dependencies
@@ -2472,7 +2576,12 @@ pub async fn get_skill_env_source_policy(
         validate_user_id(server_skill_id).map_err(|_| "Skill 的服务器资产编号无效".to_string())?;
         let options = RuntimeApi::for_session(&session)
             .await?
-            .options(current_auth_token, server_skill_id)
+            .options(
+                current_auth_token,
+                server_skill_id,
+                profile.source_version_id.as_deref(),
+                profile.team_shared_from.as_deref(),
+            )
             .await?;
         if options.skill_id != server_skill_id {
             return Err("服务器返回了错误的 Skill 环境来源".into());
@@ -3318,6 +3427,372 @@ fn write_cli_payload_ownership(
     )
 }
 
+// Only the two private payload/ownership stems, with the exact UUID spelling
+// emitted by CAS, are eligible. Launchers and legacy/user files stay untouched.
+fn cli_residue_kind(name: &str) -> Option<(bool, bool)> {
+    for (stem, payload) in [
+        (PRIVATE_CLI_PAYLOAD_NAME, true),
+        (PRIVATE_CLI_OWNERSHIP_NAME, false),
+    ] {
+        let Some(rest) = name.strip_prefix(&format!(".{stem}.")) else {
+            continue;
+        };
+        let (identifier, suffix) = rest.rsplit_once('.')?;
+        if identifier.len() == 36 && uuid::Uuid::parse_str(identifier).is_ok() {
+            return match suffix {
+                "recovery" => Some((payload, false)),
+                "tmp" => Some((payload, true)),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
+fn cli_residue_metadata_safe(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    metadata.is_file()
+        && !metadata.file_type().is_symlink()
+        && metadata.uid() == crate::platform_fs::current_uid()
+        && metadata.nlink() == 1
+        && metadata.len() <= MAX_CLI_PAYLOAD_BYTES as u64
+}
+
+fn cli_residue_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    cli_residue_metadata_safe(right)
+        && left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.len() == right.len()
+        && left.modified().ok() == right.modified().ok()
+}
+
+#[cfg(windows)]
+fn cli_residue_owned_by_current_token(file: &File) -> io::Result<bool> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetKernelObjectSecurity, GetSecurityDescriptorOwner, GetTokenInformation,
+        TokenOwner, TokenUser, OWNER_SECURITY_INFORMATION, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    // Word buffers keep the returned descriptor, TOKEN_USER and TOKEN_OWNER properly aligned.
+    unsafe {
+        let mut needed = 0;
+        GetKernelObjectSecurity(
+            file.as_raw_handle(),
+            OWNER_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        );
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut descriptor = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+        if GetKernelObjectSecurity(
+            file.as_raw_handle(),
+            OWNER_SECURITY_INFORMATION,
+            descriptor.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mut owner = std::ptr::null_mut();
+        let mut defaulted = 0;
+        if GetSecurityDescriptorOwner(descriptor.as_mut_ptr().cast(), &mut owner, &mut defaulted)
+            == 0
+            || owner.is_null()
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = OwnedHandle::from_raw_handle(token);
+        needed = 0;
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        );
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut user = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+        if GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            user.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if EqualSid(owner, (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid) != 0 {
+            return Ok(true);
+        }
+        // Elevated admin tokens default new objects to Administrators ownership; these
+        // are still SkillHub-created files in this user's private directory.
+        needed = 0;
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenOwner,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        );
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut token_owner =
+            vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+        if GetTokenInformation(
+            token.as_raw_handle(),
+            TokenOwner,
+            token_owner.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(EqualSid(owner, (*token_owner.as_ptr().cast::<TOKEN_OWNER>()).Owner) != 0)
+    }
+}
+
+fn sweep_cli_runtime_residue_at(private_bin: &Path, current_payload_sha256: &str) -> Vec<String> {
+    inspect_cli_runtime_residue_at(private_bin, current_payload_sha256, true).warnings
+}
+
+// A dry run uses the same ownership checks, without deleting or pruning records.
+fn inspect_cli_runtime_residue_at(
+    private_bin: &Path,
+    current_payload_sha256: &str,
+    delete_files: bool,
+) -> RuntimeCliCleanup {
+    let mut report = RuntimeCliCleanup::default();
+    let result = (|| -> Result<(), String> {
+        let directory = fs::symlink_metadata(private_bin)
+            .map_err(|_| "无法检查 CLI 私有目录，已跳过残留清扫")?;
+        if !directory.is_dir()
+            || directory.file_type().is_symlink()
+            || directory.uid() != crate::platform_fs::current_uid()
+            || cfg!(unix) && directory.mode() & 0o7777 != 0o700
+        {
+            return Err("CLI 私有目录权限或所有权异常，已跳过残留清扫".into());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as WindowsOpenOptionsExt};
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+            };
+            if directory.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err("CLI 私有目录是重解析点，已跳过残留清扫".into());
+            }
+            let mut options = OpenOptions::new();
+            let handle = WindowsOpenOptionsExt::custom_flags(
+                &mut options,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+            .read(true)
+            .open(private_bin)
+            .map_err(|_| "无法验证 CLI 私有目录所有者")?;
+            if !cli_residue_owned_by_current_token(&handle).unwrap_or(false) {
+                return Err("CLI 私有目录不属于当前用户，已跳过残留清扫".into());
+            }
+        }
+        let ownership_path = private_bin.join(PRIVATE_CLI_OWNERSHIP_NAME);
+        let (mut ownership, snapshot) = read_cli_payload_ownership(&ownership_path)
+            .map_err(|_| "无法验证 CLI 所有权记录，已跳过残留清扫")?;
+        if snapshot.is_none() || !ownership.accepted_sha256.contains(current_payload_sha256) {
+            return Err("CLI 当前副本缺少所有权证明，已跳过残留清扫".into());
+        }
+        let retained = BTreeSet::from([current_payload_sha256.to_owned()]);
+        let mut can_prune = true;
+        let mut original_entries = BTreeSet::new();
+        // Second pass removes the ownership recovery created by pruning itself.
+        for pass in 0..if delete_files { 2 } else { 1 } {
+            let entries = fs::read_dir(private_bin).map_err(|_| "无法枚举 CLI 残留文件")?;
+            for entry in entries {
+                let entry = entry.map_err(|_| "无法检查 CLI 残留目录项")?;
+                let Some((payload, temporary)) =
+                    entry.file_name().to_str().and_then(cli_residue_kind)
+                else {
+                    continue;
+                };
+                if pass == 1 && (payload || temporary) {
+                    continue;
+                }
+                if pass == 0 {
+                    original_entries.insert(entry.file_name());
+                }
+                let path = entry.path();
+                let checked = (|| -> io::Result<()> {
+                    use std::io::Read;
+                    let before = fs::symlink_metadata(&path)?;
+                    if !cli_residue_metadata_safe(&before) {
+                        return Err(io::Error::other("unsafe residue"));
+                    }
+                    let mut options = OpenOptions::new();
+                    options
+                        .read(true)
+                        .custom_flags(crate::platform_fs::NOFOLLOW_FLAG);
+                    #[cfg(unix)]
+                    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+                    let file = options.open(&path)?;
+                    let metadata = file.metadata()?;
+                    if !cli_residue_same_file(&before, &metadata) {
+                        return Err(io::Error::other("changed residue"));
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::io::AsRawHandle;
+                        use windows_sys::Win32::Storage::FileSystem::{
+                            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+                        };
+                        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+                        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) }
+                            == 0
+                        {
+                            return Err(io::Error::last_os_error());
+                        }
+                        if info.nNumberOfLinks != 1 || !cli_residue_owned_by_current_token(&file)? {
+                            return Err(io::Error::other("linked residue"));
+                        }
+                    }
+                    let delete = if temporary {
+                        metadata
+                            .modified()?
+                            .elapsed()
+                            .is_ok_and(|age| age > Duration::from_secs(24 * 60 * 60))
+                    } else {
+                        let mut bytes = Vec::new();
+                        (&file)
+                            .take(MAX_CLI_PAYLOAD_BYTES as u64 + 1)
+                            .read_to_end(&mut bytes)?;
+                        if bytes.len() > MAX_CLI_PAYLOAD_BYTES {
+                            return Err(io::Error::other("oversized residue"));
+                        }
+                        if payload {
+                            ownership.accepted_sha256.contains(&sha256_hex(&bytes))
+                        } else {
+                            serde_json::from_slice::<CliPayloadOwnership>(&bytes).is_ok_and(
+                                |record| {
+                                    record.version == PRIVATE_CLI_OWNERSHIP_VERSION
+                                        && record.marker == PRIVATE_CLI_OWNERSHIP_MARKER
+                                },
+                            )
+                        }
+                    };
+                    if delete {
+                        let now = fs::symlink_metadata(&path)?;
+                        if !cli_residue_same_file(&metadata, &now) {
+                            return Err(io::Error::other("changed residue"));
+                        }
+                        // Unlike generic CAS, this is a 0700 private directory:
+                        // the remaining check-to-unlink race requires a same-uid
+                        // process, an acceptable tradeoff for bounded disk usage.
+                        drop(file);
+                        if delete_files {
+                            fs::remove_file(&path)?;
+                        }
+                        // Report existing old copies, not recoveries created by this sweep.
+                        if original_entries.contains(&entry.file_name()) {
+                            report.deleted_count += 1;
+                            report.freed_bytes += metadata.len();
+                        }
+                    }
+                    Ok(())
+                })();
+                match checked {
+                    Ok(()) => {}
+                    Err(error) => {
+                        report.warnings.push(format!(
+                            "{}：无法安全清扫，已保留（{error}）",
+                            entry.file_name().to_string_lossy()
+                        ));
+                        if payload && !temporary {
+                            can_prune = false;
+                        }
+                    }
+                }
+            }
+            if delete_files && pass == 0 && can_prune && ownership.accepted_sha256 != retained {
+                ownership.accepted_sha256 = retained.clone();
+                if write_cli_payload_ownership(&ownership_path, &ownership, snapshot.as_ref())
+                    .is_err()
+                {
+                    return Err("CLI 所有权记录修剪失败，已保留恢复项".into());
+                }
+            }
+        }
+        Ok(())
+    })();
+    if let Err(warning) = result {
+        report.warnings.push(warning);
+    }
+    report.warnings.sort();
+    report.warnings.dedup();
+    report
+}
+
+fn runtime_cli_storage_at(bin: &Path) -> Result<RuntimeCliStorage, String> {
+    let Some(payload) = read_owned_regular_binary(
+        &bin.join(PRIVATE_CLI_PAYLOAD_NAME),
+        MAX_CLI_PAYLOAD_BYTES,
+        "CLI 稳定副本",
+    )?
+    else {
+        if bin.try_exists().map_err(|error| error.to_string())? {
+            return Err("无法确认 CLI 当前副本，已跳过占用统计".into());
+        }
+        return Ok(RuntimeCliStorage::default());
+    };
+    let report = inspect_cli_runtime_residue_at(bin, &payload.sha256, false);
+    Ok(RuntimeCliStorage {
+        current_bytes: payload.len,
+        reclaimable_count: report.deleted_count,
+        reclaimable_bytes: report.freed_bytes,
+        warnings: report.warnings,
+    })
+}
+
+fn cleanup_runtime_cli_at(bin: &Path) -> Result<RuntimeCliCleanup, String> {
+    let payload = read_owned_regular_binary(
+        &bin.join(PRIVATE_CLI_PAYLOAD_NAME),
+        MAX_CLI_PAYLOAD_BYTES,
+        "CLI 稳定副本",
+    )?
+    .ok_or("无法确认 CLI 当前副本，已跳过残留清扫")?;
+    Ok(inspect_cli_runtime_residue_at(bin, &payload.sha256, true))
+}
+
+fn sweep_probed_cli_at(home: &Path) -> Vec<String> {
+    let bin = home.join(".skillhub/runtime/bin");
+    match read_owned_regular_binary(
+        &bin.join(PRIVATE_CLI_PAYLOAD_NAME),
+        MAX_CLI_PAYLOAD_BYTES,
+        "CLI 稳定副本",
+    ) {
+        Ok(Some(payload)) => sweep_cli_runtime_residue_at(&bin, &payload.sha256),
+        _ => vec!["无法确认 CLI 当前副本，已跳过残留清扫".into()],
+    }
+}
+
 fn install_cli_payload_at(private_bin: &Path, executable: &Path) -> Result<PathBuf, String> {
     let source = read_cli_source(executable)?;
     let source_sha256 = sha256_hex(&source);
@@ -3609,14 +4084,14 @@ fn install_and_probe_cli_at(
     home: &Path,
     executable: &Path,
     expected_version: &str,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Vec<String>), String> {
     let installation = install_cli_shim_at(home, executable)
         .and_then(|shim| ensure_zsh_cli_path(home).map(|_| shim))
         .and_then(|_| probe_managed_cli_at(home, expected_version));
     match installation {
-        Ok(shim) => Ok(shim),
+        Ok(shim) => Ok((shim, sweep_probed_cli_at(home))),
         Err(install_error) => match probe_managed_cli_at(home, expected_version) {
-            Ok(existing) => Ok(existing),
+            Ok(existing) => Ok((existing, sweep_probed_cli_at(home))),
             Err(probe_error) => Err(format!("{install_error}；{probe_error}")),
         },
     }
@@ -3633,10 +4108,11 @@ fn initialize_managed_cli_shim() -> RuntimeCliStatus {
         .as_ref()
         .map(|path| path.join(".local/bin/skillhub").display().to_string())
         .unwrap_or_else(|| "~/.local/bin/skillhub".into());
+    let mut warnings = Vec::new();
     let result = match (home.as_ref(), std::env::current_exe()) {
         (Some(home), Ok(executable)) => {
             install_and_probe_cli_at(home, &executable, env!("CARGO_PKG_VERSION"))
-                .map(|_| ())
+                .map(|(_, cleanup_warnings)| warnings = cleanup_warnings)
                 .and_then(|_| ensure_runtime_session_at(&skillhub_dir()))
         }
         (None, _) => Err("Cannot find home directory".into()),
@@ -3647,6 +4123,8 @@ fn initialize_managed_cli_shim() -> RuntimeCliStatus {
         ready: result.is_ok(),
         command_path,
         error: result.err(),
+        warnings,
+        path_guidance: CliPathGuidance::default(),
     };
     if let Some(home) = home {
         let _ = write_private_json(
@@ -4045,13 +4523,13 @@ fn install_and_probe_windows_cli_at(
     home: &Path,
     executable: &Path,
     expected_version: &str,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Vec<String>), String> {
     let installation = install_windows_cli_at(home, executable)
         .and_then(|_| probe_windows_managed_cli_at(home, expected_version));
     match installation {
-        Ok(wrapper) => Ok(wrapper),
+        Ok(wrapper) => Ok((wrapper, sweep_probed_cli_at(home))),
         Err(install_error) => match probe_windows_managed_cli_at(home, expected_version) {
-            Ok(existing) => Ok(existing),
+            Ok(existing) => Ok((existing, sweep_probed_cli_at(home))),
             Err(probe_error) => Err(format!("{install_error}；{probe_error}")),
         },
     }
@@ -4064,10 +4542,11 @@ fn initialize_managed_cli_shim() -> RuntimeCliStatus {
         .as_ref()
         .map(|path| windows_cli_entry_path_at(path).display().to_string())
         .unwrap_or_else(|| "%USERPROFILE%\\.skillhub\\runtime\\bin\\skillhub.cmd".into());
+    let mut warnings = Vec::new();
     let result = match (home.as_ref(), std::env::current_exe()) {
         (Some(home), Ok(executable)) => {
             install_and_probe_windows_cli_at(home, &executable, env!("CARGO_PKG_VERSION"))
-                .map(|_| ())
+                .map(|(_, cleanup_warnings)| warnings = cleanup_warnings)
                 .and_then(|_| ensure_runtime_session_at(&skillhub_dir()))
         }
         (None, _) => Err("Cannot find home directory".into()),
@@ -4078,6 +4557,8 @@ fn initialize_managed_cli_shim() -> RuntimeCliStatus {
         ready: result.is_ok(),
         command_path,
         error: result.err(),
+        warnings,
+        path_guidance: CliPathGuidance::default(),
     };
     if let Some(home) = home {
         let _ = write_private_json(
@@ -4101,6 +4582,8 @@ fn unmanaged_cli_status() -> RuntimeCliStatus {
         ready: false,
         command_path: String::new(),
         error: None,
+        warnings: Vec::new(),
+        path_guidance: CliPathGuidance::default(),
     }
 }
 
@@ -4112,7 +4595,7 @@ pub fn initialize_cli_shim() -> RuntimeCliStatus {
     initialize_managed_cli_shim()
 }
 
-// Reading Settings never reinstalls or hashes the CLI payload.
+// Status polling never reinstalls or hashes the CLI payload.
 static CLI_STATUS: std::sync::Mutex<Option<RuntimeCliStatus>> = std::sync::Mutex::new(None);
 static CLI_CHECK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -4130,6 +4613,8 @@ pub fn get_runtime_cli_status() -> Result<RuntimeCliStatus, String> {
             ready: false,
             command_path: String::new(),
             error: Some("CLI 正在初始化，可稍后重新检查".into()),
+            warnings: Vec::new(),
+            path_guidance: CliPathGuidance::default(),
         }))
 }
 
@@ -4144,6 +4629,39 @@ pub async fn recheck_runtime_cli() -> Result<RuntimeCliStatus, String> {
     tauri::async_runtime::spawn_blocking(initialize_cli_shim)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn get_runtime_cli_storage() -> Result<RuntimeCliStorage, String> {
+    let _guard = CLI_CHECK_LOCK.lock().await;
+    tauri::async_runtime::spawn_blocking(|| {
+        runtime_cli_storage_at(
+            &crate::user_home_dir()
+                .ok_or("无法定位用户目录")?
+                .join(".skillhub/runtime/bin"),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn cleanup_runtime_cli() -> Result<RuntimeCliCleanup, String> {
+    if crate::official_channel::CHANNEL == "dev" {
+        return Err("dev 构建不管理 CLI，请在正式版中清理旧副本".into());
+    }
+    let Ok(_guard) = CLI_CHECK_LOCK.try_lock() else {
+        return Err("CLI 检查或清理正在进行，请稍后重试".into());
+    };
+    tauri::async_runtime::spawn_blocking(|| {
+        cleanup_runtime_cli_at(
+            &crate::user_home_dir()
+                .ok_or("无法定位用户目录")?
+                .join(".skillhub/runtime/bin"),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn cli_probe_output(command: &mut Command) -> Result<std::process::Output, String> {
@@ -4397,7 +4915,11 @@ mod cli_channel_tests {
                 ready: true,
                 command_path: "official-cli".into(),
                 error: None,
+                warnings: Vec::new(),
+                path_guidance: CliPathGuidance::default(),
             });
+            assert!(cleanup_runtime_cli().await.unwrap_err().contains("dev"));
+            assert_eq!(snapshot(), before);
             for status in [
                 get_runtime_cli_status().unwrap(),
                 initialize_cli_shim(),
@@ -4761,6 +5283,42 @@ mod windows_cli_tests {
     fn write_source(path: &std::path::Path, bytes: &[u8]) {
         fs::create_dir_all(path.parent().expect("source parent")).expect("create source parent");
         fs::write(path, bytes).expect("write Windows CLI source");
+    }
+
+    #[test]
+    fn windows_cli_residue_sweep_cleans_owned_files_and_preserves_hardlinks() {
+        let home = fixture();
+        let source = home.join("app/skillhub.exe");
+        write_source(&source, b"old payload");
+        super::install_windows_cli_files_at(&home, &source).unwrap();
+        write_source(&source, b"new payload");
+        super::install_windows_cli_files_at(&home, &source).unwrap();
+        let bin = home.join(".skillhub/runtime/bin");
+        let linked = bin.join(format!(
+            ".{PRIVATE_CLI_PAYLOAD_NAME}.{}.recovery",
+            uuid::Uuid::new_v4()
+        ));
+        fs::hard_link(&source, &linked).unwrap();
+        let digest = super::sha256_hex(b"new payload");
+        assert!(!super::sweep_cli_runtime_residue_at(&bin, &digest).is_empty());
+        assert!(super::sweep_cli_runtime_residue_at(&bin, &digest)
+            .iter()
+            .all(|warning| !warning.contains("不属于当前用户")));
+        assert!(linked.exists());
+        fs::remove_file(&linked).unwrap();
+        assert!(super::sweep_cli_runtime_residue_at(&bin, &digest).is_empty());
+        for entry in fs::read_dir(&bin).unwrap() {
+            assert!(
+                super::cli_residue_kind(entry.unwrap().file_name().to_str().unwrap()).is_none()
+            );
+        }
+        let (ownership, _) =
+            super::read_cli_payload_ownership(&bin.join(PRIVATE_CLI_OWNERSHIP_NAME)).unwrap();
+        assert_eq!(
+            ownership.accepted_sha256,
+            std::collections::BTreeSet::from([digest])
+        );
+        remove_fixture(&home);
     }
 
     fn remove_fixture(home: &std::path::Path) {
@@ -5324,6 +5882,95 @@ mod windows_cli_tests {
     }
 }
 
+#[cfg(test)]
+mod cli_residue_name_tests {
+    use super::*;
+
+    #[test]
+    fn cli_path_guidance_matches_platform_and_shell() {
+        for shell in [None, Some("/bin/bash"), Some("/usr/local/bin/fish")] {
+            let guidance = cli_path_guidance("windows", shell);
+            assert_eq!(guidance.message, "新打开的终端才会看到 skillhub");
+            assert!(guidance.command.is_none());
+        }
+        for (shell, config, command) in [
+            (
+                "/bin/bash",
+                "~/.bashrc",
+                "export PATH=\"$HOME/.local/bin:$PATH\"",
+            ),
+            (
+                "/opt/homebrew/bin/fish",
+                "~/.config/fish/config.fish",
+                "set -gx PATH \"$HOME/.local/bin\" $PATH",
+            ),
+            (
+                "/bin/zsh",
+                "~/.zshrc",
+                "export PATH=\"$HOME/.local/bin:$PATH\"",
+            ),
+        ] {
+            let guidance = cli_path_guidance("macos", Some(shell));
+            assert!(guidance.message.contains(config));
+            assert_eq!(guidance.command.as_deref(), Some(command));
+        }
+        for shell in [None, Some(""), Some("/bin/not-zsh"), Some("/bin/nu")] {
+            assert!(cli_path_guidance("macos", shell)
+                .message
+                .contains("未识别默认 shell"));
+        }
+    }
+
+    #[test]
+    fn cli_status_warnings_are_backward_compatible_and_optional() {
+        let mut status: RuntimeCliStatus = serde_json::from_str(
+            r#"{"managed":true,"ready":true,"commandPath":"cli","error":null}"#,
+        )
+        .unwrap();
+        assert!(status.warnings.is_empty());
+        assert!(serde_json::to_value(&status)
+            .unwrap()
+            .get("warnings")
+            .is_none());
+        status.warnings.push("CLI 残留文件已保留".into());
+        assert_eq!(
+            serde_json::to_value(&status).unwrap()["warnings"][0],
+            "CLI 残留文件已保留"
+        );
+    }
+
+    #[test]
+    fn cli_residue_names_require_exact_stem_uuid_and_suffix() {
+        let id = uuid::Uuid::new_v4();
+        for (stem, payload) in [
+            (PRIVATE_CLI_PAYLOAD_NAME, true),
+            (PRIVATE_CLI_OWNERSHIP_NAME, false),
+        ] {
+            for (suffix, temporary) in [("recovery", false), ("tmp", true)] {
+                assert_eq!(
+                    cli_residue_kind(&format!(".{stem}.{id}.{suffix}")),
+                    Some((payload, temporary))
+                );
+            }
+            for name in [
+                format!(".{stem}.not-a-uuid.recovery"),
+                format!(".{stem}.{}.tmp", id.simple()),
+                format!(".{stem}.{id}.recovery.extra"),
+                format!("{stem}.{id}.recovery"),
+            ] {
+                assert_eq!(cli_residue_kind(&name), None);
+            }
+        }
+        for stem in [
+            "skillhub-legacy-payload",
+            PRIVATE_CLI_LAUNCHER_NAME,
+            "user-file",
+        ] {
+            assert_eq!(cli_residue_kind(&format!(".{stem}.{id}.recovery")), None);
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::session_lock_semantics_tests::run_lock_probe;
@@ -5344,8 +5991,10 @@ mod tests {
     };
     use std::collections::BTreeMap;
     use std::fs;
+    use std::fs::File;
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::process::Command;
+    use std::time::Duration;
 
     const USER_A: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const USER_B: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -6429,6 +7078,270 @@ mod tests {
         }
     }
 
+    fn cli_recovery_paths(bin: &std::path::Path) -> Vec<std::path::PathBuf> {
+        fs::read_dir(bin)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_str()
+                    .and_then(super::cli_residue_kind)
+                    .is_some_and(|(_, temporary)| !temporary)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cli_storage_is_read_only_and_manual_cleanup_reports_actual_deletions() {
+        let home = fixture();
+        let bin = home.join(".skillhub/runtime/bin");
+        let empty = super::runtime_cli_storage_at(&bin).unwrap();
+        assert_eq!(empty.current_bytes, 0);
+        assert_eq!(empty.reclaimable_count, 0);
+        assert!(!bin.exists());
+        let source = home.join("app/skillhub");
+        write_cli_source_at(&source, "0.1.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        write_cli_source_at(&source, "0.2.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        let snapshot = || {
+            let mut entries: Vec<_> = fs::read_dir(&bin)
+                .unwrap()
+                .map(|entry| {
+                    let path = entry.unwrap().path();
+                    let metadata = fs::symlink_metadata(&path).unwrap();
+                    (
+                        path.clone(),
+                        fs::read(&path).unwrap(),
+                        metadata.modified().unwrap(),
+                    )
+                })
+                .collect();
+            entries.sort();
+            entries
+        };
+        let before = snapshot();
+        let recoveries = cli_recovery_paths(&bin);
+        let expected_bytes: u64 = recoveries
+            .iter()
+            .map(|path| fs::metadata(path).unwrap().len())
+            .sum();
+        let stats = super::runtime_cli_storage_at(&bin).unwrap();
+        assert_eq!(stats.current_bytes, fs::metadata(&source).unwrap().len());
+        assert_eq!(stats.reclaimable_count, recoveries.len() as u64);
+        assert_eq!(stats.reclaimable_bytes, expected_bytes);
+        assert!(stats.warnings.is_empty());
+        assert_eq!(snapshot(), before);
+        let result = super::cleanup_runtime_cli_at(&bin).unwrap();
+        // Internal ownership pruning must not inflate the old-copy totals.
+        assert_eq!(result.deleted_count, stats.reclaimable_count);
+        assert_eq!(result.freed_bytes, expected_bytes);
+        assert!(result.warnings.is_empty());
+        let after = super::runtime_cli_storage_at(&bin).unwrap();
+        assert_eq!(after.reclaimable_count, 0);
+        assert_eq!(after.reclaimable_bytes, 0);
+        assert_eq!(after.current_bytes, stats.current_bytes);
+        let again = super::cleanup_runtime_cli_at(&bin).unwrap();
+        assert_eq!(again.deleted_count, 0);
+        assert_eq!(again.freed_bytes, 0);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cli_probed_upgrade_sweeps_recoveries_and_prunes_ownership() {
+        let home = fixture();
+        let source = home.join("app/skillhub");
+        write_cli_source_at(&source, "0.1.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        write_cli_source_at(&source, "0.2.0");
+        let (shim, warnings) = install_and_probe_cli_at(&home, &source, "0.2.0").unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let bin = home.join(".skillhub/runtime/bin");
+        assert!(cli_recovery_paths(&bin).is_empty());
+        let (ownership, _) =
+            super::read_cli_payload_ownership(&bin.join(PRIVATE_CLI_OWNERSHIP_NAME)).unwrap();
+        assert_eq!(
+            ownership.accepted_sha256,
+            std::collections::BTreeSet::from([super::sha256_hex(&fs::read(&source).unwrap())])
+        );
+        let output = Command::new(shim)
+            .arg("--version")
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "skillhub 0.2.0"
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cli_failed_probe_preserves_recoveries_until_healthy_fallback() {
+        let home = fixture();
+        let source = home.join("app/skillhub");
+        write_cli_source_at(&source, "0.1.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        write_cli_source_at(&source, "0.2.0");
+        assert!(install_and_probe_cli_at(&home, &source, "0.3.0").is_err());
+        let bin = home.join(".skillhub/runtime/bin");
+        assert!(cli_recovery_paths(&bin)
+            .iter()
+            .any(
+                |path| super::cli_residue_kind(path.file_name().unwrap().to_str().unwrap())
+                    == Some((true, false))
+            ));
+        fs::remove_file(&source).unwrap();
+        let (_, warnings) = install_and_probe_cli_at(&home, &source, "0.2.0").unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(cli_recovery_paths(&bin).is_empty());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cli_residue_sweep_preserves_untrusted_files_and_recent_temps() {
+        let home = fixture();
+        let source = home.join("app/skillhub");
+        write_cli_source_at(&source, "0.1.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        let bin = home.join(".skillhub/runtime/bin");
+        let residue = |stem: &str, suffix: &str| {
+            bin.join(format!(".{stem}.{}.{suffix}", uuid::Uuid::new_v4()))
+        };
+        let unknown = residue(PRIVATE_CLI_PAYLOAD_NAME, "recovery");
+        fs::write(&unknown, b"unknown payload").unwrap();
+        let invalid = bin.join(format!(".{PRIVATE_CLI_PAYLOAD_NAME}.invalid.recovery"));
+        fs::write(&invalid, b"invalid name").unwrap();
+        let link = residue(PRIVATE_CLI_PAYLOAD_NAME, "recovery");
+        symlink(&source, &link).unwrap();
+        let hardlink = residue(PRIVATE_CLI_PAYLOAD_NAME, "recovery");
+        fs::hard_link(&source, &hardlink).unwrap();
+        let invalid_record = residue(PRIVATE_CLI_OWNERSHIP_NAME, "recovery");
+        fs::write(&invalid_record, b"{}").unwrap();
+        let launcher = residue(PRIVATE_CLI_LAUNCHER_NAME, "recovery");
+        fs::write(&launcher, b"launcher").unwrap();
+        let legacy = bin.join(".skillhub-legacy-payload");
+        fs::write(&legacy, b"legacy").unwrap();
+        let mut recent = Vec::new();
+        for stem in [PRIVATE_CLI_PAYLOAD_NAME, PRIVATE_CLI_OWNERSHIP_NAME] {
+            let fresh = residue(stem, "tmp");
+            fs::write(&fresh, b"in progress").unwrap();
+            recent.push(fresh);
+            let stale = residue(stem, "tmp");
+            fs::write(&stale, b"interrupted").unwrap();
+            File::options()
+                .write(true)
+                .open(&stale)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(25 * 60 * 60))
+                .unwrap();
+            recent.push(stale);
+        }
+        let digest = super::sha256_hex(&fs::read(&source).unwrap());
+        let stats = super::runtime_cli_storage_at(&bin).unwrap();
+        assert_eq!(stats.reclaimable_count, 2);
+        assert_eq!(stats.reclaimable_bytes, 2 * b"interrupted".len() as u64);
+        for path in [&link, &hardlink] {
+            let name = path.file_name().unwrap().to_string_lossy();
+            assert!(stats
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(name.as_ref())));
+        }
+        let warnings = super::sweep_cli_runtime_residue_at(&bin, &digest);
+        assert!(!warnings.is_empty());
+        for path in [
+            &unknown,
+            &invalid,
+            &link,
+            &hardlink,
+            &invalid_record,
+            &launcher,
+            &legacy,
+            &recent[0],
+            &recent[2],
+        ] {
+            assert!(fs::symlink_metadata(path).is_ok(), "{}", path.display());
+        }
+        assert!(!recent[1].exists());
+        assert!(!recent[3].exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cli_residue_sweep_never_adds_unknown_payload_digest() {
+        let home = fixture();
+        let source = home.join("app/skillhub");
+        write_cli_source_at(&source, "0.1.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        write_cli_source_at(&source, "0.2.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        let bin = home.join(".skillhub/runtime/bin");
+        let unknown = bin.join(format!(
+            ".{PRIVATE_CLI_PAYLOAD_NAME}.{}.recovery",
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&unknown, b"unknown payload").unwrap();
+        let digest = super::sha256_hex(&fs::read(&source).unwrap());
+        assert!(super::sweep_cli_runtime_residue_at(&bin, &digest).is_empty());
+        assert!(unknown.exists());
+        let (ownership, _) =
+            super::read_cli_payload_ownership(&bin.join(PRIVATE_CLI_OWNERSHIP_NAME)).unwrap();
+        assert_eq!(
+            ownership.accepted_sha256,
+            std::collections::BTreeSet::from([digest.clone()])
+        );
+        assert!(!ownership
+            .accepted_sha256
+            .contains(&super::sha256_hex(b"unknown payload")));
+        assert!(super::sweep_cli_runtime_residue_at(&bin, &digest).is_empty());
+        assert_eq!(fs::read(&unknown).unwrap(), b"unknown payload");
+        assert_eq!(cli_recovery_paths(&bin), vec![unknown]);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cli_residue_sweep_rejects_non_private_or_symlink_directory() {
+        let home = fixture();
+        let source = home.join("app/skillhub");
+        write_cli_source_at(&source, "0.1.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        write_cli_source_at(&source, "0.2.0");
+        install_cli_shim_at(&home, &source).unwrap();
+        let bin = home.join(".skillhub/runtime/bin");
+        let before = cli_recovery_paths(&bin);
+        let digest = super::sha256_hex(&fs::read(&source).unwrap());
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!super::sweep_cli_runtime_residue_at(&bin, &digest).is_empty());
+        assert_eq!(cli_recovery_paths(&bin), before);
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
+        let alias = home.join("bin-link");
+        symlink(&bin, &alias).unwrap();
+        assert!(!super::sweep_cli_runtime_residue_at(&alias, &digest).is_empty());
+        assert_eq!(cli_recovery_paths(&bin), before);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn cli_residue_identity_check_rejects_replaced_path() {
+        let home = fixture();
+        fs::create_dir_all(&home).unwrap();
+        let path = home.join("residue");
+        fs::write(&path, b"old").unwrap();
+        let handle = File::open(&path).unwrap();
+        let opened = handle.metadata().unwrap();
+        fs::rename(&path, home.join("retained")).unwrap();
+        fs::write(&path, b"new").unwrap();
+        assert!(!super::cli_residue_same_file(
+            &opened,
+            &fs::symlink_metadata(&path).unwrap()
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        fs::remove_dir_all(home).unwrap();
+    }
+
     #[test]
     fn cli_installed_from_dmg_survives_source_removal_and_healthy_fallback() {
         let home = fixture();
@@ -6436,7 +7349,8 @@ mod tests {
         let source = home.join("Volumes/SkillHub/一探 SkillHub.app/Contents/MacOS/skillhub");
         write_cli_source_at(&source, env!("CARGO_PKG_VERSION"));
         let installed = install_and_probe_cli_at(&home, &source, env!("CARGO_PKG_VERSION"))
-            .expect("install and verify CLI from DMG source");
+            .expect("install and verify CLI from DMG source")
+            .0;
         let private_launcher = home
             .join(".skillhub/runtime/bin")
             .join(PRIVATE_CLI_LAUNCHER_NAME);
@@ -6465,7 +7379,8 @@ mod tests {
         }
         assert_eq!(
             install_and_probe_cli_at(&home, &source, env!("CARGO_PKG_VERSION"))
-                .expect("healthy installed CLI must survive a failed refresh"),
+                .expect("healthy installed CLI must survive a failed refresh")
+                .0,
             installed
         );
         fs::remove_dir_all(home).expect("remove fixture");
@@ -6704,6 +7619,26 @@ mod tests {
             assert!(
                 MAX_RUNTIME_JSON_BYTES
                     >= SERVER_MAX_ENV_COUNT * SERVER_MAX_VALUE_BYTES + JSON_OVERHEAD_BUDGET
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn revoked_team_runtime_explains_that_the_local_skill_is_not_shared() {
+        for message in [
+            "Skill access is no longer available",
+            "Skill not found",
+            "A selected Team source is no longer available",
+        ] {
+            let response = tauri::http::Response::builder()
+                .status(409)
+                .body(serde_json::to_vec(&serde_json::json!({ "error": message })).unwrap())
+                .unwrap();
+            assert_eq!(
+                super::parse_response::<serde_json::Value>(response.into())
+                    .await
+                    .unwrap_err(),
+                "该 Skill 已不在团队中共享，团队钥匙不可用"
             );
         }
     }

@@ -170,6 +170,27 @@ test('an upload that lands while a pass is reading is not overwritten by the sta
   })
 })
 
+test('a personal source copy skips automatic paid generation but may upload its own image', async () => {
+  await withBridge([{ ...local, copiedFromSource: true }], {
+    list: async () => [],
+    custom: () => listItem({ avatarUrl: CUSTOM, avatarStatus: 'ready', avatarSource: 'custom' }),
+  }, async (counters, space) => {
+    await pass(space)
+    assert.equal(counters.ensures, 0)
+    assert.equal(avatars.canChangeSkillAvatar(stored('managed'), 'owner'), true)
+    const result = await avatars.uploadCustomSkillAvatar(stored('managed'), image, 'owner', space, () => true)
+    assert.equal(result.status, 'applied')
+    assert.equal(counters.ensures, 0)
+  })
+})
+
+test('a legacy personal skill without the explicit copy marker still generates an avatar', async () => {
+  await withBridge([{ ...local, copiedFromSource: false }], { list: async () => [] }, async (counters, space) => {
+    await pass(space)
+    assert.equal(counters.ensures, 1)
+  })
+})
+
 test('a restore that lands while a pass is reading is not overwritten by the stale custom snapshot', async () => {
   const list = gate()
   // Signed in again: the cached custom image is not yet bound to this account, so the pass would write it back.

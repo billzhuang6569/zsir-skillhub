@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '../db.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { AttemptLimiter } from '../lib/attempt-limiter.js'
+import { avatarRegistrationLimiter } from '../lib/avatar-generation.js'
 import {
   AVATAR_CUSTOM_ACTIVE, AvatarError, avatarAliasesByAvatar, avatarDto, ensureSkillAvatar, resolveAvatarKey,
   restoreGeneratedAvatar, retryFailedAvatar, uploadCustomAvatar,
@@ -151,7 +152,7 @@ export const skillAvatarRoutes: FastifyPluginAsync = async (fastify): Promise<vo
   fastify.post('/local', async (request: FastifyRequest<{ Body: z.infer<typeof LocalBody> }>, reply: FastifyReply): Promise<FastifyReply> => {
     const body = LocalBody.safeParse(request.body)
     if (!body.success) return reply.badRequest('Skill 介绍或本地身份无效')
-    const retryAfter = limiter.consume(request.user.id, 60, 60 * 60 * 1_000)
+    const retryAfter = avatarRegistrationLimiter.consume(request.user.id, 60, 60 * 60 * 1_000)
     if (retryAfter !== null) return reply.header('Retry-After', retryAfter).code(429).send({ error: '头像请求过于频繁', code: 'AVATAR_RATE_LIMITED' })
     const { localSkillId, aliasLocalIds, skillId, ...input } = body.data
     const avatar = await ensureSkillAvatar({ ownerId: request.user.id, localSkillId, aliasLocalIds, skillId, input })

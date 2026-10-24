@@ -122,7 +122,7 @@ test('dialog focus trap, Escape, outside click and double-submit guards do not r
   const confirm = source('src/components/ConfirmModal.tsx')
   assert.match(confirm, /onEscape=\{onCancel\} escapeDisabled=\{busy\}/)
   assert.match(confirm, /<button className="btn btn-ghost" onClick=\{onCancel\} disabled=\{busy\}>取消<\/button>/)
-  assert.match(confirm, /className=\{`btn \$\{destructive \? 'btn-danger' : 'btn-primary'\}`\} onClick=\{onConfirm\} disabled=\{busy\}>\{busy \? '处理中…' : confirmLabel\}/)
+  assert.match(confirm, /className=\{`btn \$\{destructive \? 'btn-danger' : 'btn-primary'\}`\} onClick=\{onConfirm\} disabled=\{busy \|\| confirmDisabled\}>\{busy \? '处理中…' : confirmLabel\}/)
 
   assert.match(source('src/components/FeedbackDialog.tsx'), /onEscape=\{\(\) => !busy && onClose\(\)\} escapeDisabled=\{busy\} closeOnBackdrop/)
   assert.match(source('src/components/AppUpdateDialog.tsx'), /onEscape=\{dismissAppUpdate\} escapeDisabled=\{busy\}/)

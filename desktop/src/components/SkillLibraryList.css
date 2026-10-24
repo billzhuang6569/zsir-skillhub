@@ -26,11 +26,11 @@
   min-width: 0;
   min-height: 64px;
   display: grid;
-  grid-template-columns: var(--skill-library-avatar-size) minmax(0, 1fr) auto 14px;
+  grid-template-columns: var(--skill-library-avatar-size) minmax(0, 1fr) 220px 14px;
   grid-template-areas:
-    "avatar name name chevron"
+    "avatar name side chevron"
     "avatar text side chevron"
-    "avatar desc desc chevron";
+    "avatar desc side chevron";
   align-items: center;
   column-gap: var(--space-3);
   row-gap: 0;
@@ -84,7 +84,7 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
   .skill-library-row.leaving { animation: none; opacity: 0; }
 }
 
-/* SkillAvatar 52 inside a 56px frame: the 2px margin carries the team-shared ring. */
+/* A 44px avatar inside a 48px frame leaves 2px for the static team-shared ring. */
 .skill-library-avatar-wrap {
   grid-area: avatar;
   position: relative;
@@ -95,13 +95,8 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
   overflow: hidden;
   border-radius: calc(var(--radius-md) + 2px);
 }
-.skill-library-avatar-wrap.team-shared::before {
-  content: '';
-  position: absolute;
-  inset: -50%;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, var(--color-brand-tint), var(--color-brand), var(--color-brand-strong), var(--color-brand-tint));
-  animation: shared-avatar-ring 4s linear infinite;
+.skill-library-avatar-wrap.team-shared {
+  box-shadow: inset 0 0 0 2px var(--color-brand);
 }
 .skill-library-avatar-wrap.downloading > .skill-library-avatar { filter: grayscale(1); opacity: .48; }
 .skill-avatar-color-reveal [data-skill-avatar="placeholder"] svg { color: var(--color-brand); }
@@ -124,10 +119,6 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
   line-height: 0;
 }
 .skill-library-avatar > svg { display: block; }
-@keyframes shared-avatar-ring { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .skill-library-avatar-wrap.team-shared::before { animation: none; background: linear-gradient(135deg, var(--color-brand-tint), var(--color-brand)); }
-}
 
 .skill-library-copy { display: contents; }
 .skill-library-name-row { grid-area: name; display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 18px; }
@@ -161,7 +152,7 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
 .skill-library-desc {
   grid-area: desc;
   display: block;
-  margin-top: 3px;
+  margin-top: 1px;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -195,7 +186,7 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
 .skill-library-system-state { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; color: var(--color-brand); font-size: var(--font-size-caption); font-weight: 650; line-height: var(--line-height-caption); }
 /* Wide list: trailing column, Agent icons over the problem badge. */
 /* Agent icons sit on line 2, after the friendly name (user 2026-10-14). */
-.skill-library-side { grid-area: side; display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; max-width: 220px; }
+.skill-library-side { grid-area: side; display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; width: 220px; align-self: center; }
 .skill-library-agents { display: flex; align-items: center; gap: var(--space-1); }
 .skill-library-agent { position: relative; display: block; width: 22px; height: 22px; }
 .skill-library-agent .agent-brand-icon { border-radius: 7px; box-shadow: inset 0 0 0 1px var(--color-line); }
@@ -247,6 +238,8 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
   backdrop-filter: blur(18px);
 }
 .skill-context-menu { max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; }
+.skill-context-menu > button.team-unshare { color: var(--color-danger); }
+.skill-context-menu > hr { border: 0; border-top: 1px solid var(--color-border); margin: 4px 0; }
 .skill-context-menu > button,
 .skill-context-submenu > button {
   width: 100%;
@@ -285,7 +278,8 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
 /* Narrow Skill browser (list column clamp(360px, 34vw, 460px)): the badges lead line 2,
    the description takes what is left of that one line. Row height is 56–60px with v0.29 type sizes. */
 @container skill-library (max-width: 560px) {
-  .skill-library-row { padding-inline: var(--space-3); }
+  .skill-library-row { grid-template-columns: var(--skill-library-avatar-size) minmax(0, 1fr) 112px 14px; padding-inline: var(--space-3); }
+  .skill-library-side { width: 112px; }
   .skill-library-agent:nth-child(n + 4) { display: none; }
   .skill-library-subtitle { max-width: 100%; }
 }

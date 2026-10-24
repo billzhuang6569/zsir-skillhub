@@ -1,11 +1,11 @@
 import type { CSSProperties } from 'react'
 import {
   ArrowDownToLine, ArrowRight, BadgeCheck, Bell, Bot, Box, Calendar, Camera, Check, ChevronDown,
-  ChevronLeft, ChevronRight, Clock, Cloud, Copy, Download, Ellipsis, Eye, FileText, Flame, Folder,
+  ChevronLeft, ChevronRight, Clock, Cloud, Copy, CopyPlus, Download, Ellipsis, Eye, FileText, Flame, Folder,
   Image, Info, Key, KeyRound, LayoutGrid, Link, List, Lock, LockOpen, MessageCircle, MonitorDown,
   Package, Plus, RotateCcwClock, RotateCw, Search, Send, Server, Settings, Share2, Shield,
   ShieldCheck, ShoppingBag, Sparkle, Sparkles, Star, Tag, Terminal, Trash, TrendingUp, TriangleAlert,
-  User, UserRound, Users, UsersRound, Wrench, X, Zap,
+  User, UserRound, Users, UsersRound, Wrench, X, Zap, Upload, RefreshCw,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -19,11 +19,11 @@ import { Laptop, CircleAlert, Funnel, Sun, Moon, Monitor, Type, Code, Inbox, AtS
 type LegacyIconName = 'shared-skills'
 
 export type IconName =
-  | 'search' | 'bell' | 'user' | 'gear' | 'box' | 'team' | 'market' | 'plus'
+  | 'search' | 'bell' | 'user' | 'gear' | 'box' | 'team' | 'market' | 'plus' | 'upload' | 'refresh-cw'
   | 'chev' | 'check' | 'x' | 'warn' | 'wrench' | 'refresh' | 'left' | 'folder'
   | 'server' | 'shield' | 'clock' | 'send' | 'link' | 'key' | 'import' | 'more'
   | 'info' | 'msg' | 'share' | 'hist' | 'term' | 'doc' | 'image' | 'copy' | 'spark' | 'eye' | 'skills' | 'trash'
-  | 'grid' | 'list' | 'cloud' | 'camera'
+  | 'grid' | 'list' | 'cloud' | 'camera' | 'copy-plus'
   | 'star' | 'badge-check' | 'flame' | 'sparkles' | 'key-round' | 'trending-up' | 'users-round' | 'download'
   | 'right' | 'arrow-right' | 'user-round' | 'package' | 'calendar' | 'tag'
   // Tan Skillhub Design System (Iconography) and #255 key / credential states.
@@ -35,6 +35,8 @@ export type IconName =
 /** Name → Lucide component. Typed over every non-legacy name, so a missing entry fails `tsc`. */
 export const LUCIDE_ICONS: Record<Exclude<IconName, LegacyIconName>, LucideIcon> = {
   search: Search,
+  upload: Upload,
+  'refresh-cw': RefreshCw,
   bell: Bell,
   user: User,
   gear: Settings,
@@ -66,6 +68,7 @@ export const LUCIDE_ICONS: Record<Exclude<IconName, LegacyIconName>, LucideIcon>
   doc: FileText,
   image: Image,
   copy: Copy,
+  'copy-plus': CopyPlus,
   spark: Sparkle,
   eye: Eye,
   skills: Box,

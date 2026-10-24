@@ -284,6 +284,12 @@ describe('server config schema', () => {
       expect(configSchema.safeParse({ ...baseEnvironment, ...invalid }).success, JSON.stringify(invalid)).toBe(false)
     }
   })
+  it.each(['selfhost', 'yitan-official'])('%s reserves a user AI slot with the default background-analysis configuration', SKILLHUB_PROFILE => {
+    const defaults = configSchema.parse({ ...baseEnvironment, SKILLHUB_PROFILE })
+    expect(defaults.AI_MAX_CONCURRENT).toBe(2)
+    expect(defaults.SKILL_AVATAR_GENERATE_CONCURRENCY).toBeLessThan(defaults.AI_MAX_CONCURRENT)
+    expect(configSchema.parse({ ...baseEnvironment, SKILLHUB_PROFILE, AI_MAX_CONCURRENT: '1' }).AI_MAX_CONCURRENT).toBe(1)
+  })
   it('uses production-oriented defaults without an authentication bypass', () => {
     const result = configSchema.parse(baseEnvironment)
     expect(result.REGISTRATION_MODE).toBe('invite')

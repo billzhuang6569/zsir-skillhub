@@ -1,3 +1,15 @@
+.settings-page { max-width: 1080px; display: grid; grid-template-columns: 156px minmax(0, 1fr); gap: var(--space-5); }
+.settings-content { min-width: 0; }
+.settings-content [data-settings-section] { scroll-margin-top: var(--space-4); }
+.settings-nav { position: sticky; top: var(--space-4); align-self: start; display: grid; gap: var(--space-1); }
+.settings-nav button { min-height: 34px; padding: 6px var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-muted); font: inherit; font-size: var(--font-size-caption); text-align: left; cursor: pointer; }
+.settings-nav button:hover { background: var(--color-hover); color: var(--color-ink); }
+.settings-nav button.active { background: var(--color-brand-tint); color: var(--color-brand); font-weight: 650; }
+.settings-nav button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.settings-content .settings-row > .agent-runtime-notice { width: 100%; }
+@media (max-width: 850px) { .settings-page { display: block; } .settings-nav { display: none; } }
+@media (prefers-reduced-motion: reduce) { .app-main { scroll-behavior: auto; } }
+
 .settings-choice-row { min-height: 68px; flex-wrap: wrap; row-gap: var(--space-2); }
 .settings-choice-row > .settings-row-info { flex: 1 1 200px; }
 
@@ -151,11 +163,15 @@
 .agent-runtime-notice span { display: block; }
 .agent-runtime-notice b { color: var(--color-ink); font-size: 11.5px; }
 .agent-runtime-notice span { margin-top: 1px; overflow: hidden; color: var(--color-muted); font-size: var(--font-size-caption); text-overflow: ellipsis; white-space: nowrap; }
+.cli-path-notice span, .cli-path-notice code { display: block; white-space: normal; overflow-wrap: anywhere; }
 .agent-runtime-notice small { display: block; margin-top: 2px; overflow: hidden; color: var(--color-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-runtime-notice.danger { border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 9%, transparent); }
 .agent-runtime-notice.danger > svg { color: var(--color-danger); }
 .agent-runtime-notice.warning { border-color: color-mix(in srgb, var(--color-warning) 30%, transparent); background: var(--color-warning-tint); }
 .agent-runtime-notice.warning > svg { color: var(--color-warning); }
+.cli-storage-notice { grid-template-columns: 18px minmax(0, 1fr); }
+.cli-storage-notice span, .cli-storage-notice small { white-space: normal; overflow-wrap: anywhere; }
+.cli-storage-notice > button { grid-column: 2; justify-self: start; }
 
 .trash-group { overflow: hidden; }
 

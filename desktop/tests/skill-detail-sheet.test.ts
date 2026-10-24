@@ -182,7 +182,7 @@ test('a remote-only team Skill asks for installation before reading local key st
 })
 test('remote package installation preserves its complete team and catalog identity', () => {
   assert.match(component, /resolveSkillFromSources\(skillId, skills, marketplaceSkills\)/)
-  assert.match(component, /const marketplaceInstall = isMarketplaceCatalogSource\(skill\)[\s\S]*?marketplaceInstall\s*\? await apiDownloadMarketplacePackage\(skill\.serverId\)\s*: await apiDownloadSkillPackage\(skill\.serverId\)/)
+  assert.match(component, /const marketplaceInstall = isMarketplaceCatalogSource\(skill\)[\s\S]*?marketplaceInstall\s*\? await apiDownloadMarketplacePackage\(skill\.serverId\)\s*: await apiDownloadSkillPackage\(skill\.serverId, installSpace, skill\.teamSharedFrom\)/)
   assert.match(component, /packageData\.sha256\.toLowerCase\(\) !== skill\.marketplacePackageSha256\.toLowerCase\(\)/)
   assert.match(component, /const downloadedSkill = \{ \.\.\.skill, installCount: skill\.installCount \+ 1 \}/)
   assert.match(component, /teamIds: Object\.keys\(skill\.sharedTo\)/)
@@ -223,9 +223,9 @@ test('public Marketplace details never fall through to private source, comment, 
 
 test('read-only source and version requests require a current-account binding before calling Server', () => {
   assert.match(component, /const readableServerId = currentUser[^]*currentAccountServerId\(skill, currentUser\.id\)/)
-  assert.match(component, /apiGetSkillSource\(readableServerId\)/)
+  assert.match(component, /apiGetSkillSource\(readableServerId, undefined, skill.teamSharedFrom\)/)
   assert.match(component, /const remoteServerId = currentUser && !publicMarketplaceSource[^]*currentAccountServerId\(skill, currentUser\.id\)/)
-  assert.match(component, /apiGetSkillVersions\(remoteServerId\)/)
+  assert.match(component, /apiGetSkillVersions\(remoteServerId, skill.teamSharedFrom\)/)
   assert.doesNotMatch(component, /apiGetSkillVersions\(skill\.serverId\)/)
 })
 
@@ -498,7 +498,7 @@ test('Narrow document headers wrap their actions instead of overflowing the pane
 })
 
 test('header problem icon (#289): 28px red circle-alert with a non-modal 问题详情 popover, repair and diagnostics', () => {
-  assert.match(component, /<div className="sh-title-row"><h2 className="sh-store-title">[^]*<\/h2>\{problem\}<\/div>/)
+  assert.match(component, /<div className="sh-title-actions">[^]*?<SkillQuickAccessButton skill=\{skill\} \/>\}\s*\{problemButton\}/)
   assert.match(component, /className="sh-problem-button" aria-label=\{`有 \$\{count\} 个问题，查看详情`\} aria-expanded=\{open\} aria-haspopup="dialog"/)
   assert.match(component, /<Icon name="circle-alert" size=\{16\} \/>/)
   assert.match(component, /className="sh-problem-popover" role="dialog" aria-modal="false" aria-label="问题详情">/)

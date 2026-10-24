@@ -62,7 +62,7 @@ test('the hot components subscribe through the shallow selectors and refresh sin
   assert.match(page, /const skillsRefreshing = isLoadingSkills \|\| cloudLoading/)
   assert.doesNotMatch(page, /skills-cloud-loading|同步云端资料/)
   // One in-flight owned request per account is shared by overlapping native refreshes.
-  assert.match(page, /const inFlight = ownedInFlightRef\.current\s*\n\s*if \(inFlight && inFlight\.userId === expectedUserId\) return inFlight\.request/)
+  assert.match(page, /ownedInFlightRef\.current\?\.userId === expectedUserId \? ownedInFlightRef\.current\.request : null/)
   // The render gate is unchanged, so a settled local phase shows both tabs (list, or empty state) while the cloud is pending.
   assert.match(page, /\{isLoadingSkills && !\(skillTab !== 'local' && managedSkills\.length > 0\) \? \(/)
   // Earlier validation is carried over only for Skills this session already proved, never created here.
