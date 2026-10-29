@@ -89,7 +89,7 @@ test('a Marketplace download adds one real local asset without replacing the cat
 test('account session changes downgrade local and catalog Marketplace authorization first', () => {
   assert.match(
     storeSource,
-    /setAuthSession:[\s\S]*?skills: sameSession \? state\.skills\.map\(skill => skillForAvatarAccount\(skill, currentUser.id\)\) : \[\],[\s\S]*?marketplaceSkills: state\.marketplaceSkills\.map\(downgradeMarketplaceAuthorization\)/,
+    /setAuthSession:[\s\S]*?skills: sameSession \? shareList\(state.skills, state\.skills\.map\(skill => skillForAvatarAccount\(skill, currentUser.id\)\), skill => skill.id\) : \[\],[\s\S]*?marketplaceSkills: state\.marketplaceSkills\.map\(downgradeMarketplaceAuthorization\)/,
   )
   assert.match(
     storeSource,

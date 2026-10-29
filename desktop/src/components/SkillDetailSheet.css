@@ -60,9 +60,11 @@
 }
 
 .sh-head {
+  container-type: inline-size;
   padding: var(--space-5) var(--space-6) 0;
   position: relative;
   flex: none;
+  z-index: 1;
   background: var(--color-surface);
 }
 .sh-close {
@@ -186,6 +188,12 @@
   align-items: flex-end;
   flex: none;
 }
+.sh-create-version { white-space: nowrap; }
+@container (max-width: 480px) {
+  .sh-id { flex-wrap: wrap; }
+  .sh-idtx { flex-basis: calc(100% - 64px - var(--space-5)); }
+  .sh-act { flex-basis: 100%; }
+}
 
 /* Tabs */
 .sh-tabs {
@@ -215,11 +223,20 @@
   white-space: nowrap;
 }
 .sh-tab > svg { flex: none; }
+.sh-tab-change-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-brand);
+}
 .sh-tab-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-pill); background: var(--color-warning-tint); color: var(--color-warning); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sh-tab:hover { color: var(--color-ink); }
 .sh-tab.on { color: var(--color-ink); border-color: var(--color-brand); }
 .sh-tab:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -2px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
 .sh-body {
+  position: relative;
+  z-index: 0;
   flex: 1;
   overflow-y: auto;
   padding: var(--space-5) var(--space-6) var(--space-8);

@@ -128,12 +128,12 @@ test('SkillRow (#289, v0.29 type sizes): 44px ringed avatar, name line, 友好�
   assert.doesNotMatch(list, /skill-library-category/)
   assert.doesNotMatch(list, /skill-library-problem/)
   const row = rule(listCss, '.skill-library-row')
-  // 6px + 18px name + 16px text + 3px + 16px description + 6px = 65px with a description; the row floor is 64px.
+  // Reserve the 20px badge height even without badges; rows have a 64px floor without a description and are 65px with one.
   // Type sizes stay at the v0.29 values (13.5px name, 11px subtitle / description): the design tokens read too large here.
   assert.match(row, /padding: 6px var\(--space-4\);/)
   assert.match(row, /row-gap: 0;/)
   assert.match(listCss, /--skill-library-avatar-size: 48px;/)
-  assert.match(rule(listCss, '.skill-library-name-row'), /min-height: 18px;/)
+  assert.match(rule(listCss, '.skill-library-name-row'), /flex-wrap: nowrap;[^]*min-height: 20px;[^]*overflow: hidden;/)
   const text = rule(listCss, '.skill-library-text')
   assert.match(text, /min-height: 16px;[^]*white-space: nowrap;/)
   assert.match(rule(listCss, '.skill-library-desc'), /text-overflow: ellipsis;/)
@@ -141,9 +141,9 @@ test('SkillRow (#289, v0.29 type sizes): 44px ringed avatar, name line, 友好�
   assert.match(row, /contain-intrinsic-size: auto 70px;/)
   assert.match(row, /min-height: 64px;/)
   assert.match(row, /transition-duration: var\(--motion-base\);/)
-  // The fixed trailing column spans all copy rows so an update button cannot change their heights.
+  // The name owns the first line; trailing controls share only the subtitle and description lines.
   assert.match(row, /grid-template-columns: var\(--skill-library-avatar-size\) minmax\(0, 1fr\) 220px 14px;/)
-  assert.match(row, /grid-template-areas:\n\s*"avatar name side chevron"\n\s*"avatar text side chevron"\n\s*"avatar desc side chevron";/)
+  assert.match(row, /grid-template-areas:\n\s*"avatar name name chevron"\n\s*"avatar text side chevron"\n\s*"avatar desc side chevron";/)
   assert.match(rule(listCss, '.skill-library-side'), /width: 220px; align-self: center;/)
   assert.match(listCss, /@container skill-library \(max-width: 560px\) \{[^}]*grid-template-columns: var\(--skill-library-avatar-size\) minmax\(0, 1fr\) 112px 14px;/)
   assert.match(listCss, /container: skill-library \/ inline-size;/)
@@ -168,6 +168,12 @@ test('row badges: muted mono version text, 待确认/已修改 pills, system bra
   assert.match(rule(listCss, '.skill-library-version-text'), /color: var\(--color-muted\);/)
   assert.match(list, /\{skill\.versionStatus === 'pending' && <span className="skill-library-version">待确认<\/span>\}/)
   assert.match(list, /\{skill\.hasWorkingCopy && <span className="skill-library-version">已修改<\/span>\}/)
+  const nameRow = list.slice(list.indexOf('<span className="skill-library-name-row">'), list.indexOf('{/* Line 2:'))
+  assert.match(nameRow, /\{sourceLabel && <span className="skill-library-version">\{sourceLabel\}<\/span>\}/)
+  assert.equal(list.match(/className="skill-library-desc"/g)?.length, 1)
+  assert.match(rule(listCss, '.skill-library-desc'), /grid-area: desc;/)
+  assert.match(rule(listCss, '.skill-library-name-row strong'), /min-width: 0;[^]*text-overflow: ellipsis;[^]*white-space: nowrap;/)
+  assert.match(rule(listCss, '.skill-library-version,\n.skill-library-system'), /flex: none;[^]*white-space: nowrap;/)
   assert.match(rule(listCss, '.skill-library-version,\n.skill-library-system'), /border-radius: var\(--radius-pill\);[^]*font-size: var\(--font-size-caption\);/)
   assert.match(listCss, /\n\.skill-library-system \{ border-color: transparent; background: var\(--color-brand-tint\); color: var\(--color-brand\); \}/)
   assert.match(rule(listCss, '.skill-library-agent.on .skill-library-agent-state'), /background: var\(--color-success\);/)

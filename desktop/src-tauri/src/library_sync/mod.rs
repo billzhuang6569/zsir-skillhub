@@ -1028,14 +1028,22 @@ pub async fn record_skill_formal_version(
     skill_id: String,
     version_id: String,
     git_hash: Option<String>,
+    frozen_token: Option<String>,
 ) -> Result<(), String> {
     in_background(move || {
         crate::commands::validate_skill_id_for_lock(&skill_id)?;
         uuid::Uuid::parse_str(&version_id).map_err(|_| "正式版本标识无效")?;
         let initial = signed_in_session().map_err(|e| e.message())?;
+        if let Some(token) = frozen_token.as_deref() {
+            let _lock = lock_skill_dir_at(&crate::skillhub_dir(), &skill_id)?;
+            let _lease = acquire_current_session_lease(&initial)?.ok_or("账号已切换")?;
+            let frozen = crate::commands::frozen_version::checked(token, &skill_id)?;
+            // The existing account binding API requires the current library card.
+            frozen.require_matching_working_tree(&crate::skills_dir().join(&skill_id))?;
+        }
         let initial_profile = library_read_profile_readonly(&crate::skills_dir().join(&skill_id))?;
         if initial_profile.library_account_id.as_deref() == Some(initial.user_id()) {
-            let report = match block_on(run_sync(false))? {
+            let report = match block_on(run_sync_for_session(initial.clone(), false, None))? {
                 Err(SyncError::Busy) => SyncReport::default(),
                 other => other.map_err(|e| e.message())?,
             };
@@ -1056,6 +1064,15 @@ pub async fn record_skill_formal_version(
         let _lock = lock_skill_dir_at(&crate::skillhub_dir(), &skill_id)?;
         let _lease = acquire_current_session_lease(&session)?.ok_or("账号已切换")?;
         let path = crate::skills_dir().join(&skill_id);
+        let frozen = frozen_token
+            .as_deref()
+            .map(|token| crate::commands::frozen_version::checked(token, &skill_id))
+            .transpose()?;
+        let git_hash = frozen
+            .as_ref()
+            .map(|f| f.record_hash(&path))
+            .transpose()?
+            .or(git_hash);
         let mut sidecar = library_read_profile(&path)?;
         if sidecar
             .library_account_id
@@ -1198,6 +1215,9 @@ pub async fn record_skill_formal_version(
             .get(&hash)
             .map(|m| m.original_label.clone())
             .unwrap_or_else(|| formal.aliases.first().cloned().unwrap_or(formal.version));
+        if let Some(frozen) = frozen.as_ref().filter(|f| f.hash == hash) {
+            frozen.activate(&path)?;
+        }
         sidecar.version_metadata.commits.insert(
             hash,
             crate::version_policy::CommitVersion {

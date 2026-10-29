@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useStore } from '../store/index.js'
+import { useShallow } from 'zustand/react/shallow'
 import SkillLibraryList from '../components/SkillLibraryList.js'
 import SkillTagGroups from '../components/SkillTagGroups.js'
 import { allTags, skillOrganizerKey } from '../lib/skill-organizer.js'
@@ -51,7 +52,7 @@ import {
   libraryListEntries, librarySyncStatus,
   listLastRunFailures,
 } from '../lib/tauri.js'
-import { apiGetMySkills, apiImportSkill, apiGetTeams, apiGetTeamSkills } from '../lib/api.js'
+import { ApiError, apiGetMySkills, apiImportSkill, apiGetTeams, apiGetTeamSkills, sameSpace } from '../lib/api.js'
 import { mergeSkillSources } from '../lib/skills.js'
 import {
   isTeamSharedSkill, sameEnvKeySummary, summarizeRequiredEnvRows, type EnvKeySummary, locallyManagedSkillNames, unmanagedLocalSkills, isGenericLocalSkill, mapSettledWithConcurrency, matchesAgentInstallation, orderSkills, orderSkillsByName, reconcileAgentFilter, type SkillSortPreference,
@@ -203,11 +204,20 @@ export default function SkillsPage() {
     isLoadingSkills, setLoadingSkills, sheet, openSkillSheet, closeSheet,
     localSkillPreview, setLocalSkillPreview, localImportRequestId, clearLocalSkillImportRequest,
     agentCapabilities, agentDetectionStatus,
-  } = useStore()
+  } = useStore(useShallow(state => ({
+    skills: state.skills, setSkills: state.setSkills, skillTab: state.skillTab, setSkillTab: state.setSkillTab, setView: state.setView,
+    searchQuery: state.searchQuery, setSearchQuery: state.setSearchQuery, categoryFilter: state.categoryFilter, setCategoryFilter: state.setCategoryFilter,
+    currentUser: state.currentUser, authStatus: state.authStatus, teams: state.teams, isLoadingSkills: state.isLoadingSkills,
+    setLoadingSkills: state.setLoadingSkills, sheet: state.sheet, openSkillSheet: state.openSkillSheet, closeSheet: state.closeSheet,
+    localSkillPreview: state.localSkillPreview, setLocalSkillPreview: state.setLocalSkillPreview, localImportRequestId: state.localImportRequestId,
+    clearLocalSkillImportRequest: state.clearLocalSkillImportRequest, agentCapabilities: state.agentCapabilities, agentDetectionStatus: state.agentDetectionStatus,
+  })))
+  const activeSpace = useStore(state => state.activeSpace)
   const [agentLocalSkills, setUnmanagedSkills] = useState<UnmanagedSkill[]>([])
   const [keptLocalState, setKeptLocal] = useState<{ userId: string; items: KeptLocalSkill[] } | null>(null)
   const keptLocal = keptLocalState?.userId === currentUser?.id ? keptLocalState?.items ?? [] : []
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadError = useStore(state => state.skillsListError)
+  const setLoadError = useStore(state => state.setSkillsListError)
   // The cloud phase of a load has its own indicator: local tabs never wait for it.
   const [cloudLoading, setCloudLoading] = useState(false)
   const skillSortPreference = useStore((state) => state.skillSortPreference)
@@ -217,7 +227,7 @@ export default function SkillsPage() {
   // while the previous cloud answer is still pending reuses it instead of
   // issuing another request; its own generation decides whether to publish it.
   const teamSourcesRef = useRef<{ userId: string; space: SpaceHandle | null; expires: number; request: Promise<{ teamId: string; skills: ApiSkill[] | null }[]> } | null>(null)
-  const ownedInFlightRef = useRef<{ userId: string; request: Promise<ApiSkill[]> } | null>(null)
+  const ownedInFlightRef = useRef<{ userId: string; space: SpaceHandle | null; request: Promise<ApiSkill[]> } | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [importStep, setImportStep] = useState<ImportStep>('select')
   const [importError, setImportError] = useState<string | null>(null)
@@ -271,51 +281,63 @@ export default function SkillsPage() {
     const expectedUserId = currentUser?.id ?? null
     const expectedSpace = useStore.getState().activeSpace
     const generation = ++loadGenerationRef.current
-    const current = (): boolean => useStore.getState().activeSpace === expectedSpace && generation === loadGenerationRef.current
+    const current = (): boolean => (useStore.getState().activeSpace === expectedSpace || sameSpace(useStore.getState().activeSpace, expectedSpace)) && generation === loadGenerationRef.current
       && (useStore.getState().currentUser?.id ?? null) === expectedUserId
-    if (!silent) setLoadingSkills(true)
-    setLoadError(null)
+    if (!silent && useStore.getState().skills.length === 0) setLoadingSkills(true)
+    let teamRefreshFailed = false
     const ownedRequest = expectedUserId ? async (): Promise<ApiSkill[]> => {
       let catalog = teamSourcesRef.current
-      if (!catalog || catalog.userId !== expectedUserId || catalog.space !== expectedSpace || catalog.expires < Date.now() || !silent) {
+      if (!catalog || catalog.userId !== expectedUserId || !sameSpace(catalog.space, expectedSpace) || catalog.expires < Date.now() || !silent) {
         catalog = { userId: expectedUserId, space: expectedSpace, expires: Date.now() + 30_000,
           request: apiGetTeams(expectedSpace ?? undefined).then(teams => Promise.all(teams.map(async team => ({
-            teamId: team.id, skills: await apiGetTeamSkills(team.id, expectedSpace ?? undefined).catch(() => null),
+            teamId: team.id, skills: await apiGetTeamSkills(team.id, expectedSpace ?? undefined).catch((error: unknown) =>
+              error instanceof ApiError && [403, 404].includes(error.status ?? 0) ? [] : null),
           })))) }
         teamSourcesRef.current = catalog
       }
-      let request = ownedInFlightRef.current?.userId === expectedUserId ? ownedInFlightRef.current.request : null
+      let request = ownedInFlightRef.current?.userId === expectedUserId && sameSpace(ownedInFlightRef.current.space, expectedSpace) ? ownedInFlightRef.current.request : null
       if (!request) {
         request = apiGetMySkills(expectedSpace ?? undefined).finally(() => {
           if (ownedInFlightRef.current?.request === request) ownedInFlightRef.current = null
         })
-        ownedInFlightRef.current = { userId: expectedUserId, request }
+        ownedInFlightRef.current = { userId: expectedUserId, space: expectedSpace, request }
       }
       const [owned, sources] = await Promise.all([request, catalog.request.catch(() => null)])
+      teamRefreshFailed = !sources || sources.some(source => source.skills === null)
+      if (teamRefreshFailed && teamSourcesRef.current === catalog) teamSourcesRef.current = null
       if (sources) { mergeContext.teamSources = sources; mergeContext.membershipsValidated = true }
       return owned
     } : null
     const mergeContext = { accountUserId: currentUser?.id, selfhost: capabilities.profile === 'selfhost', activeTeamId: null, membershipsValidated: false, teamSources: [] as { teamId: string; skills: ApiSkill[] | null }[] }
     const publishMerged = (merged: LocalSkill[]): void => {
       const state = useStore.getState()
-      if (state.sheet?.kind === 'skill' && state.sheet.skillId.startsWith('library:')) {
-        const entryId = state.sheet.skillId.slice('library:'.length)
-        const landed = merged.find(skill => skill.localPath && skill.libraryAccountId === expectedUserId && skill.libraryEntryId === entryId)
-        if (landed) state.openSkillSheet(landed.id, state.sheet.tab)
-      }
       setSkills([...merged.filter(skill => skill.localPath),
         ...cloudLibrarySkills([...merged, ...state.skills.filter(skill => skill.cloudDownload)], state.libraryEntries, expectedUserId, state.libraryTransfers).filter(skill => !skill.localPath)])
     }
+    const readInventory = Boolean(expectedUserId && (!silent || useStore.getState().skillsListError || useStore.getState().libraryEntries?.userId !== expectedUserId))
+    let inventoryDone = !readInventory
+    let inventoryError: string | null = null
+    let sourcesDone = false
+    let sourcesError: string | null = null
+    const report = (): void => {
+      if (!current()) return
+      if (inventoryError || sourcesError || teamRefreshFailed) setLoadError('未能刷新 Skill 数据，请重试')
+      else if (inventoryDone && sourcesDone) setLoadError(null)
+    }
     try {
       // Start the lightweight inventory independently: do not wait for files or AI data.
-      if (expectedUserId && (!silent || useStore.getState().libraryEntries?.userId !== expectedUserId)) void libraryListEntries().then(list => {
-        if (generation !== loadGenerationRef.current || useStore.getState().currentUser?.id !== expectedUserId) return
+      if (readInventory) void libraryListEntries().then(list => {
+        if (!current()) return
         const state = useStore.getState()
         state.setLibraryEntries(list)
         state.setSkills([...state.skills.filter(skill => skill.localPath),
           ...cloudLibrarySkills(state.skills, list, expectedUserId, state.libraryTransfers).filter(skill => !skill.localPath)])
+        inventoryDone = true
+        report()
       }).catch(reason => {
-        if (generation === loadGenerationRef.current && useStore.getState().currentUser?.id === expectedUserId) setLoadError(`无法读取云端列表：${messageOf(reason)}`)
+        inventoryError = messageOf(reason)
+        inventoryDone = true
+        report()
       })
       let localSkills: LocalSkill[] | null = null
       if (ownedRequest) setCloudLoading(true)
@@ -334,14 +356,14 @@ export default function SkillsPage() {
             // session until the cloud answer below replaces or revokes it;
             // nothing new is marked validated here.
             if (local !== null) {
-              localSkills = local
               const previous = new Map(useStore.getState().skills.filter(skill => skill.localPath).map(skill => [skill.id, skill]))
-              publishMerged(mergeSkillSources(local, null, mergeContext).map(skill => {
+              localSkills = mergeSkillSources(local, null, mergeContext).map(skill => {
                 const known = previous.get(skill.id)
-                return known && known.serverId === skill.serverId && known.serverAccessValidatedForUserId === expectedUserId
+                return known && known.serverId === skill.serverId && (known.serverAccessValidatedForUserId === expectedUserId || known.accountSyncRequired || known.teamUnshared)
                   ? reconcileLocalSkillRefresh(known, skill)
                   : skill
-              }))
+              })
+              publishMerged(localSkills)
             }
             if (unmanaged !== null) {
               setUnmanagedSkills(unmanaged.filter((skill) => skill.name !== 'yitan-skillhub-manager'))
@@ -360,11 +382,9 @@ export default function SkillsPage() {
             publishMerged(mergeSkillSources(localSkills ?? useStore.getState().skills.filter(skill => skill.localPath), owned, mergeContext))
           },
           publishOwnedFailure: () => {
-            // Offline / slow / 401: the local list stays usable, but nothing from
-            // an earlier session is treated as validated for this read.
-            if (localSkills !== null) publishMerged(mergeSkillSources(localSkills, null, mergeContext))
+            // Keep the reconciled local/display snapshot; failure is not a grant or revocation.
           },
-          publishError: setLoadError,
+          publishError: message => { sourcesError = message; sourcesDone = true; report() },
         },
       )
       // The native phase is done; the cloud phase continues on its own so the
@@ -372,20 +392,27 @@ export default function SkillsPage() {
       if (load.cloud) void load.cloud.finally(() => { if (current()) setCloudLoading(false) })
       else if (current()) setCloudLoading(false)
     } catch (reason: unknown) {
-      if (generation === loadGenerationRef.current && (useStore.getState().currentUser?.id ?? null) === expectedUserId) {
+      if (current()) {
         setLoadError(loadFailedMessage('Skill 数据', messageOf(reason)))
       }
     } finally {
       if (current() && !silent) setLoadingSkills(false)
     }
-  }, [currentUser, capabilities.profile, setLoadingSkills, setSkills])
-  const loadCoalescer = useMemo(() => createRefreshCoalescer(runLoad), [runLoad])
+  }, [currentUser?.id, activeSpace?.spaceId, activeSpace?.generation, capabilities.profile, setLoadingSkills, setSkills])
+  const loadCoalescer = useMemo(() => createRefreshCoalescer(runLoad, 5_000,
+    JSON.stringify(['skills', activeSpace?.spaceId, activeSpace?.generation, currentUser?.id])), [runLoad])
   const loadSkills = useCallback((silent = false): Promise<void> => loadCoalescer.request(silent), [loadCoalescer])
 
   useEffect(() => {
-    void loadSkills()
-    const refresh = (): void => { void loadSkills(true) }
-    const refreshTeam = (): void => { teamSourcesRef.current = null; void loadSkills(true) }
+    void loadSkills(useStore.getState().skills.length > 0)
+    const refresh = (event: Event): void => {
+      const detail: unknown = event instanceof CustomEvent ? event.detail : null
+      if (!(detail && typeof detail === 'object' && 'reason' in detail && detail.reason === 'navigation')) {
+        loadGenerationRef.current += 1; teamSourcesRef.current = null; ownedInFlightRef.current = null; loadCoalescer.invalidate()
+      }
+      void loadSkills(true)
+    }
+    const refreshTeam = refresh
     window.addEventListener('skillhub-local-changed', refresh)
     window.addEventListener(LIBRARY_ENTRIES_CHANGED_EVENT, refresh)
     window.addEventListener('skillhub:refresh-team-shares', refreshTeam)
@@ -564,7 +591,7 @@ export default function SkillsPage() {
       window.removeEventListener('keydown', polling.resume)
       polling.stop()
     }
-  }, [loadSkills, currentUser, authStatus, enrichmentPending])
+  }, [loadSkills, currentUser?.id, authStatus, enrichmentPending])
 
   // Picks up Skills that Agents or the terminal add, edit or remove while
   // SkillHub stays visible, without waiting for the window to regain focus.
@@ -646,6 +673,7 @@ export default function SkillsPage() {
       if (sheet?.kind === 'skill') closeSheet()
       return
     }
+    if (isLoadingSkills || cloudLoading) return
     if (filtered.length === 0) {
       if (sheet?.kind === 'skill') closeSheet()
       return
@@ -655,7 +683,7 @@ export default function SkillsPage() {
       const firstSkill = filtered[0]
       if (firstSkill) openSkillSheet(firstSkill.id)
     }
-  }, [closeSheet, filtered, openSkillSheet, sheet, skillReveal, skillTab])
+  }, [closeSheet, filtered, openSkillSheet, sheet, skillReveal, skillTab, isLoadingSkills, cloudLoading])
   const filteredUnmanaged = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     // 本地 Skills carry no timestamps, so 排序 (#361) applies to the account list only.
@@ -1098,7 +1126,7 @@ export default function SkillsPage() {
             )
         ) : <>
           {managedSkills.length === 0
-            ? <EmptyManagedSkills onImport={startImport} />
+            ? loadError ? null : cloudLoading && !libraryEntries ? <SkeletonBlock layout="rows" label={LOADING_COPY.skills} /> : <EmptyManagedSkills onImport={startImport} />
             : <SkillSection selectionResetKey={JSON.stringify([searchQuery, categoryFilter, managedScope, agentFilter])} layout={skillTab === 'tags' ? 'tags' : 'list'} allSkills={managedSkills} filtering={managedFiltering} onBatch={(skills, action) => setCloudBatch(current => current ?? { skills, action })} skills={filtered} sortPreference={skillSortPreference} onSortChange={setSkillSortPreference} managedScope={managedScope} onScopeChange={setManagedScope} agents={detectedAgents} agentFilter={agentFilter} onAgentFilterChange={setAgentFilter} agentDetectionStatus={agentDetectionStatus} onRetryAgentDetection={() => void retryAgentDetection()} onClearFilters={clearManagedFilters} envKeysBySkill={envKeysBySkill} envPolicyErrorBySkill={envPolicyErrorBySkill} />}
         </>}
       </div>

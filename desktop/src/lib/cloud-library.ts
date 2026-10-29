@@ -1,6 +1,7 @@
 import type { LocalSkill } from '../store/index.js'
 import type { LibraryEntryList, LibraryTransfer } from './library-sync.js'
 import { validateSourceUrl } from './source-url.ts'
+import { reconcileSkillList } from './stable-list.ts'
 
 /** Refresh cloud enrichment while the page is visible; React owns the account-scoped lifetime. */
 export function startCloudSkillRefresh(enabled: boolean, refresh: () => void, isVisible: () => boolean,
@@ -58,17 +59,20 @@ export function cloudLibrarySkills(
     if (local) return local
     const remote = skills.find(skill => entry.serverSkillId && skill.serverId === entry.serverSkillId && skill.serverAccessValidatedForUserId === userId)
     const previous = remote ?? skills.find(skill => skill.id === `library:${entry.entryId}` && skill.libraryAccountId === userId)
+    const sameRevision = previous?.cloudDownload?.revision === entry.revision
     const transfer = transfers[entry.entryId]
     return {
-      id: `library:${entry.entryId}`, name: entry.name, displayName: remote?.displayName ?? entry.displayName,
-      description: remote ? remote.description : entry.profile?.description, category: remote ? remote.category : entry.profile?.category,
-      sourceUrl: entrySourceUrl(entry.profile?.sourceUrl),
-      labels: remote ? remote.labels : entry.profile?.labels ?? [], compatibleAgents: entry.profile?.compatibleAgents ?? [],
-      trigger: remote?.trigger, fitScenarios: remote?.fitScenarios,
+      id: `library:${entry.entryId}`, name: entry.name, displayName: remote?.displayName ?? (sameRevision ? previous?.displayName : undefined) ?? entry.profile?.displayName ?? entry.displayName,
+      description: remote ? remote.description : entry.profile?.description ?? previous?.description, category: remote ? remote.category : entry.profile?.category ?? previous?.category,
+      sourceUrl: entry.profile?.sourceUrl === undefined ? previous?.sourceUrl : entrySourceUrl(entry.profile.sourceUrl),
+      labels: remote ? remote.labels : entry.profile?.labels ?? previous?.labels ?? [], compatibleAgents: entry.profile?.compatibleAgents ?? previous?.compatibleAgents ?? [],
+      trigger: remote?.trigger ?? previous?.trigger, fitScenarios: remote?.fitScenarios ?? previous?.fitScenarios,
       avatarUrl: previous?.avatarUrl, avatarStatus: previous?.avatarStatus,
       serverAnalysisStatus: previous?.serverAnalysisStatus,
       enrichmentPending: previous?.enrichmentPending,
       avatarAccountUserId: previous?.avatarAccountUserId,
+      createdAt: remote?.createdAt ?? previous?.createdAt,
+      marketplacePublishedAt: remote?.marketplacePublishedAt ?? previous?.marketplacePublishedAt,
       version: entry.version?.label ?? '', latestVersion: '', installCount: 0, sources: [], agents: {}, installed: false,
       versionStatus: entry.version ? 'confirmed' : entry.versionPolicy === 1 ? 'unversioned' : undefined,
       versionReceiptId: entry.version?.receiptId,
@@ -82,7 +86,7 @@ export function cloudLibrarySkills(
     } satisfies LocalSkill
   })
   // An import may already be bound locally while its Server list refresh is in flight.
-  return [...result, ...own.filter(skill => !list.entries.some(entry => entry.entryId === skill.libraryEntryId))]
+  return reconcileSkillList(skills, [...result, ...own.filter(skill => !list.entries.some(entry => entry.entryId === skill.libraryEntryId))])
 }
 
 export function managedOutsideAccount(skills: readonly LocalSkill[], userId: string | null): LocalSkill[] {

@@ -91,7 +91,7 @@ export default function Sidebar({ onFeedback, onDonate }: { onFeedback: () => vo
     }
     closeSheet()
     setView(item.view)
-    if (item.view === 'team-skills') window.dispatchEvent(new Event('skillhub:refresh-team-shares'))
+    if (item.view === 'team-skills') window.dispatchEvent(new CustomEvent('skillhub:refresh-team-shares', { detail: { reason: 'navigation' } }))
     if (item.view === 'marketplace') window.dispatchEvent(new Event('skillhub:refresh-marketplace'))
   }
 

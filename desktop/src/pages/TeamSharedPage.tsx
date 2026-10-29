@@ -1,6 +1,9 @@
 import { userMessage } from '../lib/user-message.js'
 import { useMediaUrl } from '../lib/media.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
+import { createRefreshCoalescer } from '../lib/refresh-coalescer.js'
+import { LIBRARY_ENTRIES_CHANGED_EVENT } from '../lib/library-sync.js'
 import SkillLibraryList from '../components/SkillLibraryList.js'
 import { Icon } from '../components/Icon.js'
 import { SegmentedControl } from '../components/SegmentedControl.js'
@@ -9,15 +12,15 @@ import { CLEAR_FILTERS_LABEL, EMPTY_COPY, LOADING_COPY, RETRY_LABEL, loadFailedM
 import { BlankDragSpacer } from '../components/WindowDragRegion.js'
 import { PageHeading } from '../components/PageHeading.js'
 import { useStore, type Team, type PendingCommentNavigation } from '../store/index.js'
-import { apiGetMySkills, apiGetTeams, apiGetTeamSkills, sameSpace } from '../lib/api.js'
+import { ApiError, apiGetMySkills, apiGetTeams, apiGetTeamSkills, sameSpace } from '../lib/api.js'
 import { readAuthSpace } from '../store/index.js'
 import {
   orderTeamSharedSkills, summarizeRequiredEnvRows, teamSkillHasUpdate, type EnvKeySummary,
   type TeamSkillAvailability, type TeamSkillSort,
 } from '../lib/skill-library.js'
-import { mergeSkillSources, type TeamSkillSource } from '../lib/skills.js'
+import { mergeSkillSources, mergeApiSkill, reconcileTeamAccess, type TeamSkillSource } from '../lib/skills.js'
 import { getLocalSkills, getSkillEnvSourcePolicy } from '../lib/tauri.js'
-import { isSkillSharedWithActiveTeam } from '../lib/ui-helpers.js'
+import { reconcileLocalSkillRefresh } from '../lib/ui-helpers.js'
 import './TeamSharedPage.css'
 import { TEAM_SKILL_UNAVAILABLE } from '../lib/team-skill-link.js'
 import { toast } from '../components/Toast.js'
@@ -44,16 +47,22 @@ function TeamMark({ team, large = false }: { team: Team; large?: boolean }) {
 export default function TeamSharedPage() {
   const capabilities = useSpaceCapabilities()
   const {
-    currentUser, teams, activeTeamId, skills,
-    setTeams, setActiveTeam, setSkills, setView, openTeamSheet,
+    currentUser, teams, activeTeamId, teamSkills: cachedTeamSkills, setTeamSkills,
+    setTeams, setActiveTeam, setView, openTeamSheet,
     sheet, openSkillSheet, closeSheet, pendingCommentNavigation, setPendingCommentNavigation,
-  } = useStore()
-  const [loading, setLoading] = useState(true)
+  } = useStore(useShallow(state => ({
+    currentUser: state.currentUser, teams: state.teams, activeTeamId: state.activeTeamId,
+    teamSkills: state.teamSkills, setTeamSkills: state.setTeamSkills, setTeams: state.setTeams, setActiveTeam: state.setActiveTeam,
+    setView: state.setView, openTeamSheet: state.openTeamSheet, sheet: state.sheet, openSkillSheet: state.openSkillSheet,
+    closeSheet: state.closeSheet, pendingCommentNavigation: state.pendingCommentNavigation, setPendingCommentNavigation: state.setPendingCommentNavigation,
+  })))
+  const activeSpace = useStore(state => state.activeSpace)
+  const [loading, setLoading] = useState(() => !activeTeamId || !cachedTeamSkills[activeTeamId])
   const [loadedTeamId, setLoadedTeamId] = useState<string | null>(null)
   const [loadedNavigation, setLoadedNavigation] = useState<PendingCommentNavigation | null>(null)
-  const [sharedIdsByTeam, setSharedIdsByTeam] = useState<Record<string, Set<string>>>({})
   const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadError = useStore(state => state.activeTeamId ? state.teamListErrors[state.activeTeamId] : null)
+  const [membershipError, setMembershipError] = useState<string | null>(null)
   const [unavailableTeamIds, setUnavailableTeamIds] = useState<Set<string>>(() => new Set())
   const [searchQuery, setSearchQuery] = useState('')
   const [availabilityFilter, setAvailabilityFilter] = useState<TeamSkillAvailability>('all')
@@ -67,7 +76,7 @@ export default function TeamSharedPage() {
   const sortMenuRef = useRef<HTMLDivElement>(null)
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
 
-  const loadTeamLibrary = useCallback(async (silent = false): Promise<void> => {
+  const runTeamLoad = useCallback(async (silent = false): Promise<void> => {
     if (!currentUser) {
       setLoading(false)
       return
@@ -77,20 +86,19 @@ export default function TeamSharedPage() {
     const navigation = useStore.getState().pendingCommentNavigation
     const generation = ++loadGenerationRef.current
     if (silent) setRefreshing(true)
-    else setLoading(true)
-    setLoadError(null)
+    else if (!useStore.getState().teamSkills[useStore.getState().activeTeamId ?? '']) setLoading(true)
 
     try {
       const [localResult, ownedResult, teamsResult] = await Promise.allSettled([
         getLocalSkills(),
-        apiGetMySkills(),
-        apiGetTeams(),
+        apiGetMySkills(expectedSpace ?? undefined),
+        apiGetTeams(expectedSpace ?? undefined),
       ])
       const membershipTeams = teamsResult.status === 'fulfilled'
         ? teamsResult.value
         : useStore.getState().teams
       const teamResults = await Promise.allSettled(
-        membershipTeams.map((team) => apiGetTeamSkills(team.id)),
+        membershipTeams.map((team) => apiGetTeamSkills(team.id, expectedSpace ?? undefined)),
       )
 
       if (
@@ -101,7 +109,7 @@ export default function TeamSharedPage() {
 
       if (teamsResult.status === 'fulfilled') setTeams(membershipTeams)
       let selectedTeamId = useStore.getState().activeTeamId
-      if (!selectedTeamId || !membershipTeams.some((team) => team.id === selectedTeamId)) {
+      if (teamsResult.status === 'fulfilled' && (!selectedTeamId || !membershipTeams.some((team) => team.id === selectedTeamId))) {
         if (useStore.getState().pendingCommentNavigation) {
           useStore.getState().setPendingCommentNavigation(null)
           toast(TEAM_SKILL_UNAVAILABLE, 'error')
@@ -118,13 +126,56 @@ export default function TeamSharedPage() {
         teamId: team.id,
         skills: teamResults[index]?.status === 'fulfilled' ? teamResults[index].value : null,
       }))
-      setSkills(mergeSkillSources(localSkills, ownedSkills, {
+      const merged = mergeSkillSources(localSkills, ownedSkills, {
         accountUserId: currentUser.id,
         selfhost: capabilities.profile === 'selfhost',
         activeTeamId: selectedTeamId,
         membershipsValidated: teamsResult.status === 'fulfilled',
         teamSources,
-      }))
+      })
+      // Local installation state is read from the common inventory. Each
+      // team's protected response owns only its own display/permission slice.
+      const authoritativeTeamIds: string[] = []
+      membershipTeams.forEach((team, index) => {
+        const result = teamResults[index]
+        if (result?.status === 'fulfilled') {
+          authoritativeTeamIds.push(team.id)
+          setTeamSkills(team.id, result.value.map(remote => mergeApiSkill(remote,
+            merged.find(skill => skill.serverId === remote.id && skill.localPath), team.id, expectedUserId, capabilities.profile === 'selfhost')),
+            localResult.status === 'rejected' || ownedResult.status === 'rejected' || teamsResult.status === 'rejected' ? '未能刷新部分数据，请重试' : null)
+        } else {
+          const revoked = result?.status === 'rejected' && result.reason instanceof ApiError
+            && [403, 404].includes(result.reason.status ?? 0)
+          if (revoked) authoritativeTeamIds.push(team.id)
+          const known = useStore.getState().teamSkills[team.id]
+          if (!revoked && !known) {
+            setTeamSkills(team.id, undefined, '未能刷新团队共享，请重试')
+            return
+          }
+          const retained = localResult.status === 'fulfilled' ? (known ?? []).map(skill => {
+            const local = localSkills.find(item => item.serverId === skill.serverId && item.localPath)
+            return local ? reconcileLocalSkillRefresh(skill, local)
+              : skill.localPath ? { ...skill, localPath: '', installed: false, agents: {} } : skill
+          }) : known ?? []
+          setTeamSkills(team.id, revoked ? [] : retained,
+            '未能刷新团队共享，请重试')
+        }
+      })
+      if (ownedResult.status === 'fulfilled' && teamsResult.status === 'fulfilled' && teamResults.every(result => result.status === 'fulfilled')) {
+        const state = useStore.getState()
+        // Commit permissions once, after all grants are known. Team display
+        // rows never replace the personal inventory.
+        state.setSkills(state.skills.map(known => {
+          const authoritative = merged.find(skill => skill.id === known.id && skill.localPath)
+          return authoritative ? { ...known, isOwn: authoritative.isOwn, serverId: authoritative.serverId,
+            serverAccessValidatedForUserId: authoritative.serverAccessValidatedForUserId, teamSharedFrom: authoritative.teamSharedFrom,
+            sharedTo: authoritative.sharedTo, teamUnshared: authoritative.teamUnshared, teamUpdateStatus: authoritative.teamUpdateStatus,
+            accountSyncRequired: authoritative.accountSyncRequired } : known
+        }))
+      } else {
+        const state = useStore.getState()
+        state.setSkills(reconcileTeamAccess(state.skills, state.teamSkills, authoritativeTeamIds, expectedUserId))
+      }
 
       const unavailable = new Set<string>()
       const errors: string[] = []
@@ -138,19 +189,15 @@ export default function TeamSharedPage() {
         errors.push(`${team?.name ?? '团队'}：${messageOf(result.reason)}`)
       })
       setUnavailableTeamIds(unavailable)
-      setSharedIdsByTeam(Object.fromEntries(membershipTeams.map((team, index) => {
-        const result = teamResults[index]
-        return [team.id, new Set(result?.status === 'fulfilled' ? result.value.map(skill => skill.id) : [])]
-      })))
       setLoadedTeamId(selectedTeamId)
       setLoadedNavigation(navigation)
-      if (errors.length > 0) setLoadError(`部分真实数据暂不可用：${errors.join('；')}`)
+      setMembershipError(errors.length > 0 ? '未能刷新部分数据，请重试' : null)
     } catch (error: unknown) {
       if (
         generation === loadGenerationRef.current
         && sameSpace(expectedSpace, readAuthSpace())
         && useStore.getState().currentUser?.id === expectedUserId
-      ) setLoadError(loadFailedMessage('团队共享', messageOf(error)))
+      ) setMembershipError(loadFailedMessage('团队共享', messageOf(error)))
     } finally {
       if (
         generation === loadGenerationRef.current
@@ -161,12 +208,23 @@ export default function TeamSharedPage() {
         setRefreshing(false)
       }
     }
-  }, [currentUser, capabilities.profile, setActiveTeam, setSkills, setTeams])
+  }, [currentUser?.id, activeSpace?.spaceId, activeSpace?.generation, capabilities.profile, setActiveTeam, setTeamSkills, setTeams])
+  const coalescer = useMemo(() => createRefreshCoalescer(runTeamLoad, 5_000,
+    JSON.stringify(['team-skills', activeSpace?.spaceId, activeSpace?.generation, currentUser?.id])), [runTeamLoad])
+  const loadTeamLibrary = useCallback((silent = false): Promise<void> => coalescer.request(silent), [coalescer])
 
   useEffect(() => {
-    void loadTeamLibrary()
-    return () => { loadGenerationRef.current += 1 }
-  }, [activeTeamId, pendingCommentNavigation, loadTeamLibrary])
+    const state = useStore.getState()
+    if (!state.activeTeamId || !state.teamSkills[state.activeTeamId]) coalescer.invalidate()
+    void loadTeamLibrary(true)
+    return () => { loadGenerationRef.current += 1; coalescer.cancel() }
+  }, [loadTeamLibrary, coalescer])
+  useEffect(() => {
+    if (pendingCommentNavigation || (activeTeamId && !useStore.getState().teamSkills[activeTeamId])) {
+      coalescer.invalidate()
+    }
+    void loadTeamLibrary(true)
+  }, [activeTeamId, pendingCommentNavigation, loadTeamLibrary, coalescer])
 
   useEffect(() => {
     const refreshOnReturn = (): void => { void loadTeamLibrary(true) }
@@ -181,17 +239,25 @@ export default function TeamSharedPage() {
       if (detail && typeof detail === 'object' && 'unsharedTeamId' in detail && 'unsharedSkillId' in detail
         && typeof detail.unsharedTeamId === 'string' && typeof detail.unsharedSkillId === 'string') {
         const { unsharedTeamId, unsharedSkillId } = detail
-        setSharedIdsByTeam(current => {
-          const ids = new Set(current[unsharedTeamId])
-          ids.delete(unsharedSkillId)
-          return { ...current, [unsharedTeamId]: ids }
-        })
+        const state = useStore.getState()
+        state.setTeamSkills(unsharedTeamId, (state.teamSkills[unsharedTeamId] ?? []).filter(skill => skill.serverId !== unsharedSkillId), state.teamListErrors[unsharedTeamId] ?? null)
+        state.setSkills(reconcileTeamAccess(state.skills, useStore.getState().teamSkills, [unsharedTeamId], state.currentUser?.id))
+      }
+      if (!(detail && typeof detail === 'object' && 'reason' in detail && detail.reason === 'navigation')) {
+        loadGenerationRef.current += 1
+        coalescer.invalidate()
       }
       void loadTeamLibrary(true)
     }
     window.addEventListener('skillhub:refresh-team-shares', refreshFromNavigation)
-    return () => window.removeEventListener('skillhub:refresh-team-shares', refreshFromNavigation)
-  }, [loadTeamLibrary])
+    window.addEventListener('skillhub-local-changed', refreshFromNavigation)
+    window.addEventListener(LIBRARY_ENTRIES_CHANGED_EVENT, refreshFromNavigation)
+    return () => {
+      window.removeEventListener('skillhub:refresh-team-shares', refreshFromNavigation)
+      window.removeEventListener('skillhub-local-changed', refreshFromNavigation)
+      window.removeEventListener(LIBRARY_ENTRIES_CHANGED_EVENT, refreshFromNavigation)
+    }
+  }, [loadTeamLibrary, coalescer])
 
   useEffect(() => {
     if (!teamMenuOpen) return
@@ -228,22 +294,23 @@ export default function TeamSharedPage() {
   const activeTeam = teams.find((team) => team.id === activeTeamId) ?? null
   const teamSkills = useMemo(() => {
     if (!activeTeamId) return []
-    return skills
-      .filter((skill) => isSkillSharedWithActiveTeam(skill, activeTeamId)
-        && sharedIdsByTeam[activeTeamId]?.has(skill.serverId ?? skill.id))
-      .sort((left, right) => {
-        const installOrder = Number(Boolean(right.localPath)) - Number(Boolean(left.localPath))
-        return installOrder || left.displayName.localeCompare(right.displayName, 'zh-CN')
-      })
-  }, [activeTeamId, skills, sharedIdsByTeam])
+    return cachedTeamSkills[activeTeamId] ?? []
+  }, [activeTeamId, cachedTeamSkills])
 
   useEffect(() => {
     if (!pendingCommentNavigation || loadedNavigation !== pendingCommentNavigation || loading || loadedTeamId !== activeTeamId || pendingCommentNavigation.teamId !== activeTeamId) return
+    if ((pendingCommentNavigation.accountUserId && pendingCommentNavigation.accountUserId !== currentUser?.id)
+      || (pendingCommentNavigation.space && !sameSpace(pendingCommentNavigation.space, activeSpace))) {
+      setPendingCommentNavigation(null)
+      return
+    }
+    if (activeTeamId && unavailableTeamIds.has(activeTeamId)) return
     const target = teamSkills.find((skill) => (
       skill.serverId === pendingCommentNavigation.serverSkillId
       || skill.id === pendingCommentNavigation.serverSkillId
     ))
     if (target) {
+      if (pendingCommentNavigation.teamVersionId && pendingCommentNavigation.teamVersionId !== target.teamVersionId) toast('团队共享版本已更新，已打开当前版本')
       setSearchQuery('')
       setAvailabilityFilter('all')
       openSkillSheet(target.id, 'profile', pendingCommentNavigation.commentId ? `comment:${pendingCommentNavigation.commentId}` : undefined)
@@ -251,7 +318,7 @@ export default function TeamSharedPage() {
       toast(TEAM_SKILL_UNAVAILABLE, 'error')
     }
     setPendingCommentNavigation(null)
-  }, [activeTeamId, loadedTeamId, loadedNavigation, loading, openSkillSheet, pendingCommentNavigation, setPendingCommentNavigation, teamSkills])
+  }, [activeTeamId, loadedTeamId, loadedNavigation, loading, openSkillSheet, pendingCommentNavigation, setPendingCommentNavigation, teamSkills, unavailableTeamIds, currentUser?.id, activeSpace])
 
   useEffect(() => {
     const generation = ++envPolicyGenerationRef.current
@@ -274,6 +341,7 @@ export default function TeamSharedPage() {
     }))).then((results) => {
       if (
         generation !== envPolicyGenerationRef.current
+        || !sameSpace(space, readAuthSpace())
         || useStore.getState().currentUser?.id !== expectedUserId
       ) return
       const counts: Record<string, EnvKeySummary> = {}
@@ -288,7 +356,7 @@ export default function TeamSharedPage() {
       setEnvKeysBySkill(counts)
       setEnvPolicyErrorBySkill(failures)
     })
-  }, [currentUser, teamSkills, capabilities.teamKeys])
+  }, [currentUser?.id, activeSpace?.spaceId, activeSpace?.generation, teamSkills, capabilities.teamKeys])
 
   const filteredSkills = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase('zh-CN')
@@ -303,6 +371,7 @@ export default function TeamSharedPage() {
 
   useEffect(() => {
     if (pendingCommentNavigation) return
+    if (loading || refreshing) return
     if (filteredSkills.length === 0) {
       if (sheet?.kind === 'skill') closeSheet()
       return
@@ -312,7 +381,7 @@ export default function TeamSharedPage() {
       const firstSkill = filteredSkills[0]
       if (firstSkill) openSkillSheet(firstSkill.id)
     }
-  }, [closeSheet, filteredSkills, openSkillSheet, sheet, pendingCommentNavigation])
+  }, [closeSheet, filteredSkills, openSkillSheet, sheet, pendingCommentNavigation, loading, refreshing])
 
   const installedCount = teamSkills.filter((skill) => Boolean(skill.localPath)).length
   const availableCount = Math.max(0, teamSkills.length - installedCount)
@@ -355,9 +424,9 @@ export default function TeamSharedPage() {
     />
 
     <div className="page-body team-shared-page-body">
-      {loadError && <LoadError message={loadError} retrying={loading} onRetry={() => void loadTeamLibrary()} />}
+      {(loadError || membershipError) && <LoadError message={loadError || membershipError || '未能刷新'} retrying={loading} onRetry={() => void loadTeamLibrary()} />}
 
-      {loading && teams.length === 0 ? <SkeletonBlock layout="rows" label={LOADING_COPY.teamShared} /> : teams.length === 0 ? <EmptyState copy={EMPTY_COPY.teamNone} icon="team" className="team-shared-empty">
+      {loading && teams.length === 0 ? <SkeletonBlock layout="rows" label={LOADING_COPY.teamShared} /> : teams.length === 0 ? membershipError ? null : <EmptyState copy={EMPTY_COPY.teamNone} icon="team" className="team-shared-empty">
         <button className="btn btn-primary" onClick={() => setView('teams')}><Icon name="plus" size={14} />前往 My Team</button>
       </EmptyState> : <>
         {activeTeam && <section className="team-shared-context" aria-label="当前团队">
@@ -410,7 +479,7 @@ export default function TeamSharedPage() {
           id="team-shared-panel"
           className="team-shared-results"
         >
-          {loading && teamSkills.length === 0 ? <SkeletonBlock layout="rows" label={LOADING_COPY.teamSharedSkills} /> : selectedTeamUnavailable ? <EmptyState copy={EMPTY_COPY.teamSharedUnavailable} icon="warn" compact className="team-shared-empty">
+          {loading && teamSkills.length === 0 ? <SkeletonBlock layout="rows" label={LOADING_COPY.teamSharedSkills} /> : (selectedTeamUnavailable || loadError) && teamSkills.length === 0 ? <EmptyState copy={EMPTY_COPY.teamSharedUnavailable} icon="warn" compact className="team-shared-empty">
             <button className="btn btn-ghost" disabled={loading} onClick={() => void loadTeamLibrary()}>{RETRY_LABEL}</button>
           </EmptyState> : teamSkills.length === 0 ? <EmptyState copy={EMPTY_COPY.teamSharedNone} icon="skills" compact className="team-shared-empty">
             {activeTeam && <button className="btn btn-ghost" onClick={() => openTeamSheet(activeTeam.id)}>查看团队详情</button>}

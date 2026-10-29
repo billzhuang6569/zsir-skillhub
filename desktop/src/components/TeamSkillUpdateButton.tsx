@@ -4,6 +4,7 @@ import { apiDownloadSkillPackage, apiGetTeamSkills, sameSpace } from '../lib/api
 import { importSkillPackage, getLocalSkills, getSkillPackageDiff, type SkillDiffLine } from '../lib/tauri.js'
 import { teamSkillHasUpdate } from '../lib/skill-library.js'
 import { teamKeyChanges } from '../lib/team-update-state.js'
+import { reconcileLocalSkillRefresh } from '../lib/ui-helpers.js'
 import { Icon } from './Icon.js'
 import FocusTrapDialog from './FocusTrapDialog.js'
 import { toast } from './Toast.js'
@@ -56,7 +57,9 @@ export default function TeamSkillUpdateButton({ skill }: { skill: LocalSkill }) 
       const state = useStore.getState()
       const known = new Map(state.skills.map(item => [item.id, item]))
       state.setSkills([...local.map(item => item.id === skill.id ? { ...skill, ...imported, latestVersion: pack.version, teamUpdateStatus: 'up_to_date' }
-        : { ...known.get(item.id), ...item }), ...state.skills.filter(item => !item.localPath)])
+        : known.has(item.id) ? reconcileLocalSkillRefresh(known.get(item.id)!, item) : item), ...state.skills.filter(item => !item.localPath)])
+      const updated = useStore.getState().skills.find(item => item.id === skill.id)
+      if (updated) state.replaceSkill(skill.id, updated)
       window.dispatchEvent(new Event('skillhub:refresh-team-shares'))
       toast('已更新，已安装的 Agent 已自动刷新')
       setOpen(false)

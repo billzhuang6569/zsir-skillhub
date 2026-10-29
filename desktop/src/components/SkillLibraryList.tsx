@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { activeAgentEntries, agentDisplayName } from '../lib/agents.js'
 import { nextRovingIndex } from '../lib/ui-helpers.js'
 import { sourceModificationLabel } from '../lib/skill-library.js'
@@ -47,7 +47,7 @@ const ROW_TAG_LIMIT = 2
 /** Row SkillAvatar: 52px, radius-md, hairline ring (the store `.tsh-avatar` ring). */
 const AVATAR_CLASS = 'skill-library-avatar tsh-avatar tsh-avatar-md'
 
-export default function SkillLibraryList({
+function SkillLibraryList({
   skills,
   envKeysBySkill = {},
   envPolicyErrorBySkill = {},
@@ -97,7 +97,7 @@ export default function SkillLibraryList({
       if (action === 'acquire') {
         const local = await acquireTeamSkill(skill, currentUser.id, activeTeamId, space)
         if (!current()) return
-        useStore.getState().replaceSkill(skill.id, local)
+        useStore.getState().replaceSkill(skill.id, local, true)
         requestLibrarySync()
         toast('已加入我的 Skills')
       } else {
@@ -233,6 +233,7 @@ export default function SkillLibraryList({
         context === 'personal' ? lastRunFailures[skill.id] : null,
       )
       const issueIcon = isRowIssueIcon(issue)
+      const sourceLabel = sourceModificationLabel(skill)
       // 「<UserChip> 共享」: the member who shared it, falling back to the author (#295).
       const sharerName = skill.sharedBy?.displayName?.trim() || skill.authorName?.trim() || ''
       const sharerId = skill.sharedBy?.id ?? (skill.authorName ? skill.serverOwnerId : undefined)
@@ -246,7 +247,7 @@ export default function SkillLibraryList({
       const deleteState = accountDeletes.leaving[cloudSelectionId(skill)] ? ' leaving' : accountDeletes.pending[cloudSelectionId(skill)] ? ' deleting' : ''
       return <button
         ref={(element) => { if (element) optionRefs.current.set(skill.id, element); else optionRefs.current.delete(skill.id) }}
-        key={skill.id}
+        key={context === 'team' ? skill.serverId ?? skill.id : cloudSelectionId(skill)}
         type="button"
         role="option"
         aria-selected={selected}
@@ -290,8 +291,8 @@ export default function SkillLibraryList({
         />{transfer && <span className="skill-avatar-color-reveal" style={{ clipPath: `inset(0 ${(1 - (fraction ?? 0)) * 100}% 0 0)` }}>
           <SkillAvatarIcon className={AVATAR_CLASS} avatarUrl={skill.avatarUrl} size={44} />
         </span>}{transfer && <span className="skill-avatar-download-track"><span style={{ width: `${(fraction ?? 0) * 100}%` }} /></span>}</span>
-        {/* Copy is display: contents, so the name line, the text line and the badges are grid cells:
-            wide lists put the badges in a trailing column, the narrow Skill browser puts them before the text on line 2. */}
+        {/* Copy is display: contents; the name owns the first line with version, status and source-modification badges.
+            The controls occupy only the subtitle and description lines. */}
         <span className="skill-library-copy">
           <span className="skill-library-name-row">
             <SkillListName name={title.primary} className={skillTitlePreference === 'skill-name' ? 'skill-primary-name' : undefined} />
@@ -299,6 +300,7 @@ export default function SkillLibraryList({
             <span className="skill-library-version-text mono">{context === 'team' ? `团队版本 ${skill.latestVersion ?? skill.version}` : versionDisplay.label}</span>
             {skill.versionStatus === 'pending' && <span className="skill-library-version">待确认</span>}
             {skill.hasWorkingCopy && <span className="skill-library-version">已修改</span>}
+            {sourceLabel && <span className="skill-library-version">{sourceLabel}</span>}
             {skill.teamUnshared && <span className="skill-library-update">团队已停止共享 · 本机副本保留</span>}
             {skill.teamUpdateStatus === 'account_mismatch' && <span className="skill-library-update">获取账号不匹配，不能更新</span>}
             {issue && issueIcon && <SkillIssueIcon issue={issue} />}
@@ -314,7 +316,6 @@ export default function SkillLibraryList({
               <span className={`skill-library-subtitle${!title.secondary ? ' placeholder' : ''}`} title={title.secondary || undefined}>{title.secondary || UNANALYSED_SKILL_NAME}</span>
               {teamSharer && <span className="skill-library-sharer"><span aria-hidden="true">·</span><UserChip name={teamSharer.name} me={teamSharer.me} avatarUrl={teamSharer.avatarUrl} />共享</span>}
             </span>}
-          {sourceModificationLabel(skill) && <span className="skill-library-desc"><span className="skill-library-version">{sourceModificationLabel(skill)}</span></span>}
           {skill.description && <span className="skill-library-desc" title={skill.description}>{skill.description}</span>}
           <span className="skill-library-side">
             <TeamSkillUpdateButton skill={skill} />
@@ -389,6 +390,8 @@ export default function SkillLibraryList({
     />}
   </div></>
 }
+
+export default memo(SkillLibraryList)
 
 /**
  * Row warning as a 14px icon next to the name (#289 board 1). The row is itself a

@@ -1,11 +1,12 @@
 import type { SpaceHandle } from '../lib/tauri.js'
 import { create } from 'zustand'
+import { reconcileSkillList, sameListData, shareList, sameSkillIdentity } from '../lib/stable-list.js'
 import { type AuthUser } from '../lib/auth.js'
 import { ORGANIZER_SYNC_REQUEST_TIMEOUT_MS, syncOrganizerOnce, type OrganizerSyncApi, type OrganizerSyncOutcome } from '../lib/organizer-sync.js'
 import type { ApiHealth, MarketplaceBadge, MarketplaceRole, MarketplaceSubmissionStatus } from '../lib/api.js'
 import { retargetSkillSheet } from '../lib/ui-helpers.js'
 import { resolveTeamPreference } from '../lib/skill-library.js'
-import { downgradeMarketplaceAuthorization, replaceSkillAcrossSources, skillForAvatarAccount } from '../lib/skills.js'
+import { downgradeMarketplaceAuthorization, hydrateDownloadedSkill, reconcileTeamAccess, replaceSkillAcrossSources, skillForAvatarAccount } from '../lib/skills.js'
 import type { AgentInfo, KeyConsentRequest, LastRunRecord } from '../lib/tauri.js'
 import { EMPTY_KEY_VAULT_STATE, EMPTY_TEAM_KEY_VAULT_STATE, type KeyVaultState, type TeamKeyVaultState } from '../lib/keys.js'
 import type { MarketplaceDeepLink } from '../lib/marketplace-deep-link.js'
@@ -51,6 +52,9 @@ export type PendingCommentNavigation = {
   teamId: string
   serverSkillId: string
   commentId?: string
+  teamVersionId?: string
+  accountUserId?: string
+  space?: SpaceHandle
 }
 
 export type AppUpdateState = {
@@ -270,6 +274,18 @@ type SheetState =
   | { kind: 'skill'; skillId: string; tab: SkillDetailTab; focus?: SkillDetailFocus }
   | { kind: 'team'; teamId: string }
   | null
+
+function reconcileListSheet(sheet: SheetState, previous: LocalSkill[], next: LocalSkill[]): SheetState {
+  if (sheet?.kind !== 'skill') return sheet
+  const selected = previous.find(skill => skill.id === sheet.skillId)
+  const landed = selected && next.find(skill => sameSkillIdentity(skill, selected))
+  return selected && landed ? retargetSkillSheet(sheet, selected.id, landed.id) : sheet
+}
+
+function reconcileListSelections(selections: Record<string, SheetState>, previous: LocalSkill[], next: LocalSkill[]): Record<string, SheetState> {
+  const result = Object.fromEntries(Object.entries(selections).map(([key, sheet]) => [key, reconcileListSheet(sheet, previous, next)]))
+  return sameListData(result, selections) ? selections : result
+}
 
 // ---- Modal state ----
 type ModalState =
@@ -497,8 +513,14 @@ export type SkillHubStore = {
   avatarParkingProblem: string | null
   hiddenCardAgents: string[]
   setSkills: (s: LocalSkill[]) => void
+  teamSkills: Record<string, LocalSkill[]>
+  teamListErrors: Record<string, string | null>
+  listSelections: Record<string, SheetState>
+  skillsListError: string | null
+  setSkillsListError: (error: string | null) => void
+  setTeamSkills: (teamId: string, skills: LocalSkill[] | undefined, error: string | null) => void
   setMarketplaceSkills: (s: LocalSkill[]) => void
-  replaceSkill: (currentId: string, updated: LocalSkill) => void
+  replaceSkill: (currentId: string, updated: LocalSkill, localFilesChanged?: boolean) => void
   setTeams: (t: Team[]) => void
   setNotifications: (n: Notification[]) => void
   setAgentCapabilities: (agents: AgentInfo[]) => void
@@ -633,12 +655,17 @@ export const useStore = create<SkillHubStore>((set, get) => ({
       activeSpace: space,
       currentUser,
       teams: sameSession ? state.teams : [],
+      teamSkills: sameSession ? state.teamSkills : {},
+      teamListErrors: sameSession ? state.teamListErrors : {},
+      listSelections: sameSession ? state.listSelections : {},
+      skillsListError: sameSession ? state.skillsListError : null,
+      pendingCommentNavigation: sameSession ? state.pendingCommentNavigation : null,
       libraryEntries: sameSession ? state.libraryEntries : null,
       libraryTransfers: sameSession ? state.libraryTransfers : {},
       // Native sidecars survive logout and may still contain the previous
       // account's ownership bit. Session changes therefore fail closed until
       // the protected owned Skills endpoint authoritatively restores rights.
-      skills: sameSession ? state.skills.map(skill => skillForAvatarAccount(skill, currentUser.id)) : [],
+      skills: sameSession ? shareList(state.skills, state.skills.map(skill => skillForAvatarAccount(skill, currentUser.id)), skill => skill.id) : [],
       marketplaceSkills: state.marketplaceSkills.map(downgradeMarketplaceAuthorization),
       teamShareJobs: sameSession ? state.teamShareJobs : {},
       accountDeletes: sameSession ? state.accountDeletes : EMPTY_ACCOUNT_DELETES,
@@ -662,6 +689,11 @@ export const useStore = create<SkillHubStore>((set, get) => ({
     authStatus: 'guest',
     authSpace: null,
     currentUser: null,
+    teamSkills: {},
+    teamListErrors: {},
+    listSelections: {},
+    skillsListError: null,
+    pendingCommentNavigation: null,
     libraryEntries: null,
     libraryTransfers: {},
     skills: state.skills.map(skill => skillForAvatarAccount(skill)),
@@ -683,6 +715,10 @@ export const useStore = create<SkillHubStore>((set, get) => ({
       authStatus: 'guest',
     authSpace: null,
       currentUser: null,
+      teamSkills: {},
+      teamListErrors: {},
+      listSelections: {},
+      skillsListError: null,
       libraryEntries: null,
       libraryTransfers: {},
       teams: [],
@@ -715,11 +751,13 @@ export const useStore = create<SkillHubStore>((set, get) => ({
   view: 'skills',
   skillTab: 'skillhub',
   activeTeamId: null,
-  setView: (view) => set({ view, sheet: null }),
+  setView: (view) => set(state => ({ view,
+    sheet: view === 'skills' || view === 'team-skills'
+      ? state.listSelections[view === 'team-skills' ? `team:${state.activeTeamId}` : view] ?? null : null })),
   setSkillTab: (skillTab) => set({ skillTab }),
   setActiveTeam: (activeTeamId) => set((state) => {
     if (state.currentUser && activeTeamId) writePreference(teamPreferenceKey(state.currentUser.id, state.authSpace), activeTeamId)
-    return { activeTeamId }
+    return { activeTeamId, ...(state.view === 'team-skills' ? { sheet: state.listSelections[`team:${activeTeamId}`] ?? null } : {}) }
   }),
   hideTeamShares: () => set((state) => {
     if (state.currentUser) writePreference(teamPreferenceKey(state.currentUser.id, state.authSpace), NO_TEAM_PREFERENCE)
@@ -729,6 +767,11 @@ export const useStore = create<SkillHubStore>((set, get) => ({
   // Data
   teams: [],
   skills: [],
+  teamSkills: {},
+  teamListErrors: {},
+  listSelections: {},
+  skillsListError: null,
+  setSkillsListError: (skillsListError) => set({ skillsListError }),
   marketplaceSkills: [],
   notifications: [],
   agentCapabilities: [],
@@ -753,21 +796,38 @@ export const useStore = create<SkillHubStore>((set, get) => ({
   sidebarWidth: parseSidebarWidth(readPreference(SIDEBAR_WIDTH_KEY)),
   avatarParkingProblem: null,
   hiddenCardAgents: parseHiddenCardAgents(readPreference(HIDDEN_CARD_AGENTS_KEY)),
-  setSkills: (skills) => set({ skills }),
-  setMarketplaceSkills: (marketplaceSkills) => set({ marketplaceSkills }),
-  replaceSkill: (currentId, updated) => set((state) => {
-    const replacement = replaceSkillAcrossSources(
-      state.skills,
-      state.marketplaceSkills,
-      currentId,
-      updated,
-    )
-    return {
-      skills: replacement.skills,
-      marketplaceSkills: replacement.marketplaceSkills,
-      sheet: retargetSkillSheet(state.sheet, currentId, replacement.nextSkillId),
-    }
+  setSkills: (skills) => set(state => {
+    const next = reconcileSkillList(state.skills, skills)
+    return next === state.skills ? state : { skills: next,
+      listSelections: reconcileListSelections(state.listSelections, state.skills, next),
+      sheet: reconcileListSheet(state.sheet, state.skills, next) }
   }),
+  setTeamSkills: (teamId, skills, error) => set(state => {
+    if (skills === undefined) return { teamListErrors: { ...state.teamListErrors, [teamId]: error } }
+    const previous = state.teamSkills[teamId] ?? []
+    const next = reconcileSkillList(previous, skills)
+    const teamSkills = next === state.teamSkills[teamId] ? state.teamSkills : { ...state.teamSkills, [teamId]: next }
+    return { teamSkills,
+      listSelections: reconcileListSelections(state.listSelections, previous, next),
+      sheet: state.view === 'team-skills' && state.activeTeamId === teamId ? reconcileListSheet(state.sheet, previous, next) : state.sheet,
+      teamListErrors: state.teamListErrors[teamId] === error ? state.teamListErrors : { ...state.teamListErrors, [teamId]: error } }
+  }),
+  setMarketplaceSkills: (marketplaceSkills) => set({ marketplaceSkills }),
+  replaceSkill: (currentId, updated, localFilesChanged = false) => {
+    set((state) => {
+      const replacement = replaceSkillAcrossSources(state.skills, state.marketplaceSkills, currentId, updated)
+      return {
+        skills: reconcileSkillList(state.skills, replacement.skills),
+        marketplaceSkills: shareList(state.marketplaceSkills, replacement.marketplaceSkills, skill => skill.id),
+        listSelections: Object.fromEntries(Object.entries(state.listSelections).map(([key, sheet]) => [key, retargetSkillSheet(sheet, currentId, replacement.nextSkillId)])),
+        teamSkills: Object.fromEntries(Object.entries(state.teamSkills).map(([teamId, skills]) => [teamId,
+          reconcileSkillList(skills, skills.map(skill => skill.id === currentId || Boolean(updated.serverId && skill.serverId === updated.serverId)
+            ? { ...hydrateDownloadedSkill(skill, updated), envDeps: updated.envDeps } : skill))])),
+        sheet: retargetSkillSheet(state.sheet, currentId, replacement.nextSkillId),
+      }
+    })
+    if (localFilesChanged && typeof window !== 'undefined') window.dispatchEvent(new Event('skillhub-local-changed'))
+  },
   setTeams: (teams) => set((state) => {
     if (!state.currentUser) return { teams, activeTeamId: null }
     const key = teamPreferenceKey(state.currentUser.id, state.authSpace)
@@ -776,13 +836,20 @@ export const useStore = create<SkillHubStore>((set, get) => ({
     if (storedPreference !== NO_TEAM_PREFERENCE && storedPreference !== activeTeamId && activeTeamId) {
       writePreference(key, activeTeamId)
     }
-    return { teams, activeTeamId }
+    const next = shareList(state.teams, teams, team => team.id)
+    const teamSkills = Object.fromEntries(Object.entries(state.teamSkills).filter(([id]) => teams.some(team => team.id === id)))
+    const removedTeamIds = [...new Set(state.skills.flatMap(skill => skill.teamSharedFrom
+      && !teams.some(team => team.id === skill.teamSharedFrom) ? [skill.teamSharedFrom] : []))]
+    return { teams: next, activeTeamId, teamSkills: sameListData(teamSkills, state.teamSkills) ? state.teamSkills : teamSkills,
+      skills: reconcileTeamAccess(state.skills, { ...teamSkills, ...Object.fromEntries(removedTeamIds.map(id => [id, []])) }, removedTeamIds, state.currentUser?.id) }
   }),
   setNotifications: (notifications) => set({ notifications }),
   setAgentCapabilities: (agentCapabilities) => set({ agentCapabilities }),
   setAgentDetectionStatus: (agentDetectionStatus) => set({ agentDetectionStatus }),
   setLibrarySyncEnabled: (librarySyncEnabled) => set({ librarySyncEnabled }),
-  setLibraryEntries: (libraryEntries) => set(state => state.currentUser?.id === libraryEntries.userId ? { libraryEntries } : {}),
+  setLibraryEntries: (libraryEntries) => set(state => state.currentUser?.id === libraryEntries.userId
+    && (!libraryEntries.space || (libraryEntries.space.spaceId === state.authSpace?.spaceId && libraryEntries.space.generation === state.authSpace?.generation))
+    && !sameListData(state.libraryEntries, libraryEntries) ? { libraryEntries } : state),
   setLibraryTransfer: (transfer) => set(state => state.currentUser?.id === transfer.userId
     ? { libraryTransfers: { ...state.libraryTransfers, [transfer.entryId]: transfer } } : {}),
   dispatchLibrarySync: (event) => set((state) => {
@@ -822,9 +889,13 @@ export const useStore = create<SkillHubStore>((set, get) => ({
   }),
   setLocalSkillPreview: (localSkillPreview) => set({ localSkillPreview }),
   setPendingMarketplaceIntent: (pendingMarketplaceIntent) => set({ pendingMarketplaceIntent }),
-  setPendingCommentNavigation: (pendingCommentNavigation) => set({ pendingCommentNavigation }),
-  openTeamSkill: (teamId, serverSkillId) => set({ view: 'team-skills', activeTeamId: teamId, sheet: null,
-    pendingCommentNavigation: { teamId, serverSkillId } }),
+  setPendingCommentNavigation: (navigation) => set(state => ({ pendingCommentNavigation: navigation ? {
+    ...navigation, accountUserId: navigation.accountUserId ?? state.currentUser?.id, space: navigation.space ?? state.activeSpace ?? undefined,
+    teamVersionId: navigation.teamVersionId ?? state.teamSkills[navigation.teamId]?.find(skill => skill.serverId === navigation.serverSkillId)?.teamVersionId,
+  } : null })),
+  openTeamSkill: (teamId, serverSkillId) => set(state => ({ view: 'team-skills', activeTeamId: teamId, sheet: null,
+    pendingCommentNavigation: { teamId, serverSkillId, accountUserId: state.currentUser?.id, space: state.activeSpace ?? undefined,
+      teamVersionId: state.teamSkills[teamId]?.find(skill => skill.serverId === serverSkillId)?.teamVersionId } })),
   requestLocalSkillImport: (localImportRequestId) => set({ localImportRequestId }),
   clearLocalSkillImportRequest: () => set({ localImportRequestId: null }),
   setSearchQuery: (searchQuery) => set({ searchQuery }),
@@ -864,13 +935,25 @@ export const useStore = create<SkillHubStore>((set, get) => ({
   // Sheet
   sheet: null,
   openSkillSheet: (skillId, tab = 'profile', focus) =>
-    set({ sheet: { kind: 'skill', skillId, tab, focus } }),
+    set(state => {
+      const sheet: SheetState = { kind: 'skill', skillId, tab, focus }
+      const key = state.view === 'team-skills' ? `team:${state.activeTeamId}` : state.view
+      return { sheet, ...(state.view === 'skills' || state.view === 'team-skills'
+        ? { listSelections: { ...state.listSelections, [key]: { ...sheet, focus: undefined } } } : {}) }
+    }),
   openTeamSheet: (teamId) => set({ sheet: { kind: 'team', teamId } }),
-  closeSheet: () => set({ sheet: null }),
+  closeSheet: () => set(state => {
+    const listSelections = { ...state.listSelections }
+    delete listSelections[state.view === 'team-skills' ? `team:${state.activeTeamId}` : state.view]
+    return { sheet: null, listSelections }
+  }),
   setSheetTab: (tab) =>
-    set((s) =>
-      s.sheet?.kind === 'skill' ? { sheet: { ...s.sheet, tab, focus: undefined } } : {}
-    ),
+    set((s) => {
+      if (s.sheet?.kind !== 'skill') return {}
+      const sheet: SheetState = { ...s.sheet, tab, focus: undefined }
+      const key = s.view === 'team-skills' ? `team:${s.activeTeamId}` : s.view
+      return { sheet, ...(s.listSelections[key] ? { listSelections: { ...s.listSelections, [key]: sheet } } : {}) }
+    }),
 
   // Modal
   modal: null,

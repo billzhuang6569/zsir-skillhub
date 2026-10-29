@@ -10,6 +10,7 @@ type ConfirmModalProps = {
   destructive?: boolean
   busy?: boolean
   confirmDisabled?: boolean
+  covered?: boolean // Keep the review trigger mounted for focus return without its backdrop.
   children?: ReactNode
   onCancel: () => void
   onConfirm: () => void
@@ -17,9 +18,11 @@ type ConfirmModalProps = {
 
 export default function ConfirmModal({
   eyebrow = '确认操作', title, description, confirmLabel, destructive = false,
-  busy = false, confirmDisabled = false, children, onCancel, onConfirm,
+  busy = false, confirmDisabled = false, covered = false, children, onCancel, onConfirm,
 }: ConfirmModalProps) {
-  return <FocusTrapDialog className="modal-layer above-sheet" label={title} onEscape={onCancel} escapeDisabled={busy}>
+  return <FocusTrapDialog className="modal-layer above-sheet" label={title} onEscape={onCancel} escapeDisabled={busy}
+    ariaHidden={covered}
+    style={covered ? { opacity: 0, pointerEvents: 'none' } : undefined}>
     <div className="modal-card compact">
       <div className="modal-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div><button className="ico-btn" onClick={onCancel} disabled={busy} aria-label="关闭确认对话框"><Icon name="x" size={16} /></button></div>
       <p className="modal-copy">{description}</p>

@@ -652,9 +652,22 @@ fn source_diff<'a>(
         .map_err(|e| e.to_string())
 }
 
-fn content_tree(root: &Path, repo: &git2::Repository) -> Result<git2::Oid, String> {
+pub(super) fn content_tree(root: &Path, repo: &git2::Repository) -> Result<git2::Oid, String> {
     let mut index = git2::Index::new().map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let executable_paths = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|commit| crate::version_policy::commit_content(repo, &commit))
+        .transpose()?
+        .map(|identity| identity.executable_paths)
+        .unwrap_or_default();
     for file in library_tree_files(root)? {
+        #[cfg(windows)]
+        let executable = executable_paths.contains(&file.path);
+        #[cfg(not(windows))]
+        let executable = file.executable;
         let data = fs::read(&file.absolute).map_err(|e| e.to_string())?;
         let oid = repo.blob(&data).map_err(|e| e.to_string())?;
         index
@@ -663,7 +676,7 @@ fn content_tree(root: &Path, repo: &git2::Repository) -> Result<git2::Oid, Strin
                 mtime: git2::IndexTime::new(0, 0),
                 dev: 0,
                 ino: 0,
-                mode: if file.executable { 0o100755 } else { 0o100644 },
+                mode: if executable { 0o100755 } else { 0o100644 },
                 uid: 0,
                 gid: 0,
                 file_size: data.len() as u32,
@@ -1057,6 +1070,42 @@ pub async fn get_skill_package_file_diffs(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+pub async fn get_skill_working_file_diffs(
+    skill_id: String,
+) -> Result<Vec<SkillPackageFileDiff>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_skill_id(&skill_id)?;
+        let _lock = crate::skill_lock::lock_skill_dir(&skill_id)?;
+        let path = skill_path(&skill_id);
+        let profile = library_read_profile_readonly(&path)?;
+        let _lease = version_session_lease(&profile)?;
+        reconcile_skill_projection_at(&skillhub_dir(), &skills_dir(), &skill_id)?;
+        working_file_diffs(&path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn working_file_diffs(path: &Path) -> Result<Vec<SkillPackageFileDiff>, String> {
+    let repo = crate::version_policy::open_repository(path).map_err(|error| error.to_string())?;
+    let before = match repo.head() {
+        Ok(head) => Some(head.peel_to_tree().map_err(|error| error.to_string())?),
+        Err(error) if error.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    // Use the package tree, including untracked files and raw bytes, without changing the index.
+    let after = repo
+        .find_tree(content_tree(path, &repo)?)
+        .map_err(|error| error.to_string())?;
+    let mut options = git2::DiffOptions::new();
+    options.ignore_filemode(cfg!(windows));
+    let diff = repo
+        .diff_tree_to_tree(before.as_ref(), Some(&after), Some(&mut options))
+        .map_err(|error| error.to_string())?;
+    collect_package_file_diffs(&repo, &diff)
+}
+
 fn collect_package_file_diffs(
     repo: &git2::Repository,
     diff: &git2::Diff<'_>,
@@ -1089,12 +1138,17 @@ fn collect_package_file_diffs(
             SkillPackageFileDiff {
                 path: path.to_string_lossy().to_string(),
                 status: status.to_string(),
-                binary: delta.flags().contains(git2::DiffFlags::BINARY),
+                binary: [delta.old_file().id(), delta.new_file().id()]
+                    .into_iter()
+                    .filter(|id| !id.is_zero())
+                    .any(|id| repo.find_blob(id).is_ok_and(|blob| blob.is_binary())),
                 too_large,
                 lines: Vec::new(),
             },
         );
     }
+    let mut total_lines = 0;
+    let mut total_bytes = 0;
     diff.print(git2::DiffFormat::Patch, |delta, _hunk, line| {
         let path = delta.new_file().path().or_else(|| delta.old_file().path());
         let Some(path) = path else { return true };
@@ -1107,11 +1161,17 @@ fn collect_package_file_diffs(
         if !matches!(line.origin(), '+' | '-' | ' ') {
             return true;
         }
-        if file.lines.len() >= 2_000 {
+        // Bound the IPC payload while keeping every delta in the file list.
+        if file.lines.len() >= 2_000
+            || total_lines >= 20_000
+            || total_bytes + line.content().len() > 2 * 1024 * 1024
+        {
             file.too_large = true;
             file.lines.clear();
             return true;
         }
+        total_lines += 1;
+        total_bytes += line.content().len();
         let kind = match line.origin() {
             '+' => "add",
             '-' => "del",
@@ -1176,6 +1236,138 @@ pub async fn discard_skill_source_changes(skill_id: String) -> Result<LocalSkill
 #[cfg(test)]
 mod package_diff_tests {
     use super::*;
+
+    #[test]
+    fn working_file_diff_includes_untracked_deleted_binary_and_truncated_files() {
+        let root =
+            std::env::temp_dir().join(format!("skillhub-working-diff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("SKILL.md"), "before\r\nkeep\r\n").unwrap();
+        fs::write(root.join("deleted.md"), "deleted\n").unwrap();
+        fs::write(root.join("replaced.md"), "old\n".repeat(1_001)).unwrap();
+        snapshot(&root, "baseline").unwrap();
+        let repo = crate::version_policy::open_repository(&root).unwrap();
+        let head = repo.head().unwrap().target().unwrap();
+        let index_before = fs::read(repo.path().join("index")).ok();
+
+        fs::write(root.join("SKILL.md"), "after\r\nkeep\r\n").unwrap();
+        fs::write(root.join("replaced.md"), "new\n".repeat(1_001)).unwrap();
+        fs::remove_file(root.join("deleted.md")).unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("nested/untracked.md"), "untracked\n").unwrap();
+        fs::write(root.join("binary.dat"), b"image\0data").unwrap();
+        fs::write(root.join("large.md"), "line\n".repeat(2_001)).unwrap();
+        fs::write(root.join("limit.md"), "line\n".repeat(2_000)).unwrap();
+        fs::write(root.join(".env"), "PRIVATE=not-packaged").unwrap();
+        fs::write(root.join(".skillhub.json"), "{}").unwrap();
+        let files = working_file_diffs(&root).unwrap();
+        let by_path: std::collections::HashMap<_, _> = files
+            .iter()
+            .map(|file| (file.path.as_str(), file))
+            .collect();
+        assert_eq!(files.len(), 7);
+        assert_eq!(by_path["SKILL.md"].status, "modified");
+        assert!(by_path["SKILL.md"]
+            .lines
+            .iter()
+            .any(|line| line.kind == "add" && line.new_line == Some(1) && line.content == "after"));
+        assert_eq!(by_path["deleted.md"].status, "deleted");
+        assert_eq!(by_path["deleted.md"].lines[0].old_line, Some(1));
+        assert_eq!(by_path["nested/untracked.md"].status, "added");
+        assert_eq!(by_path["nested/untracked.md"].lines[0].content, "untracked");
+        assert!(by_path["binary.dat"].binary);
+        assert!(by_path["binary.dat"].lines.is_empty());
+        assert!(by_path["large.md"].too_large);
+        assert!(by_path["large.md"].lines.is_empty());
+        assert!(by_path["replaced.md"].too_large);
+        assert!(by_path["replaced.md"].lines.is_empty());
+        assert!(!by_path["limit.md"].too_large);
+        assert_eq!(by_path["limit.md"].lines.len(), 2_000);
+        assert_eq!(repo.head().unwrap().target().unwrap(), head);
+        assert_eq!(fs::read(repo.path().join("index")).ok(), index_before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn working_file_diff_ignores_unrepresentable_windows_executable_mode() {
+        let root =
+            std::env::temp_dir().join(format!("skillhub-mode-diff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("script.sh"), "echo ready\n").unwrap();
+        let repo = crate::version_policy::init_repository(&root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("script.sh")).unwrap();
+        let mut entry = index.get_path(Path::new("script.sh"), 0).unwrap();
+        entry.mode = 0o100755;
+        index.add(&entry).unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let signature = git2::Signature::now("SkillHub Test", "test@example.invalid").unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "executable",
+            &tree,
+            &[],
+        )
+        .unwrap();
+        let files = working_file_diffs(&root).unwrap();
+        assert_eq!(files.len(), usize::from(!cfg!(windows)));
+        if !cfg!(windows) {
+            assert_eq!(files[0].status, "modified");
+            assert!(files[0].lines.is_empty());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn working_file_diff_total_budget_marks_files_without_dropping_them() {
+        let root =
+            std::env::temp_dir().join(format!("skillhub-budget-diff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        crate::version_policy::init_repository(&root).unwrap();
+        for index in 0..11 {
+            fs::write(
+                root.join(format!("file-{index:02}.md")),
+                "line\n".repeat(2_000),
+            )
+            .unwrap();
+        }
+        let files = working_file_diffs(&root).unwrap();
+        assert_eq!(files.len(), 11);
+        assert_eq!(files.iter().filter(|file| file.too_large).count(), 1);
+        assert_eq!(
+            files.iter().map(|file| file.lines.len()).sum::<usize>(),
+            20_000
+        );
+        assert!(files[10].lines.is_empty());
+        fs::remove_dir_all(&root).unwrap();
+
+        fs::create_dir_all(&root).unwrap();
+        crate::version_policy::init_repository(&root).unwrap();
+        fs::write(root.join("large.md"), "x".repeat(2 * 1024 * 1024 + 1)).unwrap();
+        fs::write(root.join("z-small.md"), "still visible\n").unwrap();
+        let files = working_file_diffs(&root).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files[0].too_large);
+        assert!(files[0].lines.is_empty());
+        assert_eq!(files[1].lines[0].content, "still visible");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn working_file_diff_without_head_lists_files_as_added() {
+        let root =
+            std::env::temp_dir().join(format!("skillhub-first-diff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        crate::version_policy::init_repository(&root).unwrap();
+        fs::write(root.join("SKILL.md"), "new skill\n").unwrap();
+        let files = working_file_diffs(&root).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].status, "added");
+        assert_eq!(files[0].lines[0].new_line, Some(1));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn package_file_diff_reports_paths_statuses_and_line_numbers() {

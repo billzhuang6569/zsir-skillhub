@@ -33,6 +33,7 @@ export function selectSkillLibraryListState(state: AppState) {
 
 export function selectSkillDetailSheetState(state: AppState) {
   return {
+    teamSkills: state.activeTeamId ? state.teamSkills[state.activeTeamId] : undefined,
     skills: state.skills,
     marketplaceSkills: state.marketplaceSkills,
     setSkills: state.setSkills,

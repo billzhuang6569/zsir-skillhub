@@ -10,16 +10,17 @@ const page = readFileSync(resolve(desktopRoot, 'src/pages/TeamSharedPage.tsx'), 
 const styles = readFileSync(resolve(desktopRoot, 'src/pages/TeamSharedPage.css'), 'utf8')
 
 test('team shared page loads real memberships, remote shares, owned metadata, and local install state', () => {
-  assert.match(page, /apiGetTeams\(\)/)
-  assert.match(page, /membershipTeams\.map\(\(team\) => apiGetTeamSkills\(team\.id\)\)/)
-  assert.match(page, /apiGetMySkills\(\)/)
+  assert.match(page, /apiGetTeams\(expectedSpace \?\? undefined\)/)
+  assert.match(page, /membershipTeams\.map\(\(team\) => apiGetTeamSkills\(team\.id, expectedSpace \?\? undefined\)\)/)
+  assert.match(page, /apiGetMySkills\(expectedSpace \?\? undefined\)/)
   assert.match(page, /getLocalSkills\(\)/)
   assert.match(page, /mergeSkillSources\(localSkills, ownedSkills/)
   assert.doesNotMatch(page, /mock|demo/i)
 })
 
 test('team shared page scopes the persistent Skill directory to the selected team and keeps detail/install actions real', () => {
-  assert.match(page, /isSkillSharedWithActiveTeam\(skill, activeTeamId\)/)
+  assert.match(page, /return cachedTeamSkills\[activeTeamId\] \?\? \[\]/)
+  assert.doesNotMatch(page, /setSkills\(mergeSkillSources/)
   assert.match(page, /setActiveTeam\(teamId\)/)
   assert.match(page, /<SkillLibraryList/)
   assert.match(page, /context="team"/)
@@ -41,7 +42,7 @@ test('team shared page distinguishes loading, unavailable, empty, and filtered-e
   assert.match(page, /className="team-shared-selector-trigger"/)
   assert.match(page, /role="menu" aria-label="切换团队"/)
   assert.match(styles, /\.team-shared-selector-menu\s*\{[^}]*position:\s*absolute;/s)
-  assert.doesNotMatch(page, /已同步|刷新团队共享|>团队详情</)
+  assert.doesNotMatch(page, /已同步|>团队详情</)
   assert.doesNotMatch(styles, /\.team-shared-team-tabs/)
   assert.match(styles, /@media \(max-width: 720px\)/)
 })

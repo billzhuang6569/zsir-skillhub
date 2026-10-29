@@ -28,7 +28,7 @@
   display: grid;
   grid-template-columns: var(--skill-library-avatar-size) minmax(0, 1fr) 220px 14px;
   grid-template-areas:
-    "avatar name side chevron"
+    "avatar name name chevron"
     "avatar text side chevron"
     "avatar desc side chevron";
   align-items: center;
@@ -121,7 +121,7 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
 .skill-library-avatar > svg { display: block; }
 
 .skill-library-copy { display: contents; }
-.skill-library-name-row { grid-area: name; display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 18px; }
+.skill-library-name-row { grid-area: name; display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; min-height: 20px; overflow: hidden; }
 .skill-library-name-row strong {
   min-width: 0;
   overflow: hidden;
@@ -275,8 +275,8 @@ button.skill-library-row:last-of-type { border-bottom: 0; border-bottom-left-rad
 .skill-context-submenu small { color: var(--color-muted); font-size: var(--font-size-caption); }
 .skill-context-team { width: 24px; height: 24px; border-radius: var(--radius-sm); display: grid; place-items: center; color: #fff; font-size: 9px; font-weight: 750; }
 
-/* Narrow Skill browser (list column clamp(360px, 34vw, 460px)): the badges lead line 2,
-   the description takes what is left of that one line. Row height is 56–60px with v0.29 type sizes. */
+/* Narrow Skill browser: the name owns the first line with version, status and source-modification badges;
+   the controls occupy only the subtitle and description lines. */
 @container skill-library (max-width: 560px) {
   .skill-library-row { grid-template-columns: var(--skill-library-avatar-size) minmax(0, 1fr) 112px 14px; padding-inline: var(--space-3); }
   .skill-library-side { width: 112px; }

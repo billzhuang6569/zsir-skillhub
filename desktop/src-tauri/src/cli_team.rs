@@ -1674,6 +1674,7 @@ async fn upload_version(
         target.local_skill_id.into(),
         created.id,
         local.git_head.clone(),
+        None,
     )
     .await
     .map_err(|_| {

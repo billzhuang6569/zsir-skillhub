@@ -2,6 +2,11 @@ import { useCatalogOffline } from '../lib/use-catalog-offline.js'
 import CatalogPublish from './CatalogPublish.js'
 import TeamSkillUpdateButton from './TeamSkillUpdateButton.js'
 import TeamSkillPushButton from './TeamSkillPushButton.js'
+import FileDiffReview from './FileDiffReview.js'
+import InfoRows from './InfoRows.js'
+import VersionChange from './VersionChange.js'
+import { versionCreateTasks, versionIdentity, useVersionCreateTask } from '../lib/version-create-runtime.js'
+import { versionTaskBlocks, versionTaskKey } from '../lib/version-create-task.js'
 import UnshareSkillDialog from './UnshareSkillDialog.js'
 import { catalogPublishMode } from '../lib/catalog-login.js'
 import { catalogOfflineAt, catalogOfflineMessage, CATALOG_INSTALL_OFFLINE } from '../lib/catalog-cache.js'
@@ -32,8 +37,8 @@ import AgentBrandIcon from './AgentBrandIcon.js'
 import type { EnvDep, LocalSkill, SkillDetailFocus, SkillDetailTab } from '../store/index.js'
 import { UNCONFIRMED_SKILL_ROOT_HINT, agentAcceptsSkillWrites, agentDisplayName, orderedAgentEntries } from '../lib/agents.js'
 import {
-  createSkillPackage, createSkillSnapshot, deleteManagedSkill, libraryDeleteFromAccount, deleteSkillEnv, detectEnvVarSuggestions, disableSkill, enableSkill,
-  getInstalledAgents, getLocalSkill, getLocalSkills, getSkillDiff, getSkillVersions, getSkillVersionState, getSkillWorkingDiff, recordSkillFormalVersion,
+  createSkillPackage, deleteManagedSkill, libraryDeleteFromAccount, deleteSkillEnv, detectEnvVarSuggestions, disableSkill, enableSkill,
+  getInstalledAgents, getLocalSkill, getLocalSkills, getSkillDiff, getSkillVersionState, getSkillWorkingFileDiffs,
   getSkillTree, importSkillPackage, inspectSkillMarkdown, installSkill, openSkillDir, preflightInstallSkill, readSkillFile, readSkillMd, restoreSkillVersion,
   rollbackMarketplaceReplacement, syncEnvDependencies, uninstallSkill, updateSkillProfile,
   ensureSkillAvatarIdentity,
@@ -46,7 +51,7 @@ import {
 import { buildEnvReview, confirmPendingKey, envDeclarationsChanged, envDeclarationsFromDependencies, envDeclarationsFromReview, envReviewIsEmpty, type EnvReview, type EnvReviewRow } from '../lib/env-declaration.js'
 import { accountDeleteResult, LIBRARY_ENTRIES_CHANGED_EVENT, requestLibrarySync } from '../lib/library-sync.js'
 import {
-  ApiError, apiCreateSkillVersion, apiDeleteComment,
+  ApiError, apiDeleteComment,
   apiCreateMarketplaceInstallIntent, apiFinishMarketplaceInstallIntent,
   apiDeleteMarketplaceComment, apiGetMarketplaceComments, apiPostMarketplaceComment,
   apiAnalyzeSkill, apiDownloadMarketplacePackage, apiDownloadSkillPackage, apiGetComments,
@@ -58,6 +63,7 @@ import type {
   AgentInfo,
   ImportSkillPreflight,
   SkillDiffLine,
+  SkillFileDiff,
   SkillFilePreview,
   SkillMarkdownInspection,
   SkillVersionState,
@@ -395,11 +401,12 @@ type SkillDetailMode = 'overlay' | 'workspace'
 export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay' }: { skillId: string; tab: SkillDetailTab; focus?: SkillDetailFocus; mode?: SkillDetailMode }) {
   const profile = useSpaceCapabilities().profile
   const {
-    skills, marketplaceSkills, setSkills, setMarketplaceSkills, replaceSkill: replaceSkillInStore,
+    skills, teamSkills, marketplaceSkills, setSkills, setMarketplaceSkills, replaceSkill: replaceSkillInStore,
     closeSheet, setSheetTab, currentUser, promptForAuth, teams, activeTeamId, view,
   } = useStore(useShallow(selectSkillDetailSheetState))
-  const skill = resolveSkillFromSources(skillId, skills, marketplaceSkills)
+  const skill = resolveSkillFromSources(skillId, view === 'team-skills' ? teamSkills ?? [] : skills, marketplaceSkills)
   const sourceSpace = useStore(state => state.authSpace)
+  const versionSpace = useStore(state => state.authSpace ?? state.activeSpace)
   const descriptionRef = useRef<HTMLParagraphElement>(null)
   const [descriptionOverflow, setDescriptionOverflow] = useState(false)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
@@ -443,6 +450,29 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
   const bodyRef = useRef<HTMLDivElement>(null)
   const manageMenuRef = useRef<HTMLDetailsElement>(null)
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const snapshotIntent = useRef<string | null>(null)
+  const [snapshotRequest, setSnapshotRequest] = useState(0)
+  const [versionDialogBusy, setVersionBusy] = useState(false)
+  const headerVersionTask = useVersionCreateTask(skill ? localManagedSkillId(skill) : '')
+  const versionBusy = versionDialogBusy || versionTaskBlocks(headerVersionTask)
+  const hasVersionChanges = Boolean(skill && canManageSkillAsset(skill) && skill.hasWorkingCopy)
+  useLayoutEffect(() => {
+    snapshotIntent.current = null
+    setVersionBusy(false)
+  }, [skillId, sourceSpace, currentUser?.id])
+  const requestSnapshot = (): void => {
+    if (headerVersionTask?.phase === 'failed') { setSheetTab('versions'); return }
+    if (!skill || !canManageSkillAsset(skill) || versionBusy) return
+    snapshotIntent.current = skillId
+    setSnapshotRequest((value) => value + 1)
+    setSheetTab('versions')
+    tabRefs.current[detailTabs.findIndex((item) => item.key === 'versions')]?.focus()
+  }
+  const consumeSnapshotIntent = (): boolean => {
+    const requested = snapshotIntent.current === skillId
+    snapshotIntent.current = null
+    return requested
+  }
   const agentLoadGenerationRef = useRef(0)
   const installIntentRef = useRef<Promise<string | undefined> | null>(null)
   const ensureMarketplaceInstallIntent = (): Promise<string | undefined> => {
@@ -586,7 +616,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         spaceId: acquisitionSpace.spaceId,
         currentUserId: useStore.getState().currentUser?.id, localSkills: getLocalSkills, download: apiDownloadMarketplacePackage, importPackage: (data) => importSkillPackage(data, acquisitionSpace),
       }, update)
-      replaceSkillInStore(local.id, local)
+      replaceSkillInStore(local.id, local, true)
       setMarketUpdateOpen(false)
       if (receipt) void apiFinishMarketplaceInstallIntent(receipt, 'completed').catch(() => undefined)
       toast(update ? 'Skill 已更新' : '已加入我的 Skills')
@@ -664,7 +694,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         currentAsset = await acquireTeamSkill(skill, currentUser?.id ?? '', skill.teamSharedFrom, installSpace)
         localId = currentAsset.id
         acquired = { id: localId, acquisitionSource: 'team', envDeps: currentAsset.envDeps }
-        replaceSkillInStore(skill.id, currentAsset)
+        replaceSkillInStore(skill.id, currentAsset, true)
       } else if (!skill.localPath) {
         if (!skill.serverId) throw new Error('该资产缺少服务端标识，无法下载')
         const serverOwnerId = skill.serverOwnerId ?? currentUser?.id
@@ -711,7 +741,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         localId = imported.id
         acquired = { id: imported.id, acquisitionSource: imported.acquisitionSource ?? acquisitionSource, envDeps: imported.envDeps }
         currentAsset = hydrateDownloadedSkill(downloadedSkill, imported)
-        replaceSkillInStore(skill.id, currentAsset)
+        replaceSkillInStore(skill.id, currentAsset, true)
       }
 
       const plan = await preflightInstallSkill(localId, selectedAgents)
@@ -736,7 +766,7 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         planDigest: plan.planDigest,
       })
       const refreshed = await localSkill(localId)
-      if (refreshed) replaceSkillInStore(localId, reconcileLocalSkillRefresh(currentAsset, refreshed))
+      if (refreshed) replaceSkillInStore(localId, reconcileLocalSkillRefresh(currentAsset, refreshed), true)
       setInstallStep('done')
       if (marketplaceIntentId) void apiFinishMarketplaceInstallIntent(marketplaceIntentId, 'completed').catch(() => undefined)
       toast(`「${skill.displayName}」已真实安装`)
@@ -936,17 +966,17 @@ export default function SkillDetailSheet({ skillId, tab, focus, mode = 'overlay'
         {isMarketplaceCatalogSource(skill)
           ? <SkillAvatarIcon className="sh-cat-icon sh-store-avatar" avatarUrl={skill.avatarUrl} status={skill.avatarStatus} size={64} />
           : <SkillAvatarControl key={skill.id} skill={skill} />}<div className="sh-idtx" {...blankDragRegion()}><SkillDetailTitle skill={skill} onCopyName={copySkillName} problem={<SkillProblemButton skill={skill} onRepair={(brokenAgents) => void openInstall(brokenAgents)} />} />{skill.description && <><p ref={descriptionRef} className="sh-desc">{skill.description}</p>{descriptionOverflow && <button type="button" className="connection-link sh-desc-more" aria-haspopup="dialog" onClick={(event) => { event.currentTarget.focus(); setDescriptionOpen(true) }}>更多</button>}</>}{isMarketplaceCatalogSource(skill) && <EditorialLabels labels={editorialLabelsBesideBadges(skill.marketplaceEditorialLabels, skill.marketplaceBadges)} limit={0}/>}<div className="sh-meta" {...blankDragRegion()}>{unanalysed && <span className="chip">未分析</span>}{skill.category && <span className="tsh-tag">{skill.category}</span>}{skill.labels.slice(0, 3).map((label) => <span key={label} className="tsh-tag">{label}</span>)}{!teamDetail && <span className="tsh-tag tsh-tag-brand mono">{versionDisplay.label}</span>}{skill.versionStatus === 'pending' && <span className="tsh-tag">待确认</span>}{skill.hasWorkingCopy && <span className="tsh-tag">已修改</span>}{skill.formalLabel && skill.formalLabel !== skill.version && <span className="tsh-tag">来源版本 {skill.formalLabel}</span>}{detailTeamName && <span className="tsh-tag"><Icon name="team" size={13} strokeWidth={1.75} className="tsh-icon" />来自 {detailTeamName}</span>}</div><SkillOriginLineView skill={skill} />{isMarketplaceCatalogSource(skill) && <StoreDetailFacts skill={skill} />}{versionDisplay.problem && <p className="banner banner-error" role="status">{versionDisplay.problem}</p>}<AvatarStatusRow skill={skill} /></div>
-        <div className="sh-act" {...blankDragRegion()}>{skill.localPath && !skill.isSystem && <details ref={manageMenuRef} className="skill-manage-menu"><summary className="btn btn-ghost">管理 Skill</summary><div><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setConfirmation('uninstall') }}>在所有 Agent 停用</button><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setUnmanageOpen(true) }}>取消 SkillHub 托管</button><button className="btn btn-danger-soft" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setDeleteError(null); setConfirmation('delete') }}>删除…</button></div></details>}{skill.isSystem ? <span className="tsh-tag tsh-tag-brand"><Icon name="check" size={13} strokeWidth={1.75} className="tsh-icon" />系统自动维护</span> : isMarketplaceCatalogSource(skill) ? <button className={`btn btn-ghost btn-lg${marketAction.update ? ' marketplace-update' : ''}`} title={offlineAt ? CATALOG_INSTALL_OFFLINE : marketAction.update ? sourceUpdateReason ?? undefined : undefined} disabled={Boolean(offlineAt) || marketBusy || (marketAction.update && Boolean(sourceUpdateReason)) || (marketAction.joined && !marketAction.update)} onClick={() => marketAction.update ? setMarketUpdateOpen(true) : void acquireFromStore()}>{marketBusy ? '处理中…' : marketAction.update && sourceChecking ? '核验中…' : marketAction.label}</button> : !skill.localPath && (skill.marketplaceReplacementLocalId
+        <div className="sh-act" {...blankDragRegion()}>{skill.localPath && !skill.isSystem && <details ref={manageMenuRef} className="skill-manage-menu"><summary className="btn btn-ghost">管理 Skill</summary><div><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setConfirmation('uninstall') }}>在所有 Agent 停用</button><button className="btn btn-ghost" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setUnmanageOpen(true) }}>取消 SkillHub 托管</button><button className="btn btn-danger-soft" onClick={() => { manageMenuRef.current?.removeAttribute('open'); setDeleteError(null); setConfirmation('delete') }}>删除…</button></div></details>}{hasVersionChanges && <button type="button" className="btn btn-soft btn-sm sh-create-version" aria-haspopup="dialog" disabled={versionBusy && headerVersionTask?.phase !== 'failed'} onClick={requestSnapshot}>{headerVersionTask?.phase === 'failed' ? '查看创建状态' : versionTaskBlocks(headerVersionTask) ? '正在创建…' : '创建新版本'}</button>}{skill.isSystem ? <span className="tsh-tag tsh-tag-brand"><Icon name="check" size={13} strokeWidth={1.75} className="tsh-icon" />系统自动维护</span> : isMarketplaceCatalogSource(skill) ? <button className={`btn btn-ghost btn-lg${marketAction.update ? ' marketplace-update' : ''}`} title={offlineAt ? CATALOG_INSTALL_OFFLINE : marketAction.update ? sourceUpdateReason ?? undefined : undefined} disabled={Boolean(offlineAt) || marketBusy || (marketAction.update && Boolean(sourceUpdateReason)) || (marketAction.joined && !marketAction.update)} onClick={() => marketAction.update ? setMarketUpdateOpen(true) : void acquireFromStore()}>{marketBusy ? '处理中…' : marketAction.update && sourceChecking ? '核验中…' : marketAction.label}</button> : !skill.localPath && (skill.marketplaceReplacementLocalId
           ? <button className="btn btn-primary btn-lg" onClick={() => void openInstall()}><Icon name="import" size={15} />更新到商店审核版本</button>
           // #295 board 9: a 36px brand icon button 「获取到本机」 replaces the 「下载并安装」 text button.
           : <button type="button" className="btn btn-primary sh-get-btn" aria-label="获取到本机" title="获取到本机" onClick={() => void openInstall()}><Icon name="download" size={17} /></button>)}</div>
-      </div><div className="sh-tabs" role="tablist" aria-label="Skill 详情栏目" {...blankDragRegion()}>{detailTabs.map((item, index) => <button key={item.key} ref={(element) => { tabRefs.current[index] = element }} id={`skill-detail-tab-${item.key}`} role="tab" aria-selected={tab === item.key} aria-controls={`skill-detail-panel-${item.key}`} tabIndex={tab === item.key ? 0 : -1} className={`sh-tab${tab === item.key ? ' on' : ''}`} onClick={() => setSheetTab(item.key)} onKeyDown={(event) => onTabKeyDown(event, index)}><Icon name={item.icon} size={14} /><span>{item.label}</span>{item.key === 'environment' && keyAttention > 0 && <span className="sh-tab-count" aria-label={`${keyAttention} 把钥匙需要处理`}>{keyAttention}</span>}</button>)}</div></div>
+      </div><div className="sh-tabs" role="tablist" aria-label="Skill 详情栏目" {...blankDragRegion()}>{detailTabs.map((item, index) => <button key={item.key} ref={(element) => { tabRefs.current[index] = element }} id={`skill-detail-tab-${item.key}`} role="tab" aria-selected={tab === item.key} aria-controls={`skill-detail-panel-${item.key}`} tabIndex={tab === item.key ? 0 : -1} className={`sh-tab${tab === item.key ? ' on' : ''}`} onClick={() => setSheetTab(item.key)} onKeyDown={(event) => onTabKeyDown(event, index)}><Icon name={item.icon} size={14} /><span>{item.label}</span>{item.key === 'versions' && hasVersionChanges && <span className="sh-tab-change-dot" role="img" aria-label="有未保存为版本的修改" title="有未保存为版本的修改" />}{item.key === 'environment' && keyAttention > 0 && <span className="sh-tab-count" aria-label={`${keyAttention} 把钥匙需要处理`}>{keyAttention}</span>}</button>)}</div></div>
       <div className="sh-body" ref={bodyRef} id={`skill-detail-panel-${tab}`} role="tabpanel" aria-labelledby={`skill-detail-tab-${tab}`} tabIndex={0}>
         {skill.localPath && <SourceEdits key={managedSkillId} skill={skill} replaceSkill={replaceSkill} checking={sourceChecking} baselineError={sourceCheck?.id === managedSkillId ? sourceCheck.error : null} />}
         {tab === 'profile' && <ProfileTab skill={skill} installedAgents={agents} agentsLoading={agentsLoading} replaceSkill={replaceSkill} onRefresh={() => refreshLocal()} onRepairAgent={(agent) => void openInstall([agent])} onSync={(announce) => syncToServer(announce)} onRequestSync={() => currentUser ? activeSyncJobs.has(`${currentUser.id}:${managedSkillId}`) ? toast('这个 Skill 正在重新同步') : setConfirmation('sync') : promptForAuth({ reason: '登录后可由 AI 完善资料，并同步到云端或团队' })} syncBusy={syncBusy} onDelete={() => { setDeleteError(null); setConfirmation('delete') }} showDiscussion={view !== 'skills'} discussionTargetId={focus?.startsWith('comment:') ? focus.slice('comment:'.length) : undefined} />}
         {tab === 'details' && <DetailsTab skill={skill} />}
         {tab === 'environment' && <EnvironmentTab skill={skill} replaceSkill={replaceSkill} />}
-        {tab === 'versions' && <VersionsTab key={`${currentUser?.id ?? 'guest'}:${managedSkillId}`} skill={skill} replaceSkill={replaceSkill} />}
+        {tab === 'versions' && <VersionsTab key={`${versionSpace?.spaceId}:${versionSpace?.generation}:${currentUser?.id ?? 'guest'}:${managedSkillId}`} skill={skill} replaceSkill={replaceSkill} snapshotRequest={snapshotRequest} consumeSnapshotIntent={consumeSnapshotIntent} requestSnapshot={requestSnapshot} onBusyChange={setVersionBusy} />}
       </div>
   </>
   return <>
@@ -1326,7 +1356,14 @@ function DetailsTab({ skill }: { skill: LocalSkill }) {
   </div>
 }
 
-function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill: (skill: LocalSkill) => void }) {
+function VersionsTab({ skill, replaceSkill, snapshotRequest, consumeSnapshotIntent, requestSnapshot, onBusyChange }: {
+  skill: LocalSkill
+  replaceSkill: (skill: LocalSkill) => void
+  snapshotRequest: number
+  consumeSnapshotIntent: () => boolean
+  requestSnapshot: () => void
+  onBusyChange: (busy: boolean) => void
+}) {
   const capabilities = useSpaceCapabilities()
   const offlineAt = useCatalogOffline()
   const versionDisplay = skillVersionDisplay(skill)
@@ -1338,6 +1375,8 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
     ? currentAccountServerId(skill, currentUser.id)
     : undefined
   const [snapshotOpen, setSnapshotOpen] = useState(false)
+  const snapshotOpening = useRef(false)
+  const lastHandledRequest = useRef<number | null>(null)
   const { reviewEnvDeclarations, envReviewElement } = useEnvDeclarationReview()
   const [version, setVersion] = useState('')
   const [changelog, setChangelog] = useState('保存当前状态')
@@ -1346,14 +1385,22 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
   const [remoteLoading, setRemoteLoading] = useState(Boolean(remoteServerId))
   const [remoteError, setRemoteError] = useState<string | null>(null)
   const [remoteReload, setRemoteReload] = useState(0)
-  const [snapshotDiff, setSnapshotDiff] = useState<SkillDiffLine[] | null>(null)
+  const [snapshotDiff, setSnapshotDiff] = useState<SkillFileDiff[] | null>(null)
+  const [snapshotTree, setSnapshotTree] = useState<SkillTreeEntry[]>([])
+  const [snapshotReviewOpen, setSnapshotReviewOpen] = useState(false)
+  const [snapshotError, setSnapshotError] = useState('')
   const [versionState, setVersionState] = useState<SkillVersionState | null>(null)
   const [suggestedVersion, setSuggestedVersion] = useState<string | null>(null)
   const [remoteRepair, setRemoteRepair] = useState<ApiSkillVersion | null>(null)
-  const publishRequest = useRef<{ serverId: string; body: Parameters<typeof apiCreateSkillVersion>[1]; accountId: string; space: SpaceHandle } | null>(null)
+  const versionTask = useVersionCreateTask(managedSkillId)
+  const versionScope = useRef(versionTaskKey(versionIdentity(managedSkillId)))
+  const [abandonTask, setAbandonTask] = useState<string | null>(null)
   const [diffView, setDiffView] = useState<{ title: string; lines: SkillDiffLine[] } | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [dialogBusy, setBusy] = useState(false)
+  const busy = dialogBusy || versionTaskBlocks(versionTask)
+  useEffect(() => { onBusyChange(busy) }, [busy, onBusyChange])
+  useEffect(() => () => onBusyChange(false), [onBusyChange])
   useEffect(() => {
     if (!remoteServerId) {
       setRemoteVersions([])
@@ -1373,78 +1420,46 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
       })
       .finally(() => { if (active) setRemoteLoading(false) })
     return () => { active = false }
-  }, [remoteReload, remoteServerId, skill.teamSharedFrom])
+  }, [remoteReload, remoteServerId, skill.teamSharedFrom, versionTask?.phase])
 
   const versionRows = mergeSkillVersionHistory(skill.versions, remoteVersions, skill.formalVersionId)
   const saveSnapshot = async (): Promise<void> => {
     if (!canManage) return toast('团队共享 Skill 仅作者可以创建版本', 'error')
     if (!skill.localPath || !changelog.trim()) return
-    const accountId = currentUser?.id ?? null
-    const space = readAuthSpace()
-    const sessionMatches = (): boolean => (useStore.getState().currentUser?.id ?? null) === accountId && readAuthSpace() === space
+    const identity = versionIdentity(managedSkillId)
+    const { accountId, space } = identity
+    const sessionMatches = (): boolean => versionTaskKey(versionIdentity(managedSkillId)) === versionScope.current && versionTaskKey(identity) === versionScope.current
     const assertSession = (): void => { if (!sessionMatches()) throw new Error('账号已切换，请重新打开版本窗口') }
-    const refreshLocal = async (): Promise<void> => {
-      const local = await getLocalSkill(managedSkillId)
-      if (local && sessionMatches()) {
-        local.versions = await getSkillVersions(managedSkillId)
-        if (sessionMatches()) replaceSkill(reconcileLocalSkillRefresh(skill, local))
-      }
-    }
+    if (busy) return
+    setSnapshotError('')
     setBusy(true)
-    let remoteCreated: ApiSkillVersion | null = null
     try {
       assertSession()
-      if (remoteRepair) {
-        await recordSkillFormalVersion(managedSkillId, remoteRepair.id)
-      } else {
-        const serverId = accountId ? currentOwnedServerSkillId(skill, accountId) : undefined
-        if (!publishRequest.current) {
-          const state = await getSkillVersionState(managedSkillId)
-          assertSession()
-          setVersionState(state)
-          const allocation = skillSnapshotAllocation(version, suggestedVersion)
-          const publishingFormal = Boolean(serverId && !state.pendingAllocation)
-          if (state.pending && !state.pendingAllocation && !skill.hasWorkingCopy) throw new Error('当前版本选择或绑定正在等待同步，暂不能调整编号')
-          const error = publishingFormal
-            ? skillVersionInputError(version, state.highWater, remoteVersions.flatMap((item) => [item.version, ...(item.aliases ?? [])]))
-            : skillSnapshotInputError(version, state.highWater, allocation, state.pendingLabel)
-          if (error) throw new Error(error)
-          if (serverId && publishingFormal) {
-            if (!accountId || !space) throw new Error('请重新登录后再试')
-            const [packageData, skillMd] = await Promise.all([createSkillPackage(managedSkillId), readSkillMd(managedSkillId)])
-            assertSession()
-            publishRequest.current = { serverId, accountId, space, body: {
-              version, changelog: changelog.trim(), skillMd,
-              envDependencies: skill.envDeps.map(({ key, description, required, obtain }) => ({ key, description, required, obtain })),
-              packageBase64: packageData.base64, packageSha256: packageData.sha256,
-            } }
-          }
-        }
-        const request = publishRequest.current
-        if (request) {
-          if (request.accountId !== accountId || request.space !== space) throw new Error('账号已切换，请重新打开版本窗口')
-          // Retry the exact request: public metadata cannot prove the server's full digest.
-          remoteCreated = await apiCreateSkillVersion(request.serverId, request.body)
-          assertSession()
-          await recordSkillFormalVersion(managedSkillId, remoteCreated.id)
-        } else {
-          const allocation = skillSnapshotAllocation(version, suggestedVersion)
-          await createSkillSnapshot(managedSkillId, changelog.trim(), allocation === 'manual' ? version : undefined, allocation)
-        }
+      const serverId = accountId ? currentOwnedServerSkillId(skill, accountId) : undefined
+      let publishingFormal = false
+      const allocation = skillSnapshotAllocation(version, suggestedVersion)
+      if (!remoteRepair) {
+        const state = await getSkillVersionState(managedSkillId)
+        assertSession()
+        setVersionState(state)
+        publishingFormal = Boolean(serverId && !state.pendingAllocation)
+        if (state.pending && !state.pendingAllocation && !skill.hasWorkingCopy) throw new Error('当前版本选择或绑定正在等待同步，暂不能调整编号')
+        const latestRemote = publishingFormal && serverId ? await apiGetSkillVersions(serverId) : []
+        assertSession()
+        const error = publishingFormal
+          ? skillVersionInputError(version, state.highWater, latestRemote.flatMap((item) => [item.version, ...(item.aliases ?? [])]))
+          : skillSnapshotInputError(version, state.highWater, allocation, state.pendingLabel)
+        if (error) throw new Error(error)
       }
-      assertSession()
-      await refreshLocal()
-      publishRequest.current = null
+      if ((publishingFormal || remoteRepair) && (!accountId || !space)) throw new Error('请重新登录后再试')
+      await versionCreateTasks.start({ ...identity, version, changelog: changelog.trim(), allocation,
+        serverId: publishingFormal ? serverId : undefined, repair: remoteRepair ?? undefined })
       setSnapshotOpen(false)
-      setRemoteReload((value) => value + 1)
-      requestLibrarySync()
-      toast(remoteCreated || remoteRepair ? '正式版本已记录，账号状态等待同步确认' : accountId ? '版本已保存在本机，等待账号同步确认' : '版本已保存在本机')
+      setSnapshotReviewOpen(false)
     } catch (error: unknown) {
       if (!sessionMatches()) return
-      if (error instanceof ApiError && error.status !== null && error.status >= 400 && error.status < 500) publishRequest.current = null
-      toast(remoteCreated ? `云端版本已创建，本机记录尚未完成：${messageOf(error)}` : `保存未完成：${messageOf(error)}`, 'error')
-      setRemoteReload((value) => value + 1)
-      try { await refreshLocal() } catch { /* Preserve the original actionable error. */ }
+      const message = `保存未完成：${messageOf(error)}`
+      setSnapshotError(message)
     } finally { setBusy(false) }
   }
   const restore = async (target: { hash: string; receiptId?: string }): Promise<void> => {
@@ -1467,44 +1482,58 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
     finally { setBusy(false) }
   }
   const openSnapshot = async (): Promise<void> => {
+    if (!canManage || busy || snapshotOpen || snapshotOpening.current) return
     if (!skill.hasWorkingCopy && skill.versionStatus !== 'unversioned' && skill.versionStatus !== 'pending') return
-    // A version published to the server first confirms its keys (#251); the
-    // written frontmatter then shows up in the diff below.
-    if (currentUser && currentOwnedServerSkillId(skill, currentUser.id)) {
-      const reviewed = await reviewEnvDeclarations(managedSkillId, skill.envDeps)
-      if (!reviewed.ok) return
-      if (reviewed.skill) replaceSkill(reconcileLocalSkillRefresh(skill, reviewed.skill))
-    }
-    setRemoteRepair(null)
-    publishRequest.current = null
-    setVersionState(null)
-    setSuggestedVersion(null)
-    setVersion('')
-    setChangelog('保存检测到的本地修改')
-    setSnapshotDiff(null)
-    setSnapshotOpen(true)
-    setDiffLoading(true)
+    snapshotOpening.current = true
     try {
-      const [state, diff] = await Promise.all([getSkillVersionState(managedSkillId), getSkillWorkingDiff(managedSkillId)])
-      setVersionState(state)
-      const suggestion = skillSnapshotSuggestedVersion(state)
-      setSuggestedVersion(suggestion)
-      setVersion(suggestion)
-      setSnapshotDiff(diff)
-    } catch (error: unknown) { toast(`读取版本状态失败：${messageOf(error)}`, 'error') }
-    finally { setDiffLoading(false) }
+      // A version published to the server first confirms its keys (#251); the
+      // written frontmatter then shows up in the diff below.
+      if (currentUser && currentOwnedServerSkillId(skill, currentUser.id)) {
+        const reviewed = await reviewEnvDeclarations(managedSkillId, skill.envDeps)
+        if (!reviewed.ok) return
+        if (reviewed.skill) replaceSkill(reconcileLocalSkillRefresh(skill, reviewed.skill))
+      }
+      setRemoteRepair(null)
+      setVersionState(null)
+      setSuggestedVersion(null)
+      setVersion('')
+      setChangelog('保存检测到的本地修改')
+      setSnapshotDiff(null)
+      setSnapshotTree([])
+      setSnapshotReviewOpen(false)
+      setSnapshotError('')
+      setSnapshotOpen(true)
+      setDiffLoading(true)
+      try {
+        const [state, diff, tree] = await Promise.all([getSkillVersionState(managedSkillId), getSkillWorkingFileDiffs(managedSkillId), getSkillTree(managedSkillId).catch((): SkillTreeEntry[] => [])])
+        setSnapshotTree(tree)
+        setVersionState(state)
+        const suggestion = skillSnapshotSuggestedVersion(state)
+        setSuggestedVersion(suggestion)
+        setVersion(suggestion)
+        setSnapshotDiff(diff)
+      } catch (error: unknown) { setSnapshotError(`读取版本状态失败：${messageOf(error)}，请关闭后重试`) }
+      finally { setDiffLoading(false) }
+    } finally { snapshotOpening.current = false }
   }
+  useEffect(() => {
+    if (lastHandledRequest.current === snapshotRequest) return
+    lastHandledRequest.current = snapshotRequest
+    if (consumeSnapshotIntent()) void openSnapshot()
+  }, [snapshotRequest, consumeSnapshotIntent])
   const openRemoteRepair = (remote: ApiSkillVersion): void => {
     setRemoteRepair(remote)
-    publishRequest.current = null
     setVersion(remote.version)
     setChangelog(remote.changelog?.trim() || '补全本机版本记录')
     setSnapshotDiff(null)
+    setSnapshotTree([])
+    setSnapshotReviewOpen(false)
+    setSnapshotError('')
     setSnapshotOpen(true)
     setDiffLoading(true)
-    void getSkillWorkingDiff(managedSkillId)
-      .then(setSnapshotDiff)
-      .catch((error: unknown) => toast(`读取内容区别失败：${messageOf(error)}`, 'error'))
+    void Promise.all([getSkillWorkingFileDiffs(managedSkillId), getSkillTree(managedSkillId).catch((): SkillTreeEntry[] => [])])
+      .then(([files, tree]) => { setSnapshotDiff(files); setSnapshotTree(tree) })
+      .catch((error: unknown) => setSnapshotError(`读取内容区别失败：${messageOf(error)}，请关闭后重试`))
       .finally(() => setDiffLoading(false))
   }
   const openHistoryDiff = async (fromHash: string, toHash: string, title: string): Promise<void> => {
@@ -1514,15 +1543,25 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
     finally { setDiffLoading(false) }
   }
   const repairingRemoteVersion = remoteRepair !== null
-  const versionError = repairingRemoteVersion || publishRequest.current ? null
+  const versionError = repairingRemoteVersion ? null
     : versionState ? versionState.pending && !versionState.pendingAllocation && !skill.hasWorkingCopy
       ? '当前版本选择或绑定正在等待同步，暂不能调整编号'
       : currentUser && currentOwnedServerSkillId(skill, currentUser.id) && !versionState.pendingAllocation
         ? skillVersionInputError(version, versionState.highWater)
         : skillSnapshotInputError(version, versionState.highWater, skillSnapshotAllocation(version, suggestedVersion), versionState.pendingLabel)
       : '正在读取完整版本记录'
+  const snapshotSubmitDisabled = diffLoading || snapshotDiff === null || Boolean(versionError) || (!repairingRemoteVersion && skill.versionStatus !== 'unversioned' && !versionState?.pendingAllocation && !snapshotDiff?.length) || !changelog.trim()
+  const snapshotSubmitLabel = repairingRemoteVersion ? '确认补全' : versionState?.pendingAllocation ? '保存编号并重新同步' : '创建版本'
+  const snapshotTitle = repairingRemoteVersion ? '补全本机版本记录' : versionState?.pendingAllocation ? '调整待确认编号' : '确认本次修改'
+  const snapshotForm = (autoFocus: boolean): ReactNode => <div className="form-stack"><label>版本号<input autoFocus={autoFocus} value={version} disabled={dialogBusy} readOnly={repairingRemoteVersion} onChange={event => setVersion(event.target.value)} placeholder="例如 0.1.1" /></label><label>变更说明<textarea rows={2} value={changelog} disabled={dialogBusy} readOnly={repairingRemoteVersion} onChange={event => setChangelog(event.target.value)} placeholder="说明本次变更" /></label></div>
+  const snapshotNotices = <>
+    {repairingRemoteVersion && <div className="banner banner-info">云端已有这个版本。本操作只补齐本机的版本记录，不会覆盖 Skill 文件。点击「查看区别」可审阅当前内容与本机上次记录的区别。</div>}
+    {(snapshotError || versionError) && <div className="banner banner-error" role="alert">{snapshotError || versionError}</div>}
+  </>
   return <><div><div className="panel-title-row"><div><h3>版本历史</h3><p className="panel-subtitle">{canManage ? '当你的 Skill 发生变化时，SkillHub 可以保留旧版本' : '团队共享版本，仅作者可创建新版本'}</p></div></div>
-    {(skill.hasWorkingCopy || skill.versionStatus === 'unversioned' || skill.versionStatus === 'pending') && <div className="working-copy-banner"><span className="working-copy-icon"><Icon name="hist" size={16} /></span><div><b>{skill.hasWorkingCopy ? '当前 Skill 内容有改动' : versionDisplay.problem ? '版本记录需要处理' : skill.versionStatus === 'pending' ? '当前版本操作待确认' : '版本记录待保存'}</b><span>{skill.hasWorkingCopy ? `${skill.workingCopyChanges ?? 0} 个文件有变化` : versionDisplay.problem ?? (skill.versionStatus === 'pending' ? '账号同步尚未确认，请查看当前版本状态' : '保存当前内容后可继续管理版本')}</span></div>{canManage && <button className="btn btn-primary btn-sm" onClick={() => void openSnapshot()}>{skill.versionStatus === 'pending' ? '查看待确认状态' : '查看区别并创建版本'}</button>}</div>}
+    {versionTask && (versionTaskBlocks(versionTask) || versionTask.error) && <div className={`banner ${versionTask.error ? 'banner-error' : 'banner-info'}`} role="status"><span>{versionTask.error ?? `正在创建 ${versionTask.version}…`}</span>{versionTask.phase === 'failed' && <><button className="btn btn-soft btn-sm" onClick={() => versionCreateTasks.retry(versionTask.key)}>{versionTask.result ? '补全本机记录' : '原样重试'}</button>{versionTask.serverId && !versionTask.result && <button className="btn btn-ghost btn-sm" onClick={() => setAbandonTask(versionTask.key)}>放弃本次并到版本历史核对</button>}{(versionTask.result || !versionTask.serverId) && <button className="btn btn-ghost btn-sm" onClick={() => { versionCreateTasks.deferRecord(versionTask.key); requestLibrarySync() }}>{versionTask.result ? '稍后从版本历史补全' : '重新检查版本状态'}</button>}</>}</div>}
+    {abandonTask && <ConfirmModal title="放弃本次并到版本历史核对？" description="远端可能已创建版本，本操作仅释放本机任务与快照，不会回滚远端。请在版本历史核对，并使用补全或修复流程处理本机记录。" confirmLabel="放弃本次并核对" destructive onCancel={() => setAbandonTask(null)} onConfirm={() => { versionCreateTasks.abandonUnknown(abandonTask); setAbandonTask(null); setRemoteReload(value => value + 1); requestLibrarySync() }} />}
+    {(skill.hasWorkingCopy || skill.versionStatus === 'unversioned' || skill.versionStatus === 'pending') && <div className="working-copy-banner"><span className="working-copy-icon"><Icon name="hist" size={16} /></span><div><b>{skill.hasWorkingCopy ? '当前 Skill 内容有改动' : versionDisplay.problem ? '版本记录需要处理' : skill.versionStatus === 'pending' ? '当前版本操作待确认' : '版本记录待保存'}</b><span>{skill.hasWorkingCopy ? `${skill.workingCopyChanges ?? 0} 个文件有变化` : versionDisplay.problem ?? (skill.versionStatus === 'pending' ? '账号同步尚未确认，请查看当前版本状态' : '保存当前内容后可继续管理版本')}</span></div>{canManage && <button className="btn btn-primary btn-sm" disabled={busy} onClick={requestSnapshot}>{versionTaskBlocks(versionTask) ? '正在创建…' : skill.versionStatus === 'pending' ? '查看待确认状态' : '查看区别并创建版本'}</button>}</div>}
     {remoteLoading && versionRows.length === 0
       ? <SkeletonBlock layout="rows" count={3} compact label={LOADING_COPY.sheetVersions} />
       : <>{remoteError && <LoadError message={loadFailedMessage('服务端版本', remoteError)} retrying={remoteLoading} onRetry={() => setRemoteReload((value) => value + 1)} />}{versionRows.length === 0
@@ -1541,7 +1580,21 @@ function VersionsTab({ skill, replaceSkill }: { skill: LocalSkill; replaceSkill:
           </article>
         })}</div>}</>}</div>
     {envReviewElement}
-    {snapshotOpen && <FocusTrapDialog className="modal-layer above-sheet" label="创建 Skill 版本" onEscape={() => setSnapshotOpen(false)} escapeDisabled={busy}><div className="modal-card skill-dialog diff-modal"><div className="modal-head"><div><span className="eyebrow">版本历史</span><h2>{repairingRemoteVersion ? '补全本机版本记录' : versionState?.pendingAllocation ? '调整待确认编号' : '确认本次修改'}</h2></div><button className="ico-btn" onClick={() => setSnapshotOpen(false)} disabled={busy} aria-label="关闭版本对话框"><Icon name="x" size={16} /></button></div>{repairingRemoteVersion && <p className="modal-copy">云端已有这个版本。本操作只补齐本机的版本记录，不会覆盖 Skill 文件。</p>}{versionError && <p className="banner banner-error" role="alert">{versionError}</p>}{publishRequest.current && <p className="modal-copy">上次请求尚未确认。重试将发送完全相同的内容；关闭后可刷新历史并补全已创建的正式版本记录。</p>}<DiffPreview lines={snapshotDiff ?? []} loading={diffLoading} /><div className="form-stack"><label>版本号<input autoFocus value={version} readOnly={repairingRemoteVersion || publishRequest.current !== null} onChange={(event) => setVersion(event.target.value)} placeholder="例如 0.1.1" /></label><label>变更说明<textarea rows={3} value={changelog} readOnly={repairingRemoteVersion || publishRequest.current !== null} onChange={(event) => setChangelog(event.target.value)} placeholder="说明本次变更" /></label></div><div className="modal-actions"><button className="btn btn-ghost" onClick={() => setSnapshotOpen(false)} disabled={busy}>取消</button><button className="btn btn-primary" onClick={() => void saveSnapshot()} disabled={busy || diffLoading || Boolean(versionError) || (!repairingRemoteVersion && !publishRequest.current && skill.versionStatus !== 'unversioned' && !versionState?.pendingAllocation && !snapshotDiff?.length) || !changelog.trim()}>{busy ? '保存中…' : repairingRemoteVersion ? '确认补全' : publishRequest.current ? '重试原请求' : versionState?.pendingAllocation ? '保存编号并重新同步' : '创建版本'}</button></div></div></FocusTrapDialog>}
+    {snapshotOpen && <FocusTrapDialog className="modal-layer above-sheet" label="创建 Skill 版本" onEscape={() => setSnapshotOpen(false)} escapeDisabled={busy}
+      ariaHidden={snapshotReviewOpen}
+      style={snapshotReviewOpen ? { opacity: 0, pointerEvents: 'none' } : undefined}>
+      <div className="modal-card compact"><div className="modal-head"><div><span className="eyebrow">版本历史</span><h2>{snapshotTitle}</h2></div><button className="ico-btn" onClick={() => setSnapshotOpen(false)} disabled={busy} aria-label="关闭版本对话框"><Icon name="x" size={16} /></button></div>
+        <InfoRows rows={[{ label: '变化文件', value: diffLoading ? '正在检查…' : `${snapshotDiff?.length ?? 0} 个` }]} />
+        <button type="button" className="btn btn-soft" disabled={busy || diffLoading || snapshotDiff === null} onClick={() => setSnapshotReviewOpen(true)}>查看区别</button>
+        {snapshotForm(true)}
+        {snapshotNotices}
+        <div className="modal-actions"><button className="btn btn-ghost" onClick={() => setSnapshotOpen(false)} disabled={busy}>取消</button><button className="btn btn-primary" onClick={() => void saveSnapshot()} disabled={busy || snapshotSubmitDisabled}>{busy ? '保存中…' : snapshotSubmitLabel}</button></div>
+      </div>
+    </FocusTrapDialog>}
+    {snapshotOpen && snapshotReviewOpen && <FileDiffReview title={snapshotTitle} eyebrow="版本历史" files={snapshotDiff ?? []} tree={snapshotTree}
+      summary={<><VersionChange current={skill.version || '—'} next={version || '—'} /><InfoRows rows={[{ label: '变化文件', value: `${snapshotDiff?.length ?? 0} 个` }]} /></>}
+      form={snapshotForm(false)} notices={snapshotNotices} busy={busy} submitDisabled={snapshotSubmitDisabled} submitLabel={snapshotSubmitLabel}
+      onBack={() => setSnapshotReviewOpen(false)} onCancel={() => { setSnapshotReviewOpen(false); setSnapshotOpen(false) }} onSubmit={() => void saveSnapshot()} />}
     {diffView && <FocusTrapDialog className="modal-layer above-sheet" label="版本差异" onEscape={() => setDiffView(null)}><div className="modal-card skill-dialog diff-modal"><div className="modal-head"><div><span className="eyebrow">版本差异</span><h2>{diffView.title}</h2></div><button className="ico-btn" onClick={() => setDiffView(null)} aria-label="关闭版本差异"><Icon name="x" size={16} /></button></div><DiffPreview lines={diffView.lines} loading={false} /><div className="modal-actions"><button className="btn btn-primary" onClick={() => setDiffView(null)}>完成</button></div></div></FocusTrapDialog>}
     {restoreTarget && <ConfirmModal eyebrow="版本恢复" title="恢复为这个版本？" description="当前文件会恢复为所选版本内容，现有历史和版本编号上界保持不变。" confirmLabel="确认恢复" onCancel={() => setRestoreTarget(null)} onConfirm={() => void restore(restoreTarget)} busy={busy} />}
   </>

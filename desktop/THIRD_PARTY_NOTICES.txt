@@ -8,8 +8,8 @@ Release target: aarch64-apple-darwin
 Production npm packages: 23
 Reachable non-development Cargo packages: 348
 Unique license and notice texts: 238
-desktop/package-lock.json SHA-256: 666b51ae0aadf3e5c1517f7ca9441a694d832bf766c94226a17486ebf9bec306
-desktop/src-tauri/Cargo.lock SHA-256: 3fa0662e39c5a7c646866a4478996e969b297e0cb9c5bbfa2cfd75e5f29981cd
+desktop/package-lock.json SHA-256: 6673a9e4d084dda0658660ec73878f6f39d9b3d5e904fcce0d6076e5f5ece4a0
+desktop/src-tauri/Cargo.lock SHA-256: e40b0447422b4ed9e574b457bc1e69cbf171989471fd7fca7942869a088d45db
 
 The inventory records every production npm package and every non-development
 Cargo package reachable for aarch64-apple-darwin, including build dependencies. Package-specific

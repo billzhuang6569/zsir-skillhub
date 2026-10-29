@@ -7,7 +7,6 @@ export function sourceUpdateBlockReason(skill: Pick<LocalSkill, 'sourceLocalModi
 }
 
 export function sourceModificationLabel(skill: Pick<LocalSkill, 'acquisitionSource' | 'catalogOrigin' | 'sourceModifiedFiles'>): string | null {
-  if (skill.sourceModifiedFiles == null && (skill.acquisitionSource === 'team' || skill.acquisitionSource === 'marketplace' || skill.catalogOrigin)) return '来源内容待核验'
   if (!skill.sourceModifiedFiles) return null
   if (skill.acquisitionSource === 'team') return '团队共享后修改'
   if (skill.acquisitionSource === 'marketplace' || skill.catalogOrigin) return '商店获取后修改'
@@ -69,18 +68,16 @@ export function orderSkillsByName<T extends { id: string; name: string }>(skills
 export type SkillSortPreference = 'name' | 'time' | 'name-desc' | 'time-asc'
 
 /**
- * By the Server's `updatedAt` (newest first by default), falling back to `createdAt` (local
- * edits do not move a synced Skill until the Server stamp changes; local-only
- * Skills have no stamp and keep their name order after the dated ones). Name
- * order is the tie-breaker, so the result is deterministic.
+ * Content/share timestamps only. Stable sort preserves session order on ties
+ * and for old Servers without a content timestamp.
  */
-export function orderSkillsByTime<T extends { id: string; name: string; createdAt?: string; updatedAt?: string }>(skills: readonly T[], direction: 'asc' | 'desc' = 'desc'): T[] {
+export function orderSkillsByTime<T extends { id: string; name: string; createdAt?: string; updatedAt?: string; sharedAt?: string | null; marketplacePublishedAt?: string }>(skills: readonly T[], direction: 'asc' | 'desc' = 'desc'): T[] {
   const stamp = (skill: T): number => {
-    const raw = skill.updatedAt ?? skill.createdAt
+    const raw = skill.sharedAt ?? skill.marketplacePublishedAt ?? skill.createdAt
     const time = raw ? Date.parse(raw) : Number.NaN
     return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY
   }
-  return orderSkillsByName(skills).sort((left, right) => {
+  return [...skills].sort((left, right) => {
     const a = stamp(left)
     const b = stamp(right)
     if (a === b) return 0
@@ -161,6 +158,8 @@ type TeamSharedSkill = {
   installCount: number
   installed: boolean
   updatedAt?: string
+  createdAt?: string
+  sharedAt?: string | null
   version?: string
   latestVersion?: string
   localPath?: string
@@ -211,8 +210,8 @@ export function orderTeamSharedSkills<T extends TeamSharedSkill>(
     .sort((left, right) => {
       const primary = sort === 'downloads'
         ? right.installCount - left.installCount
-        : (Date.parse(right.updatedAt ?? '') || 0) - (Date.parse(left.updatedAt ?? '') || 0)
-      return primary || left.displayName.localeCompare(right.displayName, 'zh-CN')
+        : (Date.parse(right.sharedAt ?? right.createdAt ?? '') || 0) - (Date.parse(left.sharedAt ?? left.createdAt ?? '') || 0)
+      return primary || (sort === 'downloads' ? left.displayName.localeCompare(right.displayName, 'zh-CN') : 0)
     })
 }
 

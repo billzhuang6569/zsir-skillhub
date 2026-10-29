@@ -24,6 +24,7 @@ export default function UnshareSkillDialog({ skill, team, onClose }: { skill: Lo
         delete sharedTo[team.id]
         return { ...item, sharedTo }
       }))
+      state.setTeamSkills(team.id, (state.teamSkills[team.id] ?? []).filter(item => item.serverId !== skill.serverId), null)
       if (state.sheet?.kind === 'skill' && state.sheet.skillId === skill.id) state.closeSheet()
       window.dispatchEvent(new CustomEvent('skillhub:refresh-team-shares', { detail: { unsharedTeamId: team.id, unsharedSkillId: skill.serverId } }))
       toast(`已从「${team.name}」取消共享`)

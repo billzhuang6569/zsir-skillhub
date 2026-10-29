@@ -190,6 +190,10 @@ export function reconcileLocalSkillRefresh<T extends RefreshableServerBinding>(
 ): T {
   return {
     ...refreshed,
+    // Native scans contain package metadata; the authenticated card remains
+    // the display source while a new cloud response is in flight.
+    ...(current.serverId ? Object.fromEntries(['displayName', 'description', 'sourceUrl', 'category', 'labels', 'trigger', 'fitScenarios', 'unfitScenarios', 'compatibleAgents', 'latestVersion', 'teamVersionId', 'teamChangelog', 'teamEnvDeps', 'teamUnshared', 'teamUpdateStatus', 'sharedAt', 'sharedBy', 'authorName', 'authorAvatarUrl']
+      .filter(key => key in current).map(key => [key, (current as Record<string, unknown>)[key]])) : {}),
     avatarLocalId: refreshed.avatarLocalId ?? current.avatarLocalId,
     avatarUrl: current.avatarUrl,
     avatarStatus: current.avatarStatus,

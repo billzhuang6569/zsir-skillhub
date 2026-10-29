@@ -69,3 +69,38 @@ test('a failing run neither breaks the chain nor drops a queued follow-up; cance
   await second
   assert.equal(runs.length, 3)
 })
+
+test('focus/poll refreshes obey the minimum interval; explicit changes invalidate it', async () => {
+  let calls = 0
+  const gate = deferred()
+  const refresh = createRefreshCoalescer(async () => { calls += 1; await gate.promise }, 5_000)
+  const running = refresh.request(true)
+  void refresh.request(true)
+  assert.equal(refresh.queued, false)
+  gate.resolve()
+  await running
+  await refresh.request(true)
+  assert.equal(calls, 1)
+  refresh.invalidate()
+  await refresh.request(true)
+  assert.equal(calls, 2)
+  await refresh.request(false)
+  assert.equal(calls, 3, 'explicit retry is never throttled')
+})
+
+test('refresh timestamps survive remounts and isolate account/space/team scopes', async () => {
+  let calls = 0
+  const run = async (): Promise<void> => { calls += 1 }
+  const scope = JSON.stringify(['official', 1, 'A', 't1'])
+  await createRefreshCoalescer(run, 5_000, scope).request(true)
+  const remounted = createRefreshCoalescer(run, 5_000, scope)
+  await remounted.request(true)
+  assert.equal(calls, 1)
+  for (const key of [['official', 1, 'B', 't1'], ['official', 2, 'A', 't1'], ['selfhost', 1, 'A', 't1'], ['official', 1, 'A', 't2']]) {
+    await createRefreshCoalescer(run, 5_000, JSON.stringify(key)).request(true)
+  }
+  assert.equal(calls, 5)
+  remounted.invalidate()
+  await remounted.request(true)
+  assert.equal(calls, 6)
+})

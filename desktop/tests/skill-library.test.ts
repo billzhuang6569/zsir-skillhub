@@ -14,8 +14,21 @@ test('acquired modifications remain visible after a snapshot', () => {
   assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'marketplace', sourceModifiedFiles: 1 })), '商店获取后修改')
   assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'local', catalogOrigin: 'https://catalog.example.test', sourceModifiedFiles: 1 })), '商店获取后修改')
   assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'team', sourceModifiedFiles: 0 })), null)
-  assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'team', sourceModifiedFiles: undefined })), '来源内容待核验')
   assert.equal(sourceModificationLabel(skill({ acquisitionSource: 'local', sourceModifiedFiles: 1 })), null)
+})
+
+test('unverified source content has no modification label before or after download', () => {
+  for (const sourceModifiedFiles of [null, undefined]) {
+    for (const localPath of ['', '/managed/skill-1']) {
+      for (const source of [
+        { acquisitionSource: 'team' as const },
+        { acquisitionSource: 'marketplace' as const },
+        { acquisitionSource: 'local' as const, catalogOrigin: 'https://catalog.example.test' },
+      ]) {
+        assert.equal(sourceModificationLabel(skill({ ...source, sourceModifiedFiles, localPath })), null)
+      }
+    }
+  }
 })
 import test from 'node:test'
 import {
@@ -141,7 +154,7 @@ test('My Skills sorts actual Skill names alphabetically without changing source 
     { id: 'alpha', name: 'alpha' },
   ]
   assert.deepEqual(orderSkillsByName(source).map((item) => item.id), ['alpha', 'bill', 'two', 'ten'])
-  // 按时间 (#361): newest first by updatedAt then createdAt; undated Skills keep name order at the end.
+  // Content timestamps only; counters/analysis updatedAt never reorder a row.
   const dated = [
     { id: 'old', name: 'old', createdAt: '2026-01-01T00:00:00Z' },
     { id: 'edited', name: 'edited', createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-03-01T00:00:00Z' },
@@ -150,7 +163,7 @@ test('My Skills sorts actual Skill names alphabetically without changing source 
     { id: 'undated-a', name: 'alpha' },
     { id: 'bad', name: 'bad', createdAt: 'not a date' },
   ]
-  assert.deepEqual(orderSkillsByTime(dated).map((item) => item.id), ['edited', 'new', 'old', 'undated-a', 'bad', 'undated-b'])
+  assert.deepEqual(orderSkillsByTime(dated).map((item) => item.id), ['new', 'edited', 'old', 'undated-b', 'undated-a', 'bad'])
   assert.deepEqual(orderSkills(dated, 'name').map((item) => item.id), orderSkillsByName(dated).map((item) => item.id))
   assert.deepEqual(source.map((item) => item.id), ['ten', 'bill', 'two', 'alpha'])
 })
@@ -168,12 +181,12 @@ test('both sort criteria support both directions, with stable ties and undated S
   const expected = {
     name: ['a1', 'a2', 'bad', 'b', 'new', 'z'],
     'name-desc': ['z', 'new', 'b', 'bad', 'a1', 'a2'],
-    time: ['new', 'a1', 'a2', 'b', 'bad', 'z'],
-    'time-asc': ['a1', 'a2', 'b', 'new', 'bad', 'z'],
+    time: ['b', 'a2', 'a1', 'new', 'z', 'bad'],
+    'time-asc': ['new', 'b', 'a2', 'a1', 'z', 'bad'],
   }
   for (const preference of ['name', 'name-desc', 'time', 'time-asc'] as const) {
     assert.deepEqual(orderSkills(source, preference).map(item => item.id), expected[preference])
-    assert.deepEqual(orderSkills([...source].reverse(), preference).map(item => item.id), expected[preference])
+    if (preference === 'name' || preference === 'name-desc') assert.deepEqual(orderSkills([...source].reverse(), preference).map(item => item.id), expected[preference])
     assert.deepEqual(orderSkills([], preference), [])
   }
   assert.deepEqual(source, original)
@@ -200,9 +213,9 @@ test('team sharing only marks a current-account, active-team managed Skill', () 
 })
 
 test('team catalog filters uninstalled Skills and sorts by latest or downloads', () => {
-  const olderPopular = skill({ id: 'popular', displayName: '热门', installed: true, installCount: 31, updatedAt: '2026-08-01T00:00:00.000Z' })
-  const newest = skill({ id: 'newest', displayName: '最新', installed: false, installCount: 4, updatedAt: '2026-08-03T00:00:00.000Z' })
-  const olderUninstalled = skill({ id: 'older', displayName: '较早', installed: false, installCount: 9, updatedAt: '2026-08-02T00:00:00.000Z' })
+  const olderPopular = skill({ id: 'popular', displayName: '热门', installed: true, installCount: 31, sharedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2027-01-01' })
+  const newest = skill({ id: 'newest', displayName: '最新', installed: false, installCount: 4, sharedAt: '2026-08-03T00:00:00.000Z' })
+  const olderUninstalled = skill({ id: 'older', displayName: '较早', installed: false, installCount: 9, sharedAt: '2026-08-02T00:00:00.000Z' })
 
   assert.deepEqual(
     orderTeamSharedSkills([olderPopular, olderUninstalled, newest], 'all', 'latest').map((item) => item.id),
@@ -216,6 +229,9 @@ test('team catalog filters uninstalled Skills and sorts by latest or downloads',
     orderTeamSharedSkills([olderPopular, olderUninstalled, newest], 'uninstalled', 'latest').map((item) => item.id),
     ['newest', 'older'],
   )
+  const tied = [skill({ id: 'z', displayName: 'zeta', installCount: 4 }), skill({ id: 'a', displayName: 'alpha', installCount: 4 })]
+  assert.deepEqual(orderTeamSharedSkills(tied, 'all', 'downloads').map(item => item.id), ['a', 'z'])
+  assert.deepEqual(orderTeamSharedSkills(tied, 'all', 'latest').map(item => item.id), ['z', 'a'])
 })
 
 test('batch selection excludes selected local Skills hidden by the current filter', () => {

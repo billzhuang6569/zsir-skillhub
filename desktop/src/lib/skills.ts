@@ -117,6 +117,21 @@ export function hydrateDownloadedSkill(remote: LocalSkill, imported: LocalSkill)
     acquisitionPackageSha256: imported.acquisitionPackageSha256,
     sources: acquisitionSource === 'marketplace' ? ['Skill 商店'] : imported.sources,
     teamSharedFrom: remote.teamSharedFrom,
+    teamVersionId: remote.teamVersionId,
+    teamUnshared: remote.teamUnshared,
+    teamChangelog: remote.teamChangelog,
+    teamEnvDeps: remote.teamEnvDeps,
+    teamUpdateStatus: remote.teamSharedFrom ? teamUpdateState({
+      accountMatches: teamUpdateAccountMatches({ accountUserId: remote.serverAccessValidatedForUserId,
+        acquiredByUserId: imported.acquiredByUserId, libraryAccountId: imported.libraryAccountId }),
+      available: !remote.teamUnshared,
+      localModified: Boolean(imported.sourceLocalModified),
+      sameVersion: remote.teamVersionId && imported.sourceVersionId ? remote.teamVersionId === imported.sourceVersionId
+        : remote.latestVersion === (imported.acquisitionVersion ?? imported.version),
+    }) : remote.teamUpdateStatus,
+    sharedBy: remote.sharedBy,
+    sharedAt: remote.sharedAt,
+    serverAccessValidatedForUserId: remote.serverAccessValidatedForUserId,
     envDeps: remote.envDeps,
     sharedTo: { ...remote.sharedTo },
     trigger: remote.trigger,
@@ -528,4 +543,24 @@ export function mergeSkillSources(
     }
   }
   return result
+}
+
+/** Only teams with authoritative results may revoke a grant; another validated team/owner survives. */
+export function reconcileTeamAccess(
+  skills: LocalSkill[], teamSkills: Readonly<Record<string, LocalSkill[]>>, teamIds: readonly string[], userId?: string,
+): LocalSkill[] {
+  let changed = false
+  const result = skills.map(skill => {
+    if (!skill.serverId || !skill.teamSharedFrom || skill.teamUnshared) return skill
+    if (!teamIds.includes(skill.teamSharedFrom) || !(skill.teamSharedFrom in teamSkills)) return skill
+    const source = Object.values(teamSkills).flat().find(candidate => candidate.serverId === skill.serverId
+      && candidate.serverAccessValidatedForUserId === userId && !candidate.teamUnshared)
+    if (source?.teamSharedFrom === skill.teamSharedFrom) return skill
+    changed = true
+    if (skill.isOwn && skill.serverOwnerId === userId) return { ...skill, teamSharedFrom: undefined }
+    return source ? { ...skill, teamSharedFrom: source.teamSharedFrom }
+      : { ...skill, teamUnshared: true, teamUpdateStatus: 'access_revoked' as const,
+        serverAccessValidatedForUserId: undefined, latestVersion: skill.acquisitionVersion ?? skill.version }
+  })
+  return changed ? result : skills
 }

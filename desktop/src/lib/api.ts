@@ -1067,8 +1067,8 @@ export async function apiDeleteSkill(skillId: string): Promise<void> {
   if (response.status === 404) return
   if (!response.ok) throw await responseError(response)
 }
-export const apiCreateSkillVersion = (skillId: string, data: { version: string; changelog: string; gitHash?: string; skillMd?: string; envDependencies?: { key: string; description?: string; required: boolean; obtain?: string }[]; packageBase64: string; packageSha256: string; libraryVersionReceiptId?: string }): Promise<ApiSkillVersion> =>
-  apiFetch(`/skills/${encodeURIComponent(skillId)}/versions`, { method: 'POST', body: data })
+export const apiCreateSkillVersion = (skillId: string, data: { version: string; changelog: string; gitHash?: string; skillMd?: string; envDependencies?: { key: string; description?: string; required: boolean; obtain?: string }[]; packageBase64: string; packageSha256: string; libraryVersionReceiptId?: string }, space?: SpaceHandle): Promise<ApiSkillVersion> =>
+  apiFetch(`/skills/${encodeURIComponent(skillId)}/versions`, { method: 'POST', body: data, space })
 export const apiShareSkillToTeam = (skillId: string, teamId: string): Promise<void> =>
   apiFetch<void>(`/skills/${encodeURIComponent(skillId)}/shares`, { method: 'POST', body: { teamId } }).then(() => notifyEnvReadinessChanged({ serverId: skillId }))
 export const apiTeamPushInfo = (skillId: string, teamId: string, space: SpaceHandle): Promise<{ versionId: string | null; version: string; packageSha256: string | null; recipientCount: number; contentIdentity?: ApiSkillVersion['contentIdentity'] }> =>

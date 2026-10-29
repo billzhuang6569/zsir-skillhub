@@ -29,7 +29,8 @@ test('Skill detail uses the four approved product tabs, each with its icon (#289
   const environment = component.indexOf("{ key: 'environment', label: '钥匙', icon: 'key-round' }")
   const versions = component.indexOf("{ key: 'versions', label: '版本', icon: 'hist' }")
   // 14px icon before the label; 钥匙 carries a count only when keys need attention.
-  assert.match(component, /<Icon name=\{item\.icon\} size=\{14\} \/><span>\{item\.label\}<\/span>\{item\.key === 'environment' && keyAttention > 0 && <span className="sh-tab-count"/)
+  assert.match(component, /<Icon name=\{item\.icon\} size=\{14\} \/><span>\{item\.label\}<\/span>/)
+  assert.match(component, /item\.key === 'environment' && keyAttention > 0 && <span className="sh-tab-count"/)
   assert.match(component, /const keyAttention = skill\.isSystem \? 0 : envDepsNeedingAttention\(skill\.envDeps\)/)
 
   assert.ok(profile >= 0)
@@ -59,6 +60,14 @@ test('adding one configuration dependency closes without immediately opening ano
 })
 
 test('version history explains the user flow without duplicate or technical actions', () => {
+  assert.match(component, /versionTaskBlocks\(versionTask\) \? '正在创建…' : skill.versionStatus/)
+  assert.match(component, /const busy = dialogBusy \|\| versionTaskBlocks\(versionTask\)/)
+  assert.doesNotMatch(component, /onCreatingChange|setVersionCreating|setCreating/)
+  const save = component.slice(component.indexOf('const saveSnapshot ='), component.indexOf('const restore ='))
+  assert.match(save, /await versionCreateTasks.start\(/)
+  assert.match(save, /finally \{ setBusy\(false\) \}/)
+  const restore = component.slice(component.indexOf('const restore ='), component.indexOf('const openSnapshot ='))
+  assert.doesNotMatch(restore, /setCreating/)
   assert.match(component, /当你的 Skill 发生变化时，SkillHub 可以保留旧版本/)
   assert.match(component, /当前 Skill 内容有改动/)
   assert.match(component, /个文件有变化/)
@@ -72,6 +81,12 @@ test('version history explains the user flow without duplicate or technical acti
   assert.match(component, /补全记录不会修改 Skill 文件/)
   assert.match(styles, /\.working-copy-icon\s*\{[^}]*display:\s*grid;[^}]*place-items:\s*center;/s)
   assert.doesNotMatch(styles, /\.working-copy-banner b,\.working-copy-banner span/)
+})
+
+test('header menus stack above body popovers while narrow headers retain container wrapping', () => {
+  assert.match(styles, /\.sh-head \{[^}]*container-type: inline-size;[^}]*position: relative;[^}]*z-index: 1;/)
+  assert.match(styles, /\.sh-body \{[^}]*position: relative;[^}]*z-index: 0;/)
+  assert.match(focusTrap, /createPortal\(dialog, document.body\)/)
 })
 
 test('key rows show KEY, purpose, obtain link, one status badge and one primary action; author tools fold away', () => {
@@ -181,7 +196,7 @@ test('a remote-only team Skill asks for installation before reading local key st
   assert.match(keysComponent, /if \(authStatus === 'restoring' \|\| !skill\.localPath\) return/)
 })
 test('remote package installation preserves its complete team and catalog identity', () => {
-  assert.match(component, /resolveSkillFromSources\(skillId, skills, marketplaceSkills\)/)
+  assert.match(component, /resolveSkillFromSources\(skillId, view === 'team-skills' \? teamSkills \?\? \[\] : skills, marketplaceSkills\)/)
   assert.match(component, /const marketplaceInstall = isMarketplaceCatalogSource\(skill\)[\s\S]*?marketplaceInstall\s*\? await apiDownloadMarketplacePackage\(skill\.serverId\)\s*: await apiDownloadSkillPackage\(skill\.serverId, installSpace, skill\.teamSharedFrom\)/)
   assert.match(component, /packageData\.sha256\.toLowerCase\(\) !== skill\.marketplacePackageSha256\.toLowerCase\(\)/)
   assert.match(component, /const downloadedSkill = \{ \.\.\.skill, installCount: skill\.installCount \+ 1 \}/)

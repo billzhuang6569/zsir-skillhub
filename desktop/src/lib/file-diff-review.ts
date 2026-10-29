@@ -1,23 +1,28 @@
-import type { SkillPackageDiffLine, SkillPackageFileDiff, SkillTreeEntry } from './tauri.js'
+import type { SkillPackageDiffLine, SkillFileDiff, SkillTreeEntry } from './tauri.js'
 
-export type ReviewTreeEntry = SkillTreeEntry & { status?: SkillPackageFileDiff['status'] }
+export type ReviewTreeEntry = SkillTreeEntry & { status?: SkillFileDiff['status'] }
 export type ReviewDiffRow = { type: 'line'; line: SkillPackageDiffLine } | { type: 'gap'; skipped: number }
 
 export function diffRowsWithHunkSeparators(lines: SkillPackageDiffLine[]): ReviewDiffRow[] {
   const rows: ReviewDiffRow[] = []
-  let previous: SkillPackageDiffLine | undefined
+  let oldEnd = 0
+  let newEnd = 0
   for (const line of lines) {
-    if (previous && line.oldLine !== null && line.newLine !== null && previous.oldLine !== null && previous.newLine !== null) {
-      const skipped = Math.min(line.oldLine - previous.oldLine - 1, line.newLine - previous.newLine - 1)
+    if (oldEnd || newEnd) {
+      const skipped = Math.max(
+        line.oldLine === null ? 0 : line.oldLine - oldEnd - 1,
+        line.newLine === null ? 0 : line.newLine - newEnd - 1,
+      )
       if (skipped > 0) rows.push({ type: 'gap', skipped })
     }
     rows.push({ type: 'line', line })
-    if (line.oldLine !== null && line.newLine !== null) previous = line
+    if (line.oldLine !== null) oldEnd = line.oldLine
+    if (line.newLine !== null) newEnd = line.newLine
   }
   return rows
 }
 
-export function buildReviewTree(tree: SkillTreeEntry[], diffs: SkillPackageFileDiff[]): ReviewTreeEntry[] {
+export function buildReviewTree(tree: SkillTreeEntry[], diffs: SkillFileDiff[]): ReviewTreeEntry[] {
   const entries = new Map(tree.map(entry => [entry.path, { ...entry }]))
   for (const file of diffs) {
     const parts = file.path.split('/')

@@ -3,7 +3,11 @@ export async function getSkillPackageDiff(skillId: string, packageBase64: string
   return invoke('get_skill_package_diff', { skillId, packageBase64, expectedSha256 })
 }
 export type SkillPackageDiffLine = { kind: 'add' | 'del' | 'ctx'; oldLine: number | null; newLine: number | null; content: string }
-export type SkillPackageFileDiff = { path: string; status: 'added' | 'modified' | 'deleted'; binary: boolean; tooLarge: boolean; lines: SkillPackageDiffLine[] }
+export type SkillFileDiff = { path: string; status: 'added' | 'modified' | 'deleted'; binary: boolean; tooLarge: boolean; lines: SkillPackageDiffLine[] }
+export type SkillPackageFileDiff = SkillFileDiff
+export async function getSkillWorkingFileDiffs(skillId: string): Promise<SkillFileDiff[]> {
+  return invoke('get_skill_working_file_diffs', { skillId })
+}
 export async function getSkillPackageFileDiffs(skillId: string, packageBase64: string, expectedSha256: string): Promise<SkillPackageFileDiff[]> {
   return invoke('get_skill_package_file_diffs', { skillId, packageBase64, expectedSha256 })
 }
@@ -355,8 +359,22 @@ export async function createSkillSnapshot(skillId: string, message: string, vers
   return invoke('create_skill_snapshot_with_version', { skillId, message, version, allocation })
 }
 
-export async function recordSkillFormalVersion(skillId: string, versionId: string, gitHash?: string): Promise<void> {
-  return invoke('record_skill_formal_version', { skillId, versionId, gitHash })
+export async function recordSkillFormalVersion(skillId: string, versionId: string, gitHash?: string, frozenToken?: string): Promise<void> {
+  return invoke('record_skill_formal_version', { skillId, versionId, gitHash, ...(frozenToken ? { frozenToken } : {}) })
+}
+
+export async function freezeSkillVersion(skillId: string, message: string, version: string): Promise<string> {
+  return invoke('freeze_skill_version', { skillId, message, version })
+}
+export type FrozenVersionPackage = { package: SkillPackage; skillMd: string; envDependencies: EnvDeclaration[] }
+export async function packageFrozenSkillVersion(skillId: string, snapshotId: string): Promise<FrozenVersionPackage> {
+  return invoke('package_frozen_skill_version', { skillId, snapshotId })
+}
+export async function saveFrozenSkillVersion(skillId: string, snapshotId: string, version: string, allocation: 'auto' | 'manual'): Promise<void> {
+  return invoke('save_frozen_skill_version', { skillId, snapshotId, version, allocation })
+}
+export async function releaseFrozenSkillVersion(snapshotId: string): Promise<void> {
+  return invoke('release_frozen_skill_version', { snapshotId })
 }
 
 export async function restoreSkillVersion(skillId: string, hash: string, receiptId?: string): Promise<void> {
@@ -367,10 +385,6 @@ export type SkillDiffLine = { kind: 'add' | 'del' | 'ctx'; content: string }
 
 export async function getSkillDiff(skillId: string, fromHash: string, toHash: string): Promise<SkillDiffLine[]> {
   return invoke<SkillDiffLine[]>('get_skill_diff', { skillId, fromHash, toHash })
-}
-
-export async function getSkillWorkingDiff(skillId: string): Promise<SkillDiffLine[]> {
-  return invoke<SkillDiffLine[]>('get_skill_working_diff', { skillId })
 }
 
 // ---- Environment variables ----

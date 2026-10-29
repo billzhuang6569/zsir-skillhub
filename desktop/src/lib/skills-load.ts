@@ -73,7 +73,7 @@ export async function runSkillsLoad<L, U, O>(
     else if (errors.length > 0) sinks.publishError(`部分数据暂不可用：${errors.join('；')}`)
     else sinks.publishError(null)
   }
-  report()
+  if (errors.length > 0 || !owned) report()
   if (!owned) return outcome
   outcome.cloud = owned.then((cloud) => {
     // The caller's `isCurrent` drops a cloud answer that lands after a newer
@@ -82,6 +82,7 @@ export async function runSkillsLoad<L, U, O>(
     if (!sinks.isCurrent()) return { ownedFailed: !cloud.ok }
     if (cloud.ok) {
       sinks.publishOwned(cloud.value)
+      report()
       return { ownedFailed: false }
     }
     sinks.publishOwnedFailure(cloud.error)

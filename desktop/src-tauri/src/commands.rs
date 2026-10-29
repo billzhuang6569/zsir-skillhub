@@ -28,6 +28,8 @@ use crate::{
     SkillProfileUpdateInput, SkillUpstream, SkillVersion, TrashItem, UnmanagedSkill,
 };
 
+#[path = "frozen_version.rs"]
+pub mod frozen_version;
 #[path = "source_edits.rs"]
 pub mod source_edits;
 #[path = "skill_unmanage.rs"]

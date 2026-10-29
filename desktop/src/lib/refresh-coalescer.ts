@@ -14,13 +14,18 @@ export type RefreshCoalescer = {
   request(silent?: boolean): Promise<void>
   /** Drops a queued follow-up (e.g. on unmount or account switch). */
   cancel(): void
+  invalidate(): void
   readonly running: boolean
   readonly queued: boolean
 }
 
-export function createRefreshCoalescer(run: (silent: boolean) => Promise<void>): RefreshCoalescer {
+// Only timestamps survive a page remount; display/permissions live in the identity-scoped store.
+const lastRefreshByScope = new Map<string, number>()
+
+export function createRefreshCoalescer(run: (silent: boolean) => Promise<void>, minimumInterval = 0, scope?: string): RefreshCoalescer {
   let chain: Promise<void> | null = null
   let pending: boolean | null = null
+  let lastStarted = Number.NEGATIVE_INFINITY
 
   const loop = async (first: boolean): Promise<void> => {
     let next: boolean | null = first
@@ -28,6 +33,8 @@ export function createRefreshCoalescer(run: (silent: boolean) => Promise<void>):
       const silent = next
       next = null
       pending = null
+      lastStarted = Date.now()
+      if (scope) lastRefreshByScope.set(scope, lastStarted)
       try {
         await run(silent)
       } catch {
@@ -40,6 +47,7 @@ export function createRefreshCoalescer(run: (silent: boolean) => Promise<void>):
 
   return {
     request(silent = false): Promise<void> {
+      if (silent && Date.now() - (scope ? lastRefreshByScope.get(scope) ?? lastStarted : lastStarted) < minimumInterval) return chain ?? Promise.resolve()
       if (chain) {
         pending = pending === null ? silent : pending && silent
         return chain
@@ -50,6 +58,7 @@ export function createRefreshCoalescer(run: (silent: boolean) => Promise<void>):
     cancel(): void {
       pending = null
     },
+    invalidate(): void { lastStarted = Number.NEGATIVE_INFINITY; if (scope) lastRefreshByScope.delete(scope) },
     get running(): boolean {
       return chain !== null
     },

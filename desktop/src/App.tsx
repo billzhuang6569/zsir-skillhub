@@ -9,6 +9,7 @@ import { setMediaContext } from './lib/media.js'
 import { listen } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { flushOrganizerSave, useStore } from './store/index.js'
+import { useShallow } from 'zustand/react/shallow'
 import Sidebar from './components/Sidebar.js'
 import SkillsPage from './pages/SkillsPage.js'
 import TeamsPage from './pages/TeamsPage.js'
@@ -115,7 +116,14 @@ function AppContent() {
     setLibrarySyncEnabled,
     setPendingMarketplaceIntent,
     skills,
-  } = useStore()
+  } = useStore(useShallow(state => ({
+    view: state.view, skillTab: state.skillTab, sheet: state.sheet, closeSheet: state.closeSheet,
+    setTeams: state.setTeams, setNotifications: state.setNotifications, authStatus: state.authStatus, authSpace: state.authSpace,
+    currentUser: state.currentUser, setAuthSession: state.setAuthSession, setAuthGuest: state.setAuthGuest, clearAuthSession: state.clearAuthSession,
+    authPrompt: state.authPrompt, promptForAuth: state.promptForAuth, dismissAuthPrompt: state.dismissAuthPrompt, setView: state.setView,
+    openSkillSheet: state.openSkillSheet, setActiveTeam: state.setActiveTeam, setLibrarySyncEnabled: state.setLibrarySyncEnabled,
+    setPendingMarketplaceIntent: state.setPendingMarketplaceIntent, skills: state.skills,
+  })))
   const capabilities = useSpaceCapabilities()
   const activeSpace = useStore(state => state.activeSpace)
   const serverInfo = useStore(state => state.serverInfo)
@@ -217,6 +225,7 @@ function AppContent() {
         if (cancelled || payload.userId !== expectedUserId || useStore.getState().currentUser?.id !== expectedUserId) return
         const state = useStore.getState()
         state.setLibraryEntries(payload)
+        if (useStore.getState().libraryEntries === state.libraryEntries) return
         const cloud = cloudLibrarySkills(state.skills, payload, expectedUserId, state.libraryTransfers)
         state.setSkills([...state.skills.filter(skill => skill.localPath), ...cloud.filter(skill => !skill.localPath)])
       })
@@ -540,7 +549,7 @@ function AppContent() {
     const complete = !isLoadingSkills && skills.length > 0
       && (authStatus === 'guest' || (Boolean(currentUser) && libraryEntriesUserId === currentUser?.id))
     useStore.getState().reconcileOrganizer(skills, { prune: complete })
-  }, [authStatus, currentUser, isLoadingSkills, libraryEntriesUserId, organizerAccount, skills])
+  }, [authStatus, currentUser?.id, isLoadingSkills, libraryEntriesUserId, organizerAccount, skills])
   useEffect(() => {
     const flush = (): void => { void flushOrganizerSave() }
     const flushWhenHidden = (): void => { if (document.visibilityState === 'hidden') flush() }
@@ -665,7 +674,7 @@ function AppContent() {
       if (teamsError) toast(`团队数据暂不可用：${teamsError}`, 'error')
       if (notificationsError) toast(`通知数据暂不可用：${notificationsError}`, 'error')
     })
-  }, [authStatus, currentUser, authSpace, capabilities.teams, setTeams, setNotifications])
+  }, [authStatus, currentUser?.id, authSpace, capabilities.teams, setTeams, setNotifications])
 
   useEffect(() => {
     if (!capabilities.teams || authStatus !== 'authenticated' || !currentUser) return
@@ -678,7 +687,7 @@ function AppContent() {
     const timer = window.setInterval(refresh, 30_000)
     window.addEventListener('focus', refresh)
     return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh) }
-  }, [authStatus, currentUser, authSpace, capabilities.teams, setNotifications])
+  }, [authStatus, currentUser?.id, authSpace, capabilities.teams, setNotifications])
 
   useEffect(() => {
     if (capabilities.profile !== 'official' || !capabilities.marketplace || authStatus !== 'authenticated' || !currentUser) return
@@ -699,7 +708,7 @@ function AppContent() {
       active = false
       window.removeEventListener('focus', sync)
     }
-  }, [authStatus, currentUser, authSpace, capabilities.profile, capabilities.marketplace, marketplacePresenceSignature])
+  }, [authStatus, currentUser?.id, authSpace, capabilities.profile, capabilities.marketplace, marketplacePresenceSignature])
 
   const acceptInviteToken = useCallback(async (token: string, inviteSpace?: SpaceHandle, server?: string): Promise<boolean> => {
     if (!capabilities.teams) return false

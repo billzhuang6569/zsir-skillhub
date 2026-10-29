@@ -31,18 +31,18 @@ test('the native phase resolves while the Server is still pending; the cloud pha
   const { log, sinks: s } = sinks()
   const result = await runSkillsLoad({ local: async () => ['a'], unmanaged: async () => ['u'], owned: () => owned.promise }, s)
   // Resolved without the cloud answer: the caller (and the coalescer) is free to start the next native read.
-  assert.deepEqual(log, ['local:["a"]/["u"]', 'error:null'])
+  assert.deepEqual(log, ['local:["a"]/["u"]'])
   assert.deepEqual({ ...result, cloud: result.cloud !== null }, { localFailed: false, unmanagedFailed: false, published: true, cloud: true })
   owned.resolve(['a-owned'])
   assert.deepEqual(await result.cloud, { ownedFailed: false })
-  assert.deepEqual(log.slice(2), ['owned:["a-owned"]'])
+  assert.deepEqual(log.slice(1), ['owned:["a-owned"]', 'error:null'])
 })
 
 test('a failing cloud request keeps the local publish and reports a partial error; signed out skips the cloud phase', async () => {
   const { log, sinks: s } = sinks()
   const result = await runSkillsLoad({ local: async () => ['a'], unmanaged: async () => ['u'], owned: async () => { throw new Error('Load failed') } }, s)
   assert.deepEqual(await result.cloud, { ownedFailed: true })
-  assert.deepEqual(log, ['local:["a"]/["u"]', 'error:null', 'owned-failed:Load failed', 'error:部分数据暂不可用：Load failed'])
+  assert.deepEqual(log, ['local:["a"]/["u"]', 'owned-failed:Load failed', 'error:部分数据暂不可用：Load failed'])
   const guest = sinks()
   const signedOut = await runSkillsLoad({ local: async () => ['a'], unmanaged: async () => ['u'], owned: null }, guest.sinks)
   assert.equal(signedOut.cloud, null)
@@ -70,16 +70,16 @@ test('a second native refresh starts and publishes while the first cloud answer 
   generation = 1
   const first = run(['v1'], 1)
   const firstResult = await first.started
-  assert.deepEqual(first.log, ['local:["v1"]/["u"]', 'error:null'])
+  assert.deepEqual(first.log, ['local:["v1"]/["u"]'])
   // Local change while the cloud is slow: the next native read runs now.
   generation = 2
   const second = run(['v2'], 2)
   const secondResult = await second.started
-  assert.deepEqual(second.log, ['local:["v2"]/["u"]', 'error:null'], 'second native publish not blocked by the first cloud wait')
+  assert.deepEqual(second.log, ['local:["v2"]/["u"]'], 'second native publish not blocked by the first cloud wait')
   owned.resolve(['owned'])
   await Promise.all([firstResult.cloud, secondResult.cloud])
-  assert.deepEqual(first.log.slice(2), [], 'the stale run never publishes the cloud answer over the newer local list')
-  assert.deepEqual(second.log.slice(2), ['owned:["owned"]'])
+  assert.deepEqual(first.log.slice(1), [], 'the stale run never publishes the cloud answer over the newer local list')
+  assert.deepEqual(second.log.slice(1), ['owned:["owned"]', 'error:null'])
 })
 
 test('results that arrive after an account switch are dropped', async () => {
@@ -87,11 +87,11 @@ test('results that arrive after an account switch are dropped', async () => {
   const owned = deferred<string[]>()
   const { log, sinks: s } = sinks(() => current)
   const result = await runSkillsLoad({ local: async () => ['a'], unmanaged: async () => ['u'], owned: () => owned.promise }, s)
-  assert.equal(log.length, 2)
+  assert.equal(log.length, 1)
   current = false
   owned.resolve(['stale'])
   await result.cloud
-  assert.equal(log.length, 2, 'the stale cloud answer is not published')
+  assert.equal(log.length, 1, 'the stale cloud answer is not published')
   const never = sinks(() => false)
   const skipped = await runSkillsLoad({ local: async () => ['a'], unmanaged: async () => ['u'], owned: null }, never.sinks)
   assert.deepEqual(never.log, [])

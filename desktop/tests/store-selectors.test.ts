@@ -49,7 +49,7 @@ test('the hot components subscribe through the shallow selectors and refresh sin
   assert.doesNotMatch(sheet, /\(await getLocalSkills\(\)\)\.find\(/)
   // The page coalesces refreshes and publishes local results before the cloud answer.
   const page = source('src/pages/SkillsPage.tsx')
-  assert.match(page, /createRefreshCoalescer\(runLoad\)/)
+  assert.match(page, /createRefreshCoalescer\(runLoad, 5_000,/)
   assert.match(page, /const loadSkills = useCallback\(\(silent = false\): Promise<void> => loadCoalescer\.request\(silent\)/)
   assert.match(page, /loadCoalescer\.cancel\(\)/)
   assert.match(page, /await runSkillsLoad\(/)
@@ -62,10 +62,10 @@ test('the hot components subscribe through the shallow selectors and refresh sin
   assert.match(page, /const skillsRefreshing = isLoadingSkills \|\| cloudLoading/)
   assert.doesNotMatch(page, /skills-cloud-loading|同步云端资料/)
   // One in-flight owned request per account is shared by overlapping native refreshes.
-  assert.match(page, /ownedInFlightRef\.current\?\.userId === expectedUserId \? ownedInFlightRef\.current\.request : null/)
+  assert.match(page, /ownedInFlightRef\.current\?\.userId === expectedUserId && sameSpace\(ownedInFlightRef\.current\.space, expectedSpace\)/)
   // The render gate is unchanged, so a settled local phase shows both tabs (list, or empty state) while the cloud is pending.
   assert.match(page, /\{isLoadingSkills && !\(skillTab !== 'local' && managedSkills\.length > 0\) \? \(/)
   // Earlier validation is carried over only for Skills this session already proved, never created here.
-  assert.match(page, /known\.serverAccessValidatedForUserId === expectedUserId\s*\n?\s*\? reconcileLocalSkillRefresh\(known, skill\)/)
-  assert.match(page, /publishOwnedFailure: \(\) => \{[\s\S]{0,400}mergeSkillSources\(localSkills, null, mergeContext\)/)
+  assert.match(page, /known\.serverAccessValidatedForUserId === expectedUserId \|\| known\.accountSyncRequired \|\| known\.teamUnshared/)
+  assert.doesNotMatch(page, /publishOwnedFailure: \(\) => \{[^}]*publishMerged/)
 })

@@ -23,6 +23,7 @@ type FocusTrapDialogProps = {
   escapeDisabled?: boolean
   closeOnBackdrop?: boolean
   style?: CSSProperties
+  ariaHidden?: boolean
 }
 
 function isVisible(element: HTMLElement): boolean {
@@ -58,6 +59,7 @@ export default function FocusTrapDialog({
   escapeDisabled = false,
   closeOnBackdrop = false,
   style,
+  ariaHidden,
 }: FocusTrapDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const onEscapeRef = useRef(onEscape)
@@ -134,6 +136,7 @@ export default function FocusTrapDialog({
     className={className}
     role="dialog"
     aria-modal="true"
+    aria-hidden={ariaHidden}
     aria-label={label}
     tabIndex={-1}
     style={style}
